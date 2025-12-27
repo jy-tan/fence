@@ -1,0 +1,248 @@
+name: Benchmarks
+
+on:
+  # Run on manual trigger
+  workflow_dispatch:
+    inputs:
+      min_runs:
+        description: "Minimum benchmark runs"
+        required: false
+        default: "30"
+      quick:
+        description: "Quick mode (fewer runs)"
+        required: false
+        default: "false"
+        type: boolean
+
+  # Temp, remove later
+  push:
+    branches: [benchmark]
+
+  # Optionally run on PRs that touch performance-sensitive code
+  # pull_request:
+  #   branches: [main]
+  #   paths:
+  #     - "internal/sandbox/**"
+  #     - "internal/proxy/**"
+  #     - "cmd/fence/**"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark-linux:
+    name: Benchmark (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bubblewrap \
+            socat \
+            uidmap \
+            curl \
+            netcat-openbsd \
+            ripgrep \
+            hyperfine \
+            jq \
+            bc
+          # Configure subuid/subgid
+          echo "$(whoami):100000:65536" | sudo tee -a /etc/subuid
+          echo "$(whoami):100000:65536" | sudo tee -a /etc/subgid
+          sudo chmod u+s $(which bwrap)
+
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      - name: Build fence
+        run: make build-ci
+
+      - name: Run Go microbenchmarks
+        run: |
+          mkdir -p benchmarks
+          go test -run=^$ -bench=. -benchmem -count=10 ./internal/sandbox/... | tee benchmarks/go-bench-linux.txt
+
+      - name: Run CLI benchmarks
+        run: |
+          MIN_RUNS="${{ github.event.inputs.min_runs || '30' }}"
+          QUICK="${{ github.event.inputs.quick || 'false' }}"
+
+          if [[ "$QUICK" == "true" ]]; then
+            ./scripts/benchmark.sh -q -o benchmarks
+          else
+            ./scripts/benchmark.sh -n "$MIN_RUNS" -o benchmarks
+          fi
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-linux
+          path: benchmarks/
+          retention-days: 30
+
+      - name: Summary
+        run: |
+          echo "## Linux Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ -f benchmarks/*.md ]]; then
+            cat benchmarks/*.md >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Go Microbenchmarks" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -E '^Benchmark|^ok|^PASS' benchmarks/go-bench-linux.txt | head -50 >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  benchmark-macos:
+    name: Benchmark (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Install dependencies
+        run: |
+          brew install hyperfine ripgrep coreutils jq
+
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      - name: Build fence
+        run: make build-ci
+
+      - name: Run Go microbenchmarks
+        run: |
+          mkdir -p benchmarks
+          go test -run=^$ -bench=. -benchmem -count=10 ./internal/sandbox/... | tee benchmarks/go-bench-macos.txt
+
+      - name: Run CLI benchmarks
+        run: |
+          MIN_RUNS="${{ github.event.inputs.min_runs || '30' }}"
+          QUICK="${{ github.event.inputs.quick || 'false' }}"
+
+          if [[ "$QUICK" == "true" ]]; then
+            ./scripts/benchmark.sh -q -o benchmarks
+          else
+            ./scripts/benchmark.sh -n "$MIN_RUNS" -o benchmarks
+          fi
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-macos
+          path: benchmarks/
+          retention-days: 30
+
+      - name: Summary
+        run: |
+          echo "## macOS Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ -f benchmarks/*.md ]]; then
+            cat benchmarks/*.md >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Go Microbenchmarks" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -E '^Benchmark|^ok|^PASS' benchmarks/go-bench-macos.txt | head -50 >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  compare:
+    name: Compare Results
+    needs: [benchmark-linux, benchmark-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      - name: Download Linux results
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-results-linux
+          path: linux-results/
+
+      - name: Download macOS results
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-results-macos
+          path: macos-results/
+
+      - name: Compare Go benchmarks
+        run: |
+          echo "## Cross-Platform Comparison" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ -f linux-results/go-bench-linux.txt && -f macos-results/go-bench-macos.txt ]]; then
+            echo "### Go Microbenchmark Comparison (Linux vs macOS)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            benchstat linux-results/go-bench-linux.txt macos-results/go-bench-macos.txt 2>&1 | head -100 >> $GITHUB_STEP_SUMMARY || echo "benchstat comparison failed"
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Display results
+        run: |
+          echo "=== Linux Results ==="
+          ls -la linux-results/
+          echo ""
+          echo "=== macOS Results ==="
+          ls -la macos-results/
+          echo ""
+          if [[ -f linux-results/go-bench-linux.txt && -f macos-results/go-bench-macos.txt ]]; then
+            echo "=== Benchstat Comparison ==="
+            benchstat linux-results/go-bench-linux.txt macos-results/go-bench-macos.txt || true
+          fi

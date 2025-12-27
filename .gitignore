@@ -23,3 +23,9 @@ coverage.out
 # GoReleaser
 /dist/
 
+# Benchmark results
+/benchmarks/
+*.prof
+cpu.out
+mem.out
+
