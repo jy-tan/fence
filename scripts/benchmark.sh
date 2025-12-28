@@ -337,24 +337,31 @@ cat > "$RESULTS_MD" << EOF
 |-----------|-------------|-----------|----------|
 EOF
 
-# Parse results and add to markdown
-for json_file in "$WORKSPACE"/*.json; do
-    [[ -f "$json_file" ]] || continue
-    name=$(basename "$json_file" .json)
-    
-    # Extract mean times (requires jq)
-    if command -v jq &> /dev/null; then
-        unsandboxed=$(jq -r '.results[] | select(.command == "unsandboxed") | .mean' "$json_file" 2>/dev/null || echo "N/A")
-        sandboxed=$(jq -r '.results[] | select(.command == "sandboxed") | .mean' "$json_file" 2>/dev/null || echo "N/A")
+# Parse results and add to markdown (run in subshell to prevent failures from stopping script)
+if command -v jq &> /dev/null; then
+    for json_file in "$WORKSPACE"/*.json; do
+        [[ -f "$json_file" ]] || continue
+        name=$(basename "$json_file" .json)
         
-        if [[ "$unsandboxed" != "N/A" && "$sandboxed" != "N/A" && "$unsandboxed" != "null" && "$sandboxed" != "null" ]]; then
-            overhead=$(echo "scale=1; $sandboxed / $unsandboxed" | bc 2>/dev/null || echo "N/A")
-            unsandboxed_ms=$(echo "scale=2; $unsandboxed * 1000" | bc 2>/dev/null || echo "N/A")
-            sandboxed_ms=$(echo "scale=2; $sandboxed * 1000" | bc 2>/dev/null || echo "N/A")
+        # Extract mean times, defaulting to empty if not found
+        unsandboxed=$(jq -r '.results[] | select(.command == "unsandboxed") | .mean // empty' "$json_file" 2>/dev/null) || true
+        sandboxed=$(jq -r '.results[] | select(.command == "sandboxed") | .mean // empty' "$json_file" 2>/dev/null) || true
+        
+        # Skip if values are missing, null, or zero
+        if [[ -z "$unsandboxed" || -z "$sandboxed" || "$unsandboxed" == "null" || "$sandboxed" == "null" ]]; then
+            continue
+        fi
+        
+        # Calculate values, catching any bc errors
+        overhead=$(echo "scale=1; $sandboxed / $unsandboxed" | bc 2>/dev/null) || continue
+        unsandboxed_ms=$(echo "scale=2; $unsandboxed * 1000" | bc 2>/dev/null) || continue
+        sandboxed_ms=$(echo "scale=2; $sandboxed * 1000" | bc 2>/dev/null) || continue
+        
+        if [[ -n "$overhead" && -n "$unsandboxed_ms" && -n "$sandboxed_ms" ]]; then
             echo "| $name | ${unsandboxed_ms}ms | ${sandboxed_ms}ms | ${overhead}x |" >> "$RESULTS_MD"
         fi
-    fi
-done
+    done
+fi
 
 echo ""
 echo -e "${GREEN}Results saved to:${NC}"
@@ -362,21 +369,28 @@ echo "  JSON: $RESULTS_JSON"
 echo "  Markdown: $RESULTS_MD"
 echo ""
 
-# Print quick summary
+# Print quick summary (errors in this section should not fail the script)
 if command -v jq &> /dev/null; then
     echo -e "${BLUE}Quick Summary (overhead factors):${NC}"
     for json_file in "$WORKSPACE"/*.json; do
-        [[ -f "$json_file" ]] || continue
-        name=$(basename "$json_file" .json)
-        unsandboxed=$(jq -r '.results[] | select(.command == "unsandboxed") | .mean' "$json_file" 2>/dev/null)
-        sandboxed=$(jq -r '.results[] | select(.command == "sandboxed") | .mean' "$json_file" 2>/dev/null)
-        if [[ -n "$unsandboxed" && -n "$sandboxed" && "$unsandboxed" != "null" && "$sandboxed" != "null" ]]; then
-            overhead=$(echo "scale=1; $sandboxed / $unsandboxed" | bc 2>/dev/null || echo "?")
-            printf "  %-15s %sx\n" "$name:" "$overhead"
-        fi
+        (
+            [[ -f "$json_file" ]] || exit 0
+            name=$(basename "$json_file" .json)
+            
+            # Extract values, defaulting to empty if not found
+            unsandboxed=$(jq -r '.results[] | select(.command == "unsandboxed") | .mean // empty' "$json_file" 2>/dev/null) || exit 0
+            sandboxed=$(jq -r '.results[] | select(.command == "sandboxed") | .mean // empty' "$json_file" 2>/dev/null) || exit 0
+            
+            # Skip if either value is missing or null
+            [[ -z "$unsandboxed" || -z "$sandboxed" || "$unsandboxed" == "null" || "$sandboxed" == "null" ]] && exit 0
+            
+            # Calculate overhead, catching any bc errors
+            overhead=$(echo "scale=1; $sandboxed / $unsandboxed" | bc 2>/dev/null) || exit 0
+            
+            [[ -n "$overhead" ]] && printf "  %-15s %sx\n" "$name:" "$overhead"
+        ) || true  # Ignore errors from subshell
     done
 fi
 
 echo ""
 echo -e "${GREEN}Done!${NC}"
-
