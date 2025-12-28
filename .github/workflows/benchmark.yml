@@ -103,9 +103,9 @@ jobs:
           echo "## Linux Benchmark Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [[ -f benchmarks/*.md ]]; then
-            cat benchmarks/*.md >> $GITHUB_STEP_SUMMARY
-          fi
+          for f in benchmarks/*.md; do
+            [[ -f "$f" ]] && cat "$f" >> $GITHUB_STEP_SUMMARY
+          done
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Go Microbenchmarks" >> $GITHUB_STEP_SUMMARY
@@ -177,9 +177,9 @@ jobs:
           echo "## macOS Benchmark Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [[ -f benchmarks/*.md ]]; then
-            cat benchmarks/*.md >> $GITHUB_STEP_SUMMARY
-          fi
+          for f in benchmarks/*.md; do
+            [[ -f "$f" ]] && cat "$f" >> $GITHUB_STEP_SUMMARY
+          done
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Go Microbenchmarks" >> $GITHUB_STEP_SUMMARY

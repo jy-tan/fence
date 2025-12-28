@@ -48,6 +48,7 @@ class BenchmarkHandler(http.server.BaseHTTPRequestHandler):
 
 
 def main():
+    socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("127.0.0.1", PORT), BenchmarkHandler) as httpd:
         print(f"Benchmark server running on http://127.0.0.1:{PORT}/", file=sys.stderr)
         print("Press Ctrl+C to stop", file=sys.stderr)
