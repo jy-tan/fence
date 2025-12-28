@@ -23,6 +23,7 @@ Fence is a sandboxing tool that restricts network and filesystem access for arbi
 - [Security model](security-model.md) - Threat model, guarantees, and limitations
 - [Linux security features](linux-security-features.md) - Landlock, seccomp, eBPF details and fallback behavior
 - [Testing](testing.md) - How to run tests and write new ones
+- [Benchmarking](benchmarking.md) - Performance overhead and profiling
 
 ## Examples
 

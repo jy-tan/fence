@@ -1,7 +1,6 @@
 name: Benchmarks
 
 on:
-  # Run on manual trigger
   workflow_dispatch:
     inputs:
       min_runs:
@@ -14,11 +13,7 @@ on:
         default: "false"
         type: boolean
 
-  # Temp, remove later
-  push:
-    branches: [benchmark]
-
-  # Optionally run on PRs that touch performance-sensitive code
+  # Run on PRs that potentially touch performance-sensitive code
   # pull_request:
   #   branches: [main]
   #   paths:
