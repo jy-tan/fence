@@ -3,6 +3,7 @@ package importer
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Use-Tusk/fence/internal/config"
@@ -405,7 +406,7 @@ func TestImportFromClaude(t *testing.T) {
   "permissions": {
     "allow": ["Read", "Grep", "Bash(npm install)"],
     "deny": ["Edit"],
-    "ask": []
+    "ask": ["Write"]
   }
 }`
 		err := os.WriteFile(settingsPath, []byte(content), 0o600) //nolint:gosec // test file
@@ -414,8 +415,16 @@ func TestImportFromClaude(t *testing.T) {
 		result, err := ImportFromClaude(settingsPath, DefaultImportOptions())
 		require.NoError(t, err)
 
-		// Should have warnings for global rules
-		assert.Len(t, result.Warnings, 3) // Read, Grep, Edit
+		// Should have warnings for global rules: Read, Grep, Edit, Write (all global)
+		assert.Len(t, result.Warnings, 4)
+
+		// Verify the warnings mention the right rules
+		warningsStr := strings.Join(result.Warnings, " ")
+		assert.Contains(t, warningsStr, "Read")
+		assert.Contains(t, warningsStr, "Grep")
+		assert.Contains(t, warningsStr, "Edit")
+		assert.Contains(t, warningsStr, "Write")
+		assert.Contains(t, warningsStr, "skipped")
 	})
 }
 

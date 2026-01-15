@@ -279,7 +279,10 @@ func ImportFromClaude(path string, opts ImportOptions) (*ImportResult, error) {
 		}
 	}
 	for _, rule := range settings.Permissions.Ask {
-		if !isGlobalToolRule(rule) {
+		if isGlobalToolRule(rule) {
+			result.Warnings = append(result.Warnings,
+				fmt.Sprintf("Global tool permission %q skipped (fence uses path/command-based rules)", rule))
+		} else {
 			result.Warnings = append(result.Warnings,
 				fmt.Sprintf("Ask rule %q converted to deny (fence doesn't support interactive prompts)", rule))
 		}
