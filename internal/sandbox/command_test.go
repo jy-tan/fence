@@ -742,3 +742,85 @@ func TestCheckCommand_IntegratesSSH(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckSSHCommand_CommandChaining(t *testing.T) {
+	// Test that command chaining doesn't bypass allow/deny rules
+	cfg := &config.Config{
+		SSH: config.SSHConfig{
+			AllowedHosts:    []string{"*.example.com"},
+			AllowedCommands: []string{"ls", "cat", "git status"},
+		},
+		Command: config.CommandConfig{
+			UseDefaults: boolPtr(false),
+		},
+	}
+
+	tests := []struct {
+		command     string
+		shouldBlock bool
+		desc        string
+	}{
+		// Chaining should NOT bypass allowlist
+		{`ssh server.example.com "ls && rm -rf /"`, true, "ls allowed but rm -rf not"},
+		{`ssh server.example.com "git status && rm -rf /"`, true, "git status allowed but rm -rf not"},
+		{`ssh server.example.com "cat file; shutdown"`, true, "cat allowed but shutdown not"},
+		{`ssh server.example.com "ls | xargs rm"`, true, "ls allowed but rm not"},
+		{`ssh server.example.com "ls || rm -rf /"`, true, "ls allowed but rm -rf not"},
+
+		// All subcommands allowed should work
+		{`ssh server.example.com "ls && cat file"`, false, "both ls and cat allowed"},
+		{`ssh server.example.com "ls; cat file"`, false, "semicolon chain with allowed commands"},
+		{`ssh server.example.com "ls | cat"`, false, "pipe with allowed commands"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			err := CheckSSHCommand(tt.command, cfg)
+			if tt.shouldBlock && err == nil {
+				t.Errorf("expected SSH command %q to be blocked", tt.command)
+			}
+			if !tt.shouldBlock && err != nil {
+				t.Errorf("expected SSH command %q to be allowed, got: %v", tt.command, err)
+			}
+		})
+	}
+}
+
+func TestCheckSSHCommand_CommandChainingDenylist(t *testing.T) {
+	// Test command chaining in denylist mode
+	cfg := &config.Config{
+		SSH: config.SSHConfig{
+			AllowedHosts:     []string{"*.example.com"},
+			AllowAllCommands: true,
+			DeniedCommands:   []string{"rm -rf", "shutdown"},
+		},
+		Command: config.CommandConfig{
+			UseDefaults: boolPtr(false),
+		},
+	}
+
+	tests := []struct {
+		command     string
+		shouldBlock bool
+		desc        string
+	}{
+		// Chaining should still catch denied commands
+		{`ssh server.example.com "ls && rm -rf /"`, true, "rm -rf in chain blocked"},
+		{`ssh server.example.com "cat file; shutdown"`, true, "shutdown in chain blocked"},
+
+		// Chains without denied commands should work
+		{`ssh server.example.com "ls && cat && grep foo"`, false, "chain without denied commands"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.desc, func(t *testing.T) {
+			err := CheckSSHCommand(tt.command, cfg)
+			if tt.shouldBlock && err == nil {
+				t.Errorf("expected SSH command %q to be blocked", tt.command)
+			}
+			if !tt.shouldBlock && err != nil {
+				t.Errorf("expected SSH command %q to be allowed, got: %v", tt.command, err)
+			}
+		})
+	}
+}

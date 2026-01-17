@@ -372,8 +372,27 @@ func CheckSSHCommand(command string, cfg *config.Config) error {
 }
 
 // checkSSHRemoteCommand checks if a remote command is allowed by SSH policy.
+// It parses the remote command into subcommands (handling &&, ||, ;, |) and validates each.
 func checkSSHRemoteCommand(remoteCmd string, cfg *config.Config) error {
-	normalized := normalizeCommand(remoteCmd)
+	// Parse into subcommands just like local commands to prevent bypass via chaining
+	// e.g., "git status && rm -rf /" should check both "git status" and "rm -rf /"
+	subCommands := parseShellCommand(remoteCmd)
+
+	for _, subCmd := range subCommands {
+		if err := checkSSHSingleCommand(subCmd, remoteCmd, cfg); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// checkSSHSingleCommand checks a single SSH remote command against policy.
+func checkSSHSingleCommand(subCmd, fullRemoteCmd string, cfg *config.Config) error {
+	normalized := normalizeCommand(subCmd)
+	if normalized == "" {
+		return nil
+	}
 
 	// Check inherited global deny list first (if enabled)
 	// User-defined global then default deny list
@@ -381,8 +400,8 @@ func checkSSHRemoteCommand(remoteCmd string, cfg *config.Config) error {
 		for _, deny := range cfg.Command.Deny {
 			if matchesPrefix(normalized, deny) {
 				return &SSHBlockedError{
-					RemoteCommand: remoteCmd,
-					Reason:        fmt.Sprintf("command matches inherited global deny %q", deny),
+					RemoteCommand: fullRemoteCmd,
+					Reason:        fmt.Sprintf("command %q matches inherited global deny %q", subCmd, deny),
 				}
 			}
 		}
@@ -391,8 +410,8 @@ func checkSSHRemoteCommand(remoteCmd string, cfg *config.Config) error {
 			for _, deny := range config.DefaultDeniedCommands {
 				if matchesPrefix(normalized, deny) {
 					return &SSHBlockedError{
-						RemoteCommand: remoteCmd,
-						Reason:        fmt.Sprintf("command matches inherited default deny %q", deny),
+						RemoteCommand: fullRemoteCmd,
+						Reason:        fmt.Sprintf("command %q matches inherited default deny %q", subCmd, deny),
 					}
 				}
 			}
@@ -403,8 +422,8 @@ func checkSSHRemoteCommand(remoteCmd string, cfg *config.Config) error {
 	for _, deny := range cfg.SSH.DeniedCommands {
 		if matchesPrefix(normalized, deny) {
 			return &SSHBlockedError{
-				RemoteCommand: remoteCmd,
-				Reason:        fmt.Sprintf("command matches ssh.deniedCommands %q", deny),
+				RemoteCommand: fullRemoteCmd,
+				Reason:        fmt.Sprintf("command %q matches ssh.deniedCommands %q", subCmd, deny),
 			}
 		}
 	}
@@ -423,14 +442,14 @@ func checkSSHRemoteCommand(remoteCmd string, cfg *config.Config) error {
 		}
 		// Not in allowlist
 		return &SSHBlockedError{
-			RemoteCommand: remoteCmd,
-			Reason:        "command not in ssh.allowedCommands",
+			RemoteCommand: fullRemoteCmd,
+			Reason:        fmt.Sprintf("command %q not in ssh.allowedCommands", subCmd),
 		}
 	}
 
 	// No allowedCommands configured and not in denylist mode = deny all remote commands
 	return &SSHBlockedError{
-		RemoteCommand: remoteCmd,
+		RemoteCommand: fullRemoteCmd,
 		Reason:        "no ssh.allowedCommands configured (allowlist mode requires explicit commands)",
 	}
 }
