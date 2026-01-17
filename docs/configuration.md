@@ -17,6 +17,10 @@ Example config:
   },
   "command": {
     "deny": ["git push", "npm publish"]
+  },
+  "ssh": {
+    "allowedHosts": ["*.example.com"],
+    "allowedCommands": ["ls", "cat", "grep", "tail", "head"]
   }
 }
 ```
@@ -157,6 +161,96 @@ Fence detects blocked commands in:
 - Command chains: `ls && git push` or `ls; git push`
 - Pipelines: `echo test | git push`
 - Shell invocations: `bash -c "git push"` or `sh -lc "ls && git push"`
+
+## SSH Configuration
+
+Control which SSH commands are allowed. By default, SSH uses **allowlist mode** for security - only explicitly allowed hosts and commands can be used.
+
+| Field | Description |
+|-------|-------------|
+| `allowedHosts` | Host patterns to allow SSH connections to (supports wildcards like `*.example.com`, `prod-*`) |
+| `deniedHosts` | Host patterns to deny SSH connections to (checked before allowed) |
+| `allowedCommands` | Commands allowed over SSH (allowlist mode) |
+| `deniedCommands` | Commands denied over SSH (checked before allowed) |
+| `allowAllCommands` | If `true`, use denylist mode instead of allowlist (allow all commands except denied) |
+| `inheritDeny` | If `true`, also apply global `command.deny` rules to SSH commands |
+
+### Basic Example (Allowlist Mode)
+
+```json
+{
+  "ssh": {
+    "allowedHosts": ["*.example.com"],
+    "allowedCommands": ["ls", "cat", "grep", "tail", "head", "find"]
+  }
+}
+```
+
+This allows:
+
+- SSH to any `*.example.com` host
+- Only the listed commands (and their arguments)
+- Interactive sessions (no remote command)
+
+### Denylist Mode Example
+
+```json
+{
+  "ssh": {
+    "allowedHosts": ["dev-*.example.com"],
+    "allowAllCommands": true,
+    "deniedCommands": ["rm -rf", "shutdown", "chmod"]
+  }
+}
+```
+
+This allows:
+
+- SSH to any `dev-*.example.com` host
+- Any command except the denied ones
+
+### Inheriting Global Denies
+
+```json
+{
+  "command": {
+    "deny": ["shutdown", "reboot", "rm -rf /"]
+  },
+  "ssh": {
+    "allowedHosts": ["*.example.com"],
+    "allowAllCommands": true,
+    "inheritDeny": true
+  }
+}
+```
+
+With `inheritDeny: true`, SSH commands also check against:
+
+- Global `command.deny` list
+- Default denied commands (if `command.useDefaults` is true)
+
+### Host Pattern Matching
+
+SSH host patterns support wildcards anywhere:
+
+| Pattern | Matches |
+|---------|---------|
+| `server1.example.com` | Exact match only |
+| `*.example.com` | Any subdomain of example.com |
+| `prod-*` | Any hostname starting with `prod-` |
+| `prod-*.us-east.*` | Multiple wildcards |
+| `*` | All hosts |
+
+### Evaluation Order
+
+1. Check if host matches `deniedHosts` → **DENY**
+2. Check if host matches `allowedHosts` → continue (else **DENY**)
+3. If no remote command (interactive session) → **ALLOW**
+4. Check if command matches `deniedCommands` → **DENY**
+5. If `inheritDeny`, check global `command.deny` → **DENY**
+6. If `allowAllCommands` → **ALLOW**
+7. Check if command matches `allowedCommands` → **ALLOW**
+8. Default → **DENY**
 
 ## Other Options
 

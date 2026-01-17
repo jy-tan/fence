@@ -19,6 +19,7 @@ type Config struct {
 	Network    NetworkConfig    `json:"network"`
 	Filesystem FilesystemConfig `json:"filesystem"`
 	Command    CommandConfig    `json:"command"`
+	SSH        SSHConfig        `json:"ssh"`
 	AllowPty   bool             `json:"allowPty,omitempty"`
 }
 
@@ -47,6 +48,17 @@ type CommandConfig struct {
 	Deny        []string `json:"deny"`
 	Allow       []string `json:"allow"`
 	UseDefaults *bool    `json:"useDefaults,omitempty"`
+}
+
+// SSHConfig defines SSH command restrictions.
+// SSH commands are filtered using an allowlist by default for security.
+type SSHConfig struct {
+	AllowedHosts     []string `json:"allowedHosts"`               // Host patterns to allow SSH to (supports wildcards like *.example.com)
+	DeniedHosts      []string `json:"deniedHosts"`                // Host patterns to deny SSH to (checked before allowed)
+	AllowedCommands  []string `json:"allowedCommands"`            // Commands allowed over SSH (allowlist mode)
+	DeniedCommands   []string `json:"deniedCommands"`             // Commands denied over SSH (checked before allowed)
+	AllowAllCommands bool     `json:"allowAllCommands,omitempty"` // If true, use denylist mode instead of allowlist
+	InheritDeny      bool     `json:"inheritDeny,omitempty"`      // If true, also apply global command.deny rules
 }
 
 // DefaultDeniedCommands returns commands that are blocked by default.
@@ -108,6 +120,12 @@ func Default() *Config {
 			Deny:  []string{},
 			Allow: []string{},
 			// UseDefaults defaults to true (nil = true)
+		},
+		SSH: SSHConfig{
+			AllowedHosts:    []string{},
+			DeniedHosts:     []string{},
+			AllowedCommands: []string{},
+			DeniedCommands:  []string{},
 		},
 	}
 }
@@ -178,6 +196,24 @@ func (c *Config) Validate() error {
 		return errors.New("command.allow contains empty command")
 	}
 
+	// SSH config
+	for _, host := range c.SSH.AllowedHosts {
+		if err := validateHostPattern(host); err != nil {
+			return fmt.Errorf("invalid ssh.allowedHosts %q: %w", host, err)
+		}
+	}
+	for _, host := range c.SSH.DeniedHosts {
+		if err := validateHostPattern(host); err != nil {
+			return fmt.Errorf("invalid ssh.deniedHosts %q: %w", host, err)
+		}
+	}
+	if slices.Contains(c.SSH.AllowedCommands, "") {
+		return errors.New("ssh.allowedCommands contains empty command")
+	}
+	if slices.Contains(c.SSH.DeniedCommands, "") {
+		return errors.New("ssh.deniedCommands contains empty command")
+	}
+
 	return nil
 }
 
@@ -229,6 +265,42 @@ func validateDomainPattern(pattern string) error {
 	return nil
 }
 
+// validateHostPattern validates an SSH host pattern.
+// Host patterns are more permissive than domain patterns:
+// - Can contain wildcards anywhere (e.g., prod-*.example.com, *.example.com)
+// - Can be IP addresses
+// - Can be simple hostnames without dots
+func validateHostPattern(pattern string) error {
+	if pattern == "" {
+		return errors.New("empty host pattern")
+	}
+
+	// Reject patterns with protocol or path
+	if strings.Contains(pattern, "://") || strings.Contains(pattern, "/") {
+		return errors.New("host pattern cannot contain protocol or path")
+	}
+
+	// Reject patterns with port (user@host:port style)
+	// But allow colons for IPv6 addresses
+	if strings.Contains(pattern, ":") && !strings.Contains(pattern, "::") && !isIPv6Pattern(pattern) {
+		return errors.New("host pattern cannot contain port; specify port in SSH command instead")
+	}
+
+	// Reject patterns with @ (should be just the host, not user@host)
+	if strings.Contains(pattern, "@") {
+		return errors.New("host pattern should not contain username; specify just the host")
+	}
+
+	return nil
+}
+
+// isIPv6Pattern checks if a pattern looks like an IPv6 address.
+func isIPv6Pattern(pattern string) bool {
+	// IPv6 addresses contain multiple colons
+	colonCount := strings.Count(pattern, ":")
+	return colonCount >= 2
+}
+
 // MatchesDomain checks if a hostname matches a domain pattern.
 func MatchesDomain(hostname, pattern string) bool {
 	hostname = strings.ToLower(hostname)
@@ -247,6 +319,71 @@ func MatchesDomain(hostname, pattern string) bool {
 
 	// Exact match
 	return hostname == pattern
+}
+
+// MatchesHost checks if a hostname matches an SSH host pattern.
+// SSH host patterns support wildcards anywhere in the pattern.
+func MatchesHost(hostname, pattern string) bool {
+	hostname = strings.ToLower(hostname)
+	pattern = strings.ToLower(pattern)
+
+	// "*" matches all hosts
+	if pattern == "*" {
+		return true
+	}
+
+	// If pattern contains no wildcards, do exact match
+	if !strings.Contains(pattern, "*") {
+		return hostname == pattern
+	}
+
+	// Convert glob pattern to a simple matcher
+	// Split pattern by * and check each part
+	return matchGlob(hostname, pattern)
+}
+
+// matchGlob performs simple glob matching with * wildcards.
+func matchGlob(s, pattern string) bool {
+	// Handle edge cases
+	if pattern == "*" {
+		return true
+	}
+	if pattern == "" {
+		return s == ""
+	}
+
+	// Split pattern by * and match parts
+	parts := strings.Split(pattern, "*")
+
+	// Check prefix (before first *)
+	if !strings.HasPrefix(s, parts[0]) {
+		return false
+	}
+	s = s[len(parts[0]):]
+
+	// Check suffix (after last *)
+	if len(parts) > 1 {
+		last := parts[len(parts)-1]
+		if !strings.HasSuffix(s, last) {
+			return false
+		}
+		s = s[:len(s)-len(last)]
+	}
+
+	// Check middle parts (between *s)
+	for i := 1; i < len(parts)-1; i++ {
+		part := parts[i]
+		if part == "" {
+			continue
+		}
+		idx := strings.Index(s, part)
+		if idx < 0 {
+			return false
+		}
+		s = s[idx+len(part):]
+	}
+
+	return true
 }
 
 // Merge combines a base config with an override config.
@@ -306,6 +443,18 @@ func Merge(base, override *Config) *Config {
 
 			// Pointer field: override wins if set
 			UseDefaults: mergeOptionalBool(base.Command.UseDefaults, override.Command.UseDefaults),
+		},
+
+		SSH: SSHConfig{
+			// Append slices
+			AllowedHosts:    mergeStrings(base.SSH.AllowedHosts, override.SSH.AllowedHosts),
+			DeniedHosts:     mergeStrings(base.SSH.DeniedHosts, override.SSH.DeniedHosts),
+			AllowedCommands: mergeStrings(base.SSH.AllowedCommands, override.SSH.AllowedCommands),
+			DeniedCommands:  mergeStrings(base.SSH.DeniedCommands, override.SSH.DeniedCommands),
+
+			// Boolean fields: true if either enables it
+			AllowAllCommands: base.SSH.AllowAllCommands || override.SSH.AllowAllCommands,
+			InheritDeny:      base.SSH.InheritDeny || override.SSH.InheritDeny,
 		},
 	}
 

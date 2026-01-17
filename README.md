@@ -14,6 +14,7 @@ You can also think of Fence as a permission manager for your CLI coding agents.
 - **Domain Allowlisting**: Configure which domains are allowed
 - **Filesystem Restrictions**: Control read/write access to paths
 - **Command Blocking**: Block dangerous commands (e.g., `shutdown`, `rm -rf`) with configurable deny/allow lists
+- **SSH Command Filtering**: Control which hosts and commands are allowed over SSH
 - **Violation Monitoring**: Real-time logging of blocked requests and sandbox denials
 - **Cross-Platform**: macOS (sandbox-exec) and Linux (bubblewrap)
 - **HTTP/SOCKS5 Proxies**: Built-in filtering proxies for domain control
