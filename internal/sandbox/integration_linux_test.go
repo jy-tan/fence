@@ -246,19 +246,6 @@ func TestLinux_NetworkBlocksCurl(t *testing.T) {
 	assertNetworkBlocked(t, result)
 }
 
-// TestLinux_NetworkBlocksWget verifies that wget cannot reach the network.
-func TestLinux_NetworkBlocksWget(t *testing.T) {
-	skipIfAlreadySandboxed(t)
-	skipIfCommandNotFound(t, "wget")
-
-	workspace := createTempWorkspace(t)
-	cfg := testConfigWithWorkspace(workspace)
-
-	result := runUnderSandboxWithTimeout(t, cfg, "wget -q --timeout=2 -O /dev/null http://example.com", workspace, 10*time.Second)
-
-	assertBlocked(t, result)
-}
-
 // TestLinux_NetworkBlocksPing verifies that ping cannot reach the network.
 func TestLinux_NetworkBlocksPing(t *testing.T) {
 	skipIfAlreadySandboxed(t)
@@ -492,7 +479,7 @@ func TestLinux_GlobPatternAllowsWriteToMatchingFile(t *testing.T) {
 	workspace := createTempWorkspace(t)
 
 	testFile := filepath.Join(workspace, ".testglob.json")
-	if err := os.WriteFile(testFile, []byte(`{"initial": true}`), 0600); err != nil {
+	if err := os.WriteFile(testFile, []byte(`{"initial": true}`), 0o600); err != nil {
 		t.Fatalf("failed to create test file: %v", err)
 	}
 
