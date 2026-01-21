@@ -482,6 +482,41 @@ func TestLinux_ProcSelfEnvReadable(t *testing.T) {
 	assertAllowed(t, result)
 }
 
+// TestLinux_GlobPatternAllowsWriteToMatchingFile verifies that glob patterns
+// like "~/.claude*" correctly allow writes to matching files (not just directories).
+// The bug was that Landlock rules for files were silently failing because
+// directory-only access rights (MAKE_*, REFER, etc.) were being applied.
+func TestLinux_GlobPatternAllowsWriteToMatchingFile(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+
+	workspace := createTempWorkspace(t)
+
+	testFile := filepath.Join(workspace, ".testglob.json")
+	if err := os.WriteFile(testFile, []byte(`{"initial": true}`), 0600); err != nil {
+		t.Fatalf("failed to create test file: %v", err)
+	}
+
+	// Configure allowWrite with a glob pattern that matches the file
+	cfg := testConfigWithWorkspace(workspace)
+	cfg.Filesystem.AllowWrite = []string{
+		workspace,
+		filepath.Join(workspace, ".testglob*"),
+	}
+
+	// Try to append to the file (shouldn't fail)
+	result := runUnderSandbox(t, cfg, "echo 'appended' >> "+testFile, workspace)
+
+	assertAllowed(t, result)
+
+	content, err := os.ReadFile(testFile) //nolint:gosec
+	if err != nil {
+		t.Fatalf("failed to read file: %v", err)
+	}
+	if !strings.Contains(string(content), "appended") {
+		t.Errorf("expected file to contain 'appended', got: %s", string(content))
+	}
+}
+
 // ============================================================================
 // Helper functions
 // ============================================================================
