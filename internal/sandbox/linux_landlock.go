@@ -323,8 +323,47 @@ func (l *LandlockRuleset) addPathRule(path string, access uint64) error {
 	}
 	defer func() { _ = unix.Close(fd) }()
 
+	// Use fstat on the fd to avoid TOCTOU race between stat and open
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		if l.debug {
+			fmt.Fprintf(os.Stderr, "[fence:landlock] Failed to fstat path %s: %v\n", absPath, err)
+		}
+		return nil
+	}
+	isDir := (stat.Mode & unix.S_IFMT) == unix.S_IFDIR
+
 	// Intersect with handled access to avoid invalid combinations
 	access &= l.getHandledAccessFS()
+
+	// Filter out directory-only access rights for non-directory paths (files, sockets, devices, etc.).
+	// Landlock returns EINVAL if you try to add MAKE_*, REMOVE_*, READ_DIR, or REFER rights to a non-directory.
+	// See: https://docs.kernel.org/userspace-api/landlock.html
+	// File-compatible rights: EXECUTE, WRITE_FILE, READ_FILE, TRUNCATE
+	// Directory-only rights: READ_DIR, REMOVE_*, MAKE_*, REFER
+	if !isDir {
+		dirOnlyRights := uint64(
+			LANDLOCK_ACCESS_FS_READ_DIR |
+				LANDLOCK_ACCESS_FS_REMOVE_DIR |
+				LANDLOCK_ACCESS_FS_REMOVE_FILE |
+				LANDLOCK_ACCESS_FS_MAKE_CHAR |
+				LANDLOCK_ACCESS_FS_MAKE_DIR |
+				LANDLOCK_ACCESS_FS_MAKE_REG |
+				LANDLOCK_ACCESS_FS_MAKE_SOCK |
+				LANDLOCK_ACCESS_FS_MAKE_FIFO |
+				LANDLOCK_ACCESS_FS_MAKE_BLOCK |
+				LANDLOCK_ACCESS_FS_MAKE_SYM |
+				LANDLOCK_ACCESS_FS_REFER,
+		)
+		access &^= dirOnlyRights
+	}
+
+	if access == 0 {
+		if l.debug {
+			fmt.Fprintf(os.Stderr, "[fence:landlock] Skipping %s: no applicable access rights\n", absPath)
+		}
+		return nil
+	}
 
 	attr := landlockPathBeneathAttr{
 		allowedAccess: access,
