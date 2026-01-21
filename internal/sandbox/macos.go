@@ -41,6 +41,8 @@ type MacOSSandboxParams struct {
 	AllowPty                bool
 	AllowGitConfig          bool
 	Shell                   string
+	IsolateProject          bool   // Use deny-by-default read isolation (best-effort on macOS)
+	Cwd                     string // Current working directory (required when IsolateProject is true)
 }
 
 // GlobToRegex converts a glob pattern to a regex for macOS sandbox profiles.
@@ -111,13 +113,122 @@ func getTmpdirParent() []string {
 }
 
 // generateReadRules generates filesystem read rules for the sandbox profile.
-func generateReadRules(denyPaths []string, logTag string) []string {
+func generateReadRules(denyPaths []string, isolateProject bool, cwd string, logTag string) []string {
 	var rules []string
 
-	// Allow all reads by default
-	rules = append(rules, "(allow file-read*)")
+	if isolateProject && cwd != "" {
+		// Isolate project mode: whitelist essential system paths + cwd only
+		// This mirrors the Linux bwrap approach as closely as Seatbelt allows
 
-	// Deny specific paths
+		// Essential system directories (read-only access)
+		systemReadPaths := []string{
+			"/usr",
+			"/bin",
+			"/sbin",
+			"/lib",
+			"/etc",
+			"/opt",
+			"/System",
+			"/Library",
+			"/private/etc",
+			"/private/var",
+			"/private/tmp",
+			"/dev",
+			"/tmp",
+			"/var",
+			"/Applications", // Common tools location
+		}
+
+		for _, sysPath := range systemReadPaths {
+			rules = append(rules,
+				"(allow file-read*",
+				fmt.Sprintf("  (subpath %s))", escapePath(sysPath)),
+			)
+		}
+
+		// Allow reading the current working directory
+		rules = append(rules,
+			"(allow file-read*",
+			fmt.Sprintf("  (subpath %s))", escapePath(cwd)),
+		)
+
+		// Allow traversing ancestor directories
+		// This is needed so the shell can reach the cwd via path traversal
+		// Note: This allows `ls ..` to list directory names, but NOT read file contents
+		// in those directories. This is a macOS limitation - Seatbelt can't distinguish
+		// between directory lookup (for traversal) and directory listing.
+		ancestors := getAncestorDirectories(cwd)
+		for _, ancestor := range ancestors {
+			rules = append(rules,
+				"(allow file-read*",
+				fmt.Sprintf("  (literal %s))", escapePath(ancestor)),
+			)
+		}
+		// Also allow root
+		rules = append(rules,
+			"(allow file-read*",
+			"  (literal \"/\"))",
+		)
+
+		// Allow reading specific paths in user's home directory
+		// We DON'T allow the entire home - only specific necessary paths
+		homeDir, _ := os.UserHomeDir()
+		if homeDir != "" {
+			// Shell configuration files (needed for bash/zsh to start properly)
+			shellConfigs := []string{
+				".bashrc",
+				".bash_profile",
+				".profile",
+				".zshrc",
+				".zprofile",
+				".zshenv",
+				".inputrc",
+			}
+			for _, cfg := range shellConfigs {
+				cfgPath := filepath.Join(homeDir, cfg)
+				rules = append(rules,
+					"(allow file-read*",
+					fmt.Sprintf("  (literal %s))", escapePath(cfgPath)),
+				)
+			}
+
+			// Tool cache/config directories (needed for language toolchains)
+			toolDirs := []string{
+				".cache",
+				".npm",
+				".cargo",
+				".rustup",
+				"go",
+				".local",
+				".config",
+				".nvm",
+				".pyenv",
+				".rbenv",
+				".asdf",
+			}
+			for _, dir := range toolDirs {
+				dirPath := filepath.Join(homeDir, dir)
+				rules = append(rules,
+					"(allow file-read*",
+					fmt.Sprintf("  (subpath %s))", escapePath(dirPath)),
+				)
+			}
+
+			// Allow reading the home directory itself (for directory listing)
+			// but NOT its contents (subpath would allow all contents)
+			rules = append(rules,
+				"(allow file-read*",
+				fmt.Sprintf("  (literal %s))", escapePath(homeDir)),
+			)
+		}
+
+		// Note: Everything else is denied by default via (deny default) in profile header
+	} else {
+		// Default mode: Allow all reads by default
+		rules = append(rules, "(allow file-read*)")
+	}
+
+	// Deny specific paths (applies in both modes)
 	for _, pathPattern := range denyPaths {
 		normalized := NormalizePath(pathPattern)
 
@@ -462,7 +573,7 @@ func GenerateSandboxProfile(params MacOSSandboxParams) string {
 
 	// Read rules
 	profile.WriteString("; File read\n")
-	for _, rule := range generateReadRules(params.ReadDenyPaths, logTag) {
+	for _, rule := range generateReadRules(params.ReadDenyPaths, params.IsolateProject, params.Cwd, logTag) {
 		profile.WriteString(rule + "\n")
 	}
 	profile.WriteString("\n")
@@ -522,6 +633,14 @@ func WrapCommandMacOS(cfg *config.Config, command string, httpPort, socksPort in
 		fmt.Fprintf(os.Stderr, "[fence:macos] Note: deniedDomains only enforced for apps that respect HTTP_PROXY\n")
 	}
 
+	// Get current working directory for isolate project mode
+	cwd, _ := os.Getwd()
+
+	if debug && cfg.Filesystem.IsolateProject {
+		fmt.Fprintf(os.Stderr, "[fence:macos] Project isolation enabled (best-effort whitelist mode)\n")
+		fmt.Fprintf(os.Stderr, "[fence:macos] Only allowing reads from system paths and cwd: %s\n", cwd)
+	}
+
 	params := MacOSSandboxParams{
 		Command:                 command,
 		NeedsNetworkRestriction: needsNetworkRestriction,
@@ -536,6 +655,8 @@ func WrapCommandMacOS(cfg *config.Config, command string, httpPort, socksPort in
 		WriteDenyPaths:          cfg.Filesystem.DenyWrite,
 		AllowPty:                cfg.AllowPty,
 		AllowGitConfig:          cfg.Filesystem.AllowGitConfig,
+		IsolateProject:          cfg.Filesystem.IsolateProject,
+		Cwd:                     cwd,
 	}
 
 	if debug && len(exposedPorts) > 0 {
