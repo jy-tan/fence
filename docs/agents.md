@@ -45,18 +45,19 @@ We provide these template for guardrailing CLI coding agents:
 
 You can use it like `fence -t code -- claude`.
 
-However, not all coding agent CLIs work with Fence at the moment.
-
 | Agent | Works with template | Notes |
 |-------|--------| ----- |
 | Claude Code | `code` | - |
-| Codex | `code` | |
+| Codex | `code` | - |
 | Cursor Agent | `code-relaxed` | Node.js/undici doesn't respect HTTP_PROXY |
-| OpenCode | - | TUI hangs. Bun runtime doesn't respect HTTP_PROXY; architectural limitation |
+| Gemini CLI | `code` | - |
+| OpenCode | `code` | - |
+
+These configs can drift as agents evolve. If you encounter false positives on blocked requests or want a CLI agent listed, please open an issue or PR.
 
 ## Protecting your environment
 
-Fence includes additional "dangerous file protection (writes blocked regardless of config) to reduce persistence and environment-tampering vectors like:
+Fence includes additional "dangerous file protection" (writes blocked regardless of config) to reduce persistence and environment-tampering vectors like:
 
 - `.git/hooks/*`
 - shell startup files (`.zshrc`, `.bashrc`, etc.)

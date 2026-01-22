@@ -14,6 +14,10 @@
       "api.together.xyz",
       "openrouter.ai",
 
+      // OpenCode
+      "opencode.ai",
+      "api.opencode.ai",
+
       // Cursor API
       "*.cursor.sh",
 
@@ -23,6 +27,7 @@
       "raw.githubusercontent.com",
       "codeload.github.com",
       "objects.githubusercontent.com",
+      "release-assets.githubusercontent.com",
       "gitlab.com",
 
       // Package registries
@@ -62,15 +67,22 @@
       // Local cache, needed by tools like `uv`
       "~/.cache/**",
 
-      // Claude Code state/config
+      // Claude Code
       "~/.claude*",
       "~/.claude/**",
 
-      // Codex state/config
+      // Codex
       "~/.codex/**",
 
-      // Cursor state/config
+      // Cursor
       "~/.cursor/**",
+
+      // OpenCode
+      "~/.opencode/**",
+      "~/.local/state/**",
+
+      // Gemini CLI
+      "~/.gemini/**",
 
       // Package manager caches
       "~/.npm/_cacache",
@@ -87,10 +99,7 @@
 
       // XDG directories for app configs/data
       "~/.local/share/**",
-      "~/.config/**",
-
-      // OpenCode state
-      "~/.opencode/**"
+      "~/.config/**"
     ],
 
     "denyWrite": [
