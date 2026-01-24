@@ -102,6 +102,7 @@ Configuration file format (~/.fence.json):
 	rootCmd.Flags().SetInterspersed(true)
 
 	rootCmd.AddCommand(newImportCmd())
+	rootCmd.AddCommand(newCompletionCmd(rootCmd))
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -388,6 +389,51 @@ Examples:
 	cmd.Flags().BoolVar(&noExtend, "no-extend", false, "Don't extend any template (minimal config)")
 	cmd.MarkFlagsMutuallyExclusive("extend", "no-extend")
 
+	return cmd
+}
+
+// newCompletionCmd creates the completion subcommand for shell completions.
+func newCompletionCmd(rootCmd *cobra.Command) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "completion [bash|zsh|fish|powershell]",
+		Short: "Generate shell completion scripts",
+		Long: `Generate shell completion scripts for fence.
+
+Examples:
+  # Bash (load in current session)
+  source <(fence completion bash)
+
+  # Zsh (load in current session)
+  source <(fence completion zsh)
+
+  # Fish (load in current session)
+  fence completion fish | source
+
+  # PowerShell (load in current session)
+  fence completion powershell | Out-String | Invoke-Expression
+
+To persist completions, redirect output to the appropriate completions
+directory for your shell (e.g., /etc/bash_completion.d/ for bash,
+${fpath[1]}/_fence for zsh, ~/.config/fish/completions/fence.fish for fish).
+`,
+		DisableFlagsInUseLine: true,
+		ValidArgs:             []string{"bash", "zsh", "fish", "powershell"},
+		Args:                  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch args[0] {
+			case "bash":
+				return rootCmd.GenBashCompletionV2(os.Stdout, true)
+			case "zsh":
+				return rootCmd.GenZshCompletion(os.Stdout)
+			case "fish":
+				return rootCmd.GenFishCompletion(os.Stdout, true)
+			case "powershell":
+				return rootCmd.GenPowerShellCompletionWithDesc(os.Stdout)
+			default:
+				return fmt.Errorf("unsupported shell: %s", args[0])
+			}
+		},
+	}
 	return cmd
 }
 
