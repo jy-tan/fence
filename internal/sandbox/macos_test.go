@@ -176,3 +176,60 @@ func TestMacOS_ProfileNetworkSection(t *testing.T) {
 		})
 	}
 }
+
+// TestExpandMacOSTmpPaths verifies that /tmp and /private/tmp are properly expanded.
+func TestExpandMacOSTmpPaths(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []string
+		want  []string
+	}{
+		{
+			name:  "adds /private/tmp when only /tmp present",
+			input: []string{".", "/tmp"},
+			want:  []string{".", "/tmp", "/private/tmp"},
+		},
+		{
+			name:  "adds /tmp when only /private/tmp present",
+			input: []string{".", "/private/tmp"},
+			want:  []string{".", "/private/tmp", "/tmp"},
+		},
+		{
+			name:  "no change when both present",
+			input: []string{".", "/tmp", "/private/tmp"},
+			want:  []string{".", "/tmp", "/private/tmp"},
+		},
+		{
+			name:  "no change when neither present",
+			input: []string{".", "~/.cache"},
+			want:  []string{".", "~/.cache"},
+		},
+		{
+			name:  "handles /tmp subdirectory",
+			input: []string{".", "/tmp/fence"},
+			want:  []string{".", "/tmp/fence", "/private/tmp"},
+		},
+		{
+			name:  "handles /private/tmp subdirectory",
+			input: []string{".", "/private/tmp/fence"},
+			want:  []string{".", "/private/tmp/fence", "/tmp"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := expandMacOSTmpPaths(tt.input)
+
+			if len(got) != len(tt.want) {
+				t.Errorf("expandMacOSTmpPaths() = %v, want %v", got, tt.want)
+				return
+			}
+
+			for i, v := range got {
+				if v != tt.want[i] {
+					t.Errorf("expandMacOSTmpPaths()[%d] = %v, want %v", i, v, tt.want[i])
+				}
+			}
+		})
+	}
+}
