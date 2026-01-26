@@ -84,31 +84,36 @@ func getAncestorDirectories(pathStr string) []string {
 	return ancestors
 }
 
-// expandMacOSTmpPaths ensures both /tmp and /private/tmp are allowed when either is specified.
+// expandMacOSTmpPaths mirrors /tmp paths to /private/tmp equivalents and vice versa.
 // On macOS, /tmp is a symlink to /private/tmp, and symlink resolution can fail if paths
 // don't exist yet. Adding both variants ensures sandbox rules match kernel-resolved paths.
 func expandMacOSTmpPaths(paths []string) []string {
-	hasTmp := false
-	hasPrivateTmp := false
-
+	seen := make(map[string]bool)
 	for _, p := range paths {
-		if p == "/tmp" || strings.HasPrefix(p, "/tmp/") {
-			hasTmp = true
+		seen[p] = true
+	}
+
+	var additions []string
+	for _, p := range paths {
+		var mirror string
+		switch {
+		case p == "/tmp":
+			mirror = "/private/tmp"
+		case p == "/private/tmp":
+			mirror = "/tmp"
+		case strings.HasPrefix(p, "/tmp/"):
+			mirror = "/private" + p
+		case strings.HasPrefix(p, "/private/tmp/"):
+			mirror = strings.TrimPrefix(p, "/private")
 		}
-		if p == "/private/tmp" || strings.HasPrefix(p, "/private/tmp/") {
-			hasPrivateTmp = true
+
+		if mirror != "" && !seen[mirror] {
+			seen[mirror] = true
+			additions = append(additions, mirror)
 		}
 	}
 
-	result := paths
-	if hasTmp && !hasPrivateTmp {
-		result = append(result, "/private/tmp")
-	}
-	if hasPrivateTmp && !hasTmp {
-		result = append(result, "/tmp")
-	}
-
-	return result
+	return append(paths, additions...)
 }
 
 // getTmpdirParent gets the TMPDIR parent if it matches macOS pattern.
