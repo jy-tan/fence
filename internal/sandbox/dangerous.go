@@ -91,7 +91,6 @@ func GetDefaultReadablePaths() []string {
 		"/private/etc",
 		"/private/var/db",
 		"/private/var/run",
-		"/var",
 
 		// Linux distributions may have these
 		"/opt",
