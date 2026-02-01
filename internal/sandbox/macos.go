@@ -188,7 +188,11 @@ func generateReadRules(defaultDenyRead bool, allowPaths, denyPaths []string, log
 		rules = append(rules, "(allow file-read*)")
 	}
 
-	// In both modes, deny specific paths (denyRead takes precedence)
+	// In both modes, deny specific paths (denyRead takes precedence).
+	// Note: We use file-read* (not file-read-data) so denied paths are fully hidden.
+	// In defaultDenyRead mode, this overrides the global file-read-metadata allow,
+	// meaning denied paths can't even be listed or stat'd - more restrictive than
+	// default mode where denied paths are still visible but unreadable.
 	for _, pathPattern := range denyPaths {
 		normalized := NormalizePath(pathPattern)
 

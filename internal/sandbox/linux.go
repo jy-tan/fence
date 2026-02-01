@@ -365,9 +365,10 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		}
 
 		// Bind essential system paths read-only
+		// Skip /dev, /proc, /tmp as they're mounted with special options below
 		for _, systemPath := range GetDefaultReadablePaths() {
 			if systemPath == "/dev" || systemPath == "/proc" || systemPath == "/tmp" ||
-				systemPath == "/private/tmp" || systemPath == "/sys" {
+				systemPath == "/private/tmp" {
 				continue
 			}
 			if fileExists(systemPath) {
@@ -377,9 +378,12 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 
 		// Bind user-specified allowRead paths
 		if cfg != nil && cfg.Filesystem.AllowRead != nil {
+			boundPaths := make(map[string]bool)
+
 			expandedPaths := ExpandGlobPatterns(cfg.Filesystem.AllowRead)
 			for _, p := range expandedPaths {
-				if fileExists(p) && !strings.HasPrefix(p, "/dev/") && !strings.HasPrefix(p, "/proc/") {
+				if fileExists(p) && !strings.HasPrefix(p, "/dev/") && !strings.HasPrefix(p, "/proc/") && !boundPaths[p] {
+					boundPaths[p] = true
 					bwrapArgs = append(bwrapArgs, "--ro-bind", p, p)
 				}
 			}
@@ -387,7 +391,8 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 			for _, p := range cfg.Filesystem.AllowRead {
 				normalized := NormalizePath(p)
 				if !ContainsGlobChars(normalized) && fileExists(normalized) &&
-					!strings.HasPrefix(normalized, "/dev/") && !strings.HasPrefix(normalized, "/proc/") {
+					!strings.HasPrefix(normalized, "/dev/") && !strings.HasPrefix(normalized, "/proc/") && !boundPaths[normalized] {
+					boundPaths[normalized] = true
 					bwrapArgs = append(bwrapArgs, "--ro-bind", normalized, normalized)
 				}
 			}
