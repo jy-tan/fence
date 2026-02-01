@@ -126,6 +126,63 @@ func TestCodeTemplate(t *testing.T) {
 	}
 }
 
+func TestCodeStrictTemplate(t *testing.T) {
+	cfg, err := Load("code-strict")
+	if err != nil {
+		t.Fatalf("failed to load code-strict template: %v", err)
+	}
+
+	// Should inherit AllowPty from code template
+	if !cfg.AllowPty {
+		t.Error("code-strict should inherit AllowPty=true from code")
+	}
+
+	// Should have defaultDenyRead enabled
+	if !cfg.Filesystem.DefaultDenyRead {
+		t.Error("code-strict should have DefaultDenyRead=true")
+	}
+
+	// Should have allowRead with current directory
+	if len(cfg.Filesystem.AllowRead) == 0 {
+		t.Error("code-strict should have allowRead paths")
+	}
+	hasCurrentDir := false
+	for _, path := range cfg.Filesystem.AllowRead {
+		if path == "." {
+			hasCurrentDir = true
+			break
+		}
+	}
+	if !hasCurrentDir {
+		t.Error("code-strict should allow reading current directory")
+	}
+
+	// Should inherit allowWrite from code
+	if len(cfg.Filesystem.AllowWrite) == 0 {
+		t.Error("code-strict should inherit allowWrite from code")
+	}
+
+	// Should inherit denyWrite from code
+	if len(cfg.Filesystem.DenyWrite) == 0 {
+		t.Error("code-strict should inherit denyWrite from code")
+	}
+
+	// Should inherit allowed domains from code
+	if len(cfg.Network.AllowedDomains) == 0 {
+		t.Error("code-strict should inherit allowed domains from code")
+	}
+
+	// Should inherit denied commands from code
+	if len(cfg.Command.Deny) == 0 {
+		t.Error("code-strict should inherit denied commands from code")
+	}
+
+	// Extends should be cleared after resolution
+	if cfg.Extends != "" {
+		t.Error("extends should be cleared after loading")
+	}
+}
+
 func TestCodeRelaxedTemplate(t *testing.T) {
 	cfg, err := Load("code-relaxed")
 	if err != nil {

@@ -355,8 +355,47 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		}
 	}
 
-	// Start with read-only root filesystem (default deny writes)
-	bwrapArgs = append(bwrapArgs, "--ro-bind", "/", "/")
+	defaultDenyRead := cfg != nil && cfg.Filesystem.DefaultDenyRead
+
+	if defaultDenyRead {
+		// In defaultDenyRead mode, we only bind essential system paths read-only
+		// and user-specified allowRead paths. Everything else is inaccessible.
+		if opts.Debug {
+			fmt.Fprintf(os.Stderr, "[fence:linux] DefaultDenyRead mode enabled - binding only essential system paths\n")
+		}
+
+		// Bind essential system paths read-only
+		for _, systemPath := range GetDefaultReadablePaths() {
+			if systemPath == "/dev" || systemPath == "/proc" || systemPath == "/tmp" ||
+				systemPath == "/private/tmp" || systemPath == "/sys" {
+				continue
+			}
+			if fileExists(systemPath) {
+				bwrapArgs = append(bwrapArgs, "--ro-bind", systemPath, systemPath)
+			}
+		}
+
+		// Bind user-specified allowRead paths
+		if cfg != nil && cfg.Filesystem.AllowRead != nil {
+			expandedPaths := ExpandGlobPatterns(cfg.Filesystem.AllowRead)
+			for _, p := range expandedPaths {
+				if fileExists(p) && !strings.HasPrefix(p, "/dev/") && !strings.HasPrefix(p, "/proc/") {
+					bwrapArgs = append(bwrapArgs, "--ro-bind", p, p)
+				}
+			}
+			// Add non-glob paths
+			for _, p := range cfg.Filesystem.AllowRead {
+				normalized := NormalizePath(p)
+				if !ContainsGlobChars(normalized) && fileExists(normalized) &&
+					!strings.HasPrefix(normalized, "/dev/") && !strings.HasPrefix(normalized, "/proc/") {
+					bwrapArgs = append(bwrapArgs, "--ro-bind", normalized, normalized)
+				}
+			}
+		}
+	} else {
+		// Default mode: bind entire root filesystem read-only
+		bwrapArgs = append(bwrapArgs, "--ro-bind", "/", "/")
+	}
 
 	// Mount special filesystems
 	// Use --dev-bind for /dev instead of --dev to preserve host device permissions

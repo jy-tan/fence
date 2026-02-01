@@ -43,6 +43,7 @@ var templateDescriptions = map[string]string{
 	"git-readonly":      "Blocks destructive commands like git push, rm -rf, etc.",
 	"code":              "Production-ready config for AI coding agents (Claude Code, Codex, Copilot, etc.)",
 	"code-relaxed":      "Like 'code' but allows direct network for apps that ignore HTTP_PROXY (cursor-agent, opencode)",
+	"code-strict":       "Like 'code' but denies reads by default; only allows reading the current project directory and essential system paths",
 }
 
 // List returns all available template names sorted alphabetically.

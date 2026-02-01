@@ -112,6 +112,15 @@ func TestConfigValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "empty allowRead path",
+			config: Config{
+				Filesystem: FilesystemConfig{
+					AllowRead: []string{""},
+				},
+			},
+			wantErr: true,
+		},
+		{
 			name: "empty denyRead path",
 			config: Config{
 				Filesystem: FilesystemConfig{
@@ -450,6 +459,50 @@ func TestMerge(t *testing.T) {
 		}
 		if len(result.Filesystem.DenyWrite) != 1 {
 			t.Errorf("expected 1 deny write path, got %d", len(result.Filesystem.DenyWrite))
+		}
+	})
+
+	t.Run("merge defaultDenyRead and allowRead", func(t *testing.T) {
+		base := &Config{
+			Filesystem: FilesystemConfig{
+				DefaultDenyRead: true,
+				AllowRead:       []string{"/home/user/project"},
+			},
+		}
+		override := &Config{
+			Filesystem: FilesystemConfig{
+				AllowRead: []string{"/home/user/other"},
+			},
+		}
+		result := Merge(base, override)
+
+		if !result.Filesystem.DefaultDenyRead {
+			t.Error("expected DefaultDenyRead to be true (from base)")
+		}
+		if len(result.Filesystem.AllowRead) != 2 {
+			t.Errorf("expected 2 allowRead paths, got %d: %v", len(result.Filesystem.AllowRead), result.Filesystem.AllowRead)
+		}
+	})
+
+	t.Run("merge defaultDenyRead from override", func(t *testing.T) {
+		base := &Config{
+			Filesystem: FilesystemConfig{
+				DefaultDenyRead: false,
+			},
+		}
+		override := &Config{
+			Filesystem: FilesystemConfig{
+				DefaultDenyRead: true,
+				AllowRead:       []string{"/home/user/project"},
+			},
+		}
+		result := Merge(base, override)
+
+		if !result.Filesystem.DefaultDenyRead {
+			t.Error("expected DefaultDenyRead to be true (from override)")
+		}
+		if len(result.Filesystem.AllowRead) != 1 {
+			t.Errorf("expected 1 allowRead path, got %d", len(result.Filesystem.AllowRead))
 		}
 	})
 

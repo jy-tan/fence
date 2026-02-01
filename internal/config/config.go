@@ -37,10 +37,12 @@ type NetworkConfig struct {
 
 // FilesystemConfig defines filesystem restrictions.
 type FilesystemConfig struct {
-	DenyRead       []string `json:"denyRead"`
-	AllowWrite     []string `json:"allowWrite"`
-	DenyWrite      []string `json:"denyWrite"`
-	AllowGitConfig bool     `json:"allowGitConfig,omitempty"`
+	DefaultDenyRead bool     `json:"defaultDenyRead,omitempty"` // If true, deny reads by default except system paths and AllowRead
+	AllowRead       []string `json:"allowRead"`                 // Paths to allow reading (used when DefaultDenyRead is true)
+	DenyRead        []string `json:"denyRead"`
+	AllowWrite      []string `json:"allowWrite"`
+	DenyWrite       []string `json:"denyWrite"`
+	AllowGitConfig  bool     `json:"allowGitConfig,omitempty"`
 }
 
 // CommandConfig defines command restrictions.
@@ -179,6 +181,9 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if slices.Contains(c.Filesystem.AllowRead, "") {
+		return errors.New("filesystem.allowRead contains empty path")
+	}
 	if slices.Contains(c.Filesystem.DenyRead, "") {
 		return errors.New("filesystem.denyRead contains empty path")
 	}
@@ -427,7 +432,11 @@ func Merge(base, override *Config) *Config {
 		},
 
 		Filesystem: FilesystemConfig{
+			// Boolean fields: true if either enables it
+			DefaultDenyRead: base.Filesystem.DefaultDenyRead || override.Filesystem.DefaultDenyRead,
+
 			// Append slices
+			AllowRead:  mergeStrings(base.Filesystem.AllowRead, override.Filesystem.AllowRead),
 			DenyRead:   mergeStrings(base.Filesystem.DenyRead, override.Filesystem.DenyRead),
 			AllowWrite: mergeStrings(base.Filesystem.AllowWrite, override.Filesystem.AllowWrite),
 			DenyWrite:  mergeStrings(base.Filesystem.DenyWrite, override.Filesystem.DenyWrite),

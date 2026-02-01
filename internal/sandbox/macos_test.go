@@ -115,6 +115,8 @@ func buildMacOSParamsForTest(cfg *config.Config) MacOSSandboxParams {
 		AllowAllUnixSockets:     cfg.Network.AllowAllUnixSockets,
 		AllowLocalBinding:       allowLocalBinding,
 		AllowLocalOutbound:      allowLocalOutbound,
+		DefaultDenyRead:         cfg.Filesystem.DefaultDenyRead,
+		ReadAllowPaths:          cfg.Filesystem.AllowRead,
 		ReadDenyPaths:           cfg.Filesystem.DenyRead,
 		WriteAllowPaths:         allowPaths,
 		WriteDenyPaths:          cfg.Filesystem.DenyWrite,
@@ -171,6 +173,89 @@ func TestMacOS_ProfileNetworkSection(t *testing.T) {
 			for _, notWant := range tt.wantNotContain {
 				if strings.Contains(profile, notWant) {
 					t.Errorf("profile should NOT contain %q", notWant)
+				}
+			}
+		})
+	}
+}
+
+// TestMacOS_DefaultDenyRead verifies that the defaultDenyRead option properly restricts filesystem reads.
+func TestMacOS_DefaultDenyRead(t *testing.T) {
+	tests := []struct {
+		name                      string
+		defaultDenyRead           bool
+		allowRead                 []string
+		wantContainsBlanketAllow  bool
+		wantContainsMetadataAllow bool
+		wantContainsSystemAllows  bool
+		wantContainsUserAllowRead bool
+	}{
+		{
+			name:                      "default mode - blanket allow read",
+			defaultDenyRead:           false,
+			allowRead:                 nil,
+			wantContainsBlanketAllow:  true,
+			wantContainsMetadataAllow: false, // No separate metadata allow needed
+			wantContainsSystemAllows:  false, // No need for explicit system allows
+			wantContainsUserAllowRead: false,
+		},
+		{
+			name:                      "defaultDenyRead enabled - metadata allow, system data allows",
+			defaultDenyRead:           true,
+			allowRead:                 nil,
+			wantContainsBlanketAllow:  false,
+			wantContainsMetadataAllow: true, // Should have file-read-metadata for traversal
+			wantContainsSystemAllows:  true, // Should have explicit system path allows
+			wantContainsUserAllowRead: false,
+		},
+		{
+			name:                      "defaultDenyRead with allowRead paths",
+			defaultDenyRead:           true,
+			allowRead:                 []string{"/home/user/project"},
+			wantContainsBlanketAllow:  false,
+			wantContainsMetadataAllow: true,
+			wantContainsSystemAllows:  true,
+			wantContainsUserAllowRead: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := MacOSSandboxParams{
+				Command:         "echo test",
+				HTTPProxyPort:   8080,
+				SOCKSProxyPort:  1080,
+				DefaultDenyRead: tt.defaultDenyRead,
+				ReadAllowPaths:  tt.allowRead,
+			}
+
+			profile := GenerateSandboxProfile(params)
+
+			// Check for blanket "(allow file-read*)" without path restrictions
+			// This appears at the start of read rules section in default mode
+			hasBlanketAllow := strings.Contains(profile, "(allow file-read*)\n")
+			if hasBlanketAllow != tt.wantContainsBlanketAllow {
+				t.Errorf("blanket file-read allow = %v, want %v", hasBlanketAllow, tt.wantContainsBlanketAllow)
+			}
+
+			// Check for file-read-metadata allow (for directory traversal in defaultDenyRead mode)
+			hasMetadataAllow := strings.Contains(profile, "(allow file-read-metadata)")
+			if hasMetadataAllow != tt.wantContainsMetadataAllow {
+				t.Errorf("file-read-metadata allow = %v, want %v", hasMetadataAllow, tt.wantContainsMetadataAllow)
+			}
+
+			// Check for system path allows (e.g., /usr, /bin) - should use file-read-data in strict mode
+			hasSystemAllows := strings.Contains(profile, `(subpath "/usr")`) ||
+				strings.Contains(profile, `(subpath "/bin")`)
+			if hasSystemAllows != tt.wantContainsSystemAllows {
+				t.Errorf("system path allows = %v, want %v\nProfile:\n%s", hasSystemAllows, tt.wantContainsSystemAllows, profile)
+			}
+
+			// Check for user-specified allowRead paths
+			if tt.wantContainsUserAllowRead && len(tt.allowRead) > 0 {
+				hasUserAllow := strings.Contains(profile, tt.allowRead[0])
+				if !hasUserAllow {
+					t.Errorf("user allowRead path %q not found in profile", tt.allowRead[0])
 				}
 			}
 		})

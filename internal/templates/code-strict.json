@@ -1,0 +1,29 @@
+{
+  "extends": "code",
+  "filesystem": {
+    // Deny reads by default, only system paths and allowRead are accessible
+    "defaultDenyRead": true,
+    "allowRead": [
+      // Current working directory
+      ".",
+
+      // macOS preferences (needed by many apps)
+      "~/Library/Preferences",
+
+      // AI coding tool configs (need to read their own settings)
+      "~/.claude",
+      "~/.claude.json",
+      "~/.codex",
+      "~/.cursor",
+      "~/.opencode",
+      "~/.gemini",
+      "~/.factory",
+
+      // XDG config directory
+      "~/.config",
+
+      // Cache directories (some tools read from cache)
+      "~/.cache"
+    ]
+  }
+}
