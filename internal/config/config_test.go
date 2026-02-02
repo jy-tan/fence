@@ -295,9 +295,10 @@ func TestDefaultConfigPath(t *testing.T) {
 	if path == "" {
 		t.Error("DefaultConfigPath() returned empty string")
 	}
-	// Should end with .fence.json
-	if filepath.Base(path) != ".fence.json" {
-		t.Errorf("DefaultConfigPath() = %q, expected to end with .fence.json", path)
+	// Should end with fence.json (either new XDG path or legacy .fence.json)
+	base := filepath.Base(path)
+	if base != "fence.json" && base != ".fence.json" {
+		t.Errorf("DefaultConfigPath() = %q, expected to end with fence.json or .fence.json", path)
 	}
 }
 

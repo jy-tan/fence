@@ -1,6 +1,6 @@
 # Configuration
 
-Fence reads settings from `~/.fence.json` by default (or pass `--settings ./fence.json`). Config files support JSONC.
+Fence reads settings from `~/.config/fence/fence.json` by default (or `~/Library/Application Support/fence/fence.json` on macOS). Legacy `~/.fence.json` is also supported. Pass `--settings ./fence.json` to use a custom path. Config files support JSONC.
 
 Example config:
 
@@ -263,23 +263,23 @@ SSH host patterns support wildcards anywhere:
 If you've been using Claude Code and have already built up permission rules, you can import them into fence:
 
 ```bash
-# Import from default Claude Code settings (~/.claude/settings.json)
+# Preview import (prints JSON to stdout)
 fence import --claude
 
-# Import from a specific file
-fence import --claude -f ~/.claude/settings.json
+# Save to the default config path
+fence import --claude --save
 
-# Import and write to a specific output file
-fence import --claude -o .fence.json
+# Import from a specific file
+fence import --claude -f ~/.claude/settings.json --save
+
+# Save to a specific output file
+fence import --claude -o ./fence.json
 
 # Import without extending any template (minimal config)
-fence import --claude --no-extend
+fence import --claude --no-extend --save
 
 # Import and extend a different template
-fence import --claude --extend local-dev-server
-
-# Import from project-level Claude settings
-fence import --claude -f .claude/settings.local.json -o .fence.json
+fence import --claude --extend local-dev-server --save
 ```
 
 ### Default Template

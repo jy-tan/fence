@@ -80,7 +80,7 @@ fence --help
 
 ### Configuration
 
-Fence reads from `~/.fence.json` by default:
+Fence reads from `~/.config/fence/fence.json` by default (or `~/Library/Application Support/fence/fence.json` on macOS).
 
 ```json
 {
@@ -96,7 +96,7 @@ Use `fence --settings ./custom.json` to specify a different config.
 ### Import from Claude Code
 
 ```bash
-fence import --claude -o ~/.fence.json
+fence import --claude --save
 ```
 
 ## Features

@@ -133,12 +133,38 @@ func Default() *Config {
 }
 
 // DefaultConfigPath returns the default config file path.
+// Uses the OS-preferred config directory (XDG on Linux, ~/Library/Application Support on macOS).
+// Falls back to ~/.fence.json if the new location doesn't exist but the legacy one does.
 func DefaultConfigPath() string {
+	// Try OS-preferred config directory first
+	configDir, err := os.UserConfigDir()
+	if err == nil {
+		newPath := filepath.Join(configDir, "fence", "fence.json")
+		if _, err := os.Stat(newPath); err == nil {
+			return newPath
+		}
+		// Check if parent directory exists (user has set up the new location)
+		// If so, prefer this even if config doesn't exist yet
+		if _, err := os.Stat(filepath.Dir(newPath)); err == nil {
+			return newPath
+		}
+	}
+
+	// Fall back to legacy path if it exists
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ".fence.json"
+		return "fence.json"
 	}
-	return filepath.Join(home, ".fence.json")
+	legacyPath := filepath.Join(home, ".fence.json")
+	if _, err := os.Stat(legacyPath); err == nil {
+		return legacyPath
+	}
+
+	// Neither exists, prefer new XDG-compliant path
+	if configDir, err := os.UserConfigDir(); err == nil {
+		return filepath.Join(configDir, "fence", "fence.json")
+	}
+	return filepath.Join(home, ".config", "fence", "fence.json")
 }
 
 // Load loads configuration from a file path.

@@ -71,7 +71,7 @@ type Config struct {
 }
 ```
 
-- Loads from `~/.fence.json` or custom path
+- Loads from XDG config dir (`~/.config/fence/fence.json` or `~/Library/Application Support/fence/fence.json`) or custom path
 - Falls back to restrictive defaults (block all network, default command deny list)
 - Validates paths and normalizes them
 
@@ -245,7 +245,7 @@ Flow:
 
 ```mermaid
 flowchart TD
-    A["1. CLI parses arguments"] --> B["2. Load config from ~/.fence.json"]
+    A["1. CLI parses arguments"] --> B["2. Load config from XDG config dir"]
     B --> C["3. Create Manager"]
     C --> D["4. Manager.Initialize()"]
 

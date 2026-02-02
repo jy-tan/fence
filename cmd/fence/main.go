@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -55,8 +56,8 @@ func main() {
 with network and filesystem restrictions.
 
 By default, all network access is blocked. Configure allowed domains in
-~/.fence.json or pass a settings file with --settings, or use a built-in
-template with --template.
+~/.config/fence/fence.json (or ~/Library/Application Support/fence/fence.json on macOS)
+or pass a settings file with --settings, or use a built-in template with --template.
 
 Examples:
   fence curl https://example.com          # Will be blocked (no domains allowed)
@@ -68,7 +69,7 @@ Examples:
   fence -p 3000 -c "npm run dev"          # Expose port 3000 for inbound connections
   fence --list-templates                  # Show available built-in templates
 
-Configuration file format (~/.fence.json):
+Configuration file format:
 {
   "network": {
     "allowedDomains": ["github.com", "*.npmjs.org"],
@@ -91,7 +92,7 @@ Configuration file format (~/.fence.json):
 
 	rootCmd.Flags().BoolVarP(&debug, "debug", "d", false, "Enable debug logging")
 	rootCmd.Flags().BoolVarP(&monitor, "monitor", "m", false, "Monitor and log sandbox violations (macOS: log stream, all: proxy denials)")
-	rootCmd.Flags().StringVarP(&settingsPath, "settings", "s", "", "Path to settings file (default: ~/.fence.json)")
+	rootCmd.Flags().StringVarP(&settingsPath, "settings", "s", "", "Path to settings file (default: ~/.config/fence/fence.json)")
 	rootCmd.Flags().StringVarP(&templateName, "template", "t", "", "Use built-in template (e.g., ai-coding-agents, npm-install)")
 	rootCmd.Flags().BoolVar(&listTemplates, "list-templates", false, "List available templates")
 	rootCmd.Flags().StringVarP(&cmdString, "c", "c", "", "Run command string directly (like sh -c)")
@@ -303,6 +304,7 @@ func newImportCmd() *cobra.Command {
 		claudeMode bool
 		inputFile  string
 		outputFile string
+		saveFlag   bool
 		extendTmpl string
 		noExtend   bool
 	)
@@ -320,23 +322,25 @@ for network access (npm, GitHub, LLM providers) and filesystem protections.
 Use --no-extend for a minimal config, or --extend to choose a different template.
 
 Examples:
-  # Import from default Claude Code settings (~/.claude/settings.json)
+  # Preview import (prints JSON to stdout)
   fence import --claude
 
-  # Import from a specific Claude Code settings file
-  fence import --claude -f ~/.claude/settings.json
+  # Save to the default config path
+  #   Linux: ~/.config/fence/fence.json
+  #   macOS: ~/Library/Application Support/fence/fence.json
+  fence import --claude --save
 
-  # Import and write to a specific output file
-  fence import --claude -o .fence.json
+  # Save to a specific output file
+  fence import --claude -o ./fence.json
+
+  # Import from a specific Claude Code settings file
+  fence import --claude -f ~/.claude/settings.json --save
 
   # Import without extending any template (minimal config)
-  fence import --claude --no-extend
+  fence import --claude --no-extend --save
 
   # Import and extend a different template
-  fence import --claude --extend local-dev-server
-
-  # Import from project-level Claude settings
-  fence import --claude -f .claude/settings.local.json -o .fence.json`,
+  fence import --claude --extend local-dev-server --save`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !claudeMode {
 				return fmt.Errorf("no import source specified. Use --claude to import from Claude Code")
@@ -357,13 +361,39 @@ Examples:
 			for _, warning := range result.Warnings {
 				fmt.Fprintf(os.Stderr, "Warning: %s\n", warning)
 			}
+			if len(result.Warnings) > 0 {
+				fmt.Fprintln(os.Stderr)
+			}
 
-			if outputFile != "" {
-				if err := importer.WriteConfig(result.Config, outputFile); err != nil {
+			// Determine output destination
+			var destPath string
+			if saveFlag {
+				destPath = config.DefaultConfigPath()
+			} else if outputFile != "" {
+				destPath = outputFile
+			}
+
+			if destPath != "" {
+				if _, err := os.Stat(destPath); err == nil {
+					fmt.Printf("File %q already exists. Overwrite? [y/N] ", destPath)
+					reader := bufio.NewReader(os.Stdin)
+					response, _ := reader.ReadString('\n')
+					response = strings.TrimSpace(strings.ToLower(response))
+					if response != "y" && response != "yes" {
+						fmt.Println("Aborted.")
+						return nil
+					}
+				}
+
+				if err := os.MkdirAll(filepath.Dir(destPath), 0o750); err != nil {
+					return fmt.Errorf("failed to create config directory: %w", err)
+				}
+
+				if err := importer.WriteConfig(result.Config, destPath); err != nil {
 					return err
 				}
 				fmt.Printf("Imported %d rules from %s\n", result.RulesImported, result.SourcePath)
-				fmt.Printf("Written to %s\n", outputFile)
+				fmt.Printf("Written to %q\n", destPath)
 			} else {
 				// Print clean JSON to stdout, helpful info to stderr (don't interfere with piping)
 				data, err := importer.MarshalConfigJSON(result.Config)
@@ -375,7 +405,7 @@ Examples:
 					fmt.Fprintf(os.Stderr, "\n# Extends %q - inherited rules not shown\n", result.Config.Extends)
 				}
 				fmt.Fprintf(os.Stderr, "# Imported %d rules from %s\n", result.RulesImported, result.SourcePath)
-				fmt.Fprintf(os.Stderr, "# Use -o <file> to write to a file (includes comments)\n")
+				fmt.Fprintf(os.Stderr, "# Use --save to write to the default config path\n")
 			}
 
 			return nil
@@ -384,10 +414,12 @@ Examples:
 
 	cmd.Flags().BoolVar(&claudeMode, "claude", false, "Import from Claude Code settings")
 	cmd.Flags().StringVarP(&inputFile, "file", "f", "", "Path to settings file (default: ~/.claude/settings.json for --claude)")
-	cmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file path (default: stdout)")
+	cmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file path")
+	cmd.Flags().BoolVar(&saveFlag, "save", false, "Save to the default config path")
 	cmd.Flags().StringVar(&extendTmpl, "extend", "", "Template to extend (default: code)")
 	cmd.Flags().BoolVar(&noExtend, "no-extend", false, "Don't extend any template (minimal config)")
 	cmd.MarkFlagsMutuallyExclusive("extend", "no-extend")
+	cmd.MarkFlagsMutuallyExclusive("save", "output")
 
 	return cmd
 }

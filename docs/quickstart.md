@@ -66,7 +66,7 @@ curl: (56) CONNECT tunnel failed, response 403
 
 ## Allow Specific Domains
 
-Create a config file at `~/.fence.json`:
+Create a config file at `~/.config/fence/fence.json` (or `~/Library/Application Support/fence/fence.json` on macOS):
 
 ```json
 {
