@@ -161,7 +161,7 @@ func DefaultConfigPath() string {
 	}
 
 	// Neither exists, prefer new XDG-compliant path
-	if configDir, err := os.UserConfigDir(); err == nil {
+	if configDir != "" {
 		return filepath.Join(configDir, "fence", "fence.json")
 	}
 	return filepath.Join(home, ".config", "fence", "fence.json")

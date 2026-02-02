@@ -83,7 +83,7 @@ cfg.Network.AllowedDomains = []string{"example.com"}
 Loads configuration from a JSON file. Supports JSONC (comments allowed).
 
 ```go
-cfg, err := fence.LoadConfig("~/.config/fence/fence.json")
+cfg, err := fence.LoadConfig(fence.DefaultConfigPath())
 if err != nil {
     log.Fatal(err)
 }

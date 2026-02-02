@@ -92,7 +92,7 @@ Configuration file format:
 
 	rootCmd.Flags().BoolVarP(&debug, "debug", "d", false, "Enable debug logging")
 	rootCmd.Flags().BoolVarP(&monitor, "monitor", "m", false, "Monitor and log sandbox violations (macOS: log stream, all: proxy denials)")
-	rootCmd.Flags().StringVarP(&settingsPath, "settings", "s", "", "Path to settings file (default: ~/.config/fence/fence.json)")
+	rootCmd.Flags().StringVarP(&settingsPath, "settings", "s", "", "Path to settings file (default: OS config directory)")
 	rootCmd.Flags().StringVarP(&templateName, "template", "t", "", "Use built-in template (e.g., ai-coding-agents, npm-install)")
 	rootCmd.Flags().BoolVar(&listTemplates, "list-templates", false, "List available templates")
 	rootCmd.Flags().StringVarP(&cmdString, "c", "c", "", "Run command string directly (like sh -c)")
@@ -305,6 +305,7 @@ func newImportCmd() *cobra.Command {
 		inputFile  string
 		outputFile string
 		saveFlag   bool
+		forceFlag  bool
 		extendTmpl string
 		noExtend   bool
 	)
@@ -374,14 +375,16 @@ Examples:
 			}
 
 			if destPath != "" {
-				if _, err := os.Stat(destPath); err == nil {
-					fmt.Printf("File %q already exists. Overwrite? [y/N] ", destPath)
-					reader := bufio.NewReader(os.Stdin)
-					response, _ := reader.ReadString('\n')
-					response = strings.TrimSpace(strings.ToLower(response))
-					if response != "y" && response != "yes" {
-						fmt.Println("Aborted.")
-						return nil
+				if !forceFlag {
+					if _, err := os.Stat(destPath); err == nil {
+						fmt.Printf("File %q already exists. Overwrite? [y/N] ", destPath)
+						reader := bufio.NewReader(os.Stdin)
+						response, _ := reader.ReadString('\n')
+						response = strings.TrimSpace(strings.ToLower(response))
+						if response != "y" && response != "yes" {
+							fmt.Println("Aborted.")
+							return nil
+						}
 					}
 				}
 
@@ -416,6 +419,7 @@ Examples:
 	cmd.Flags().StringVarP(&inputFile, "file", "f", "", "Path to settings file (default: ~/.claude/settings.json for --claude)")
 	cmd.Flags().StringVarP(&outputFile, "output", "o", "", "Output file path")
 	cmd.Flags().BoolVar(&saveFlag, "save", false, "Save to the default config path")
+	cmd.Flags().BoolVarP(&forceFlag, "force", "y", false, "Overwrite existing file without prompting")
 	cmd.Flags().StringVar(&extendTmpl, "extend", "", "Template to extend (default: code)")
 	cmd.Flags().BoolVar(&noExtend, "no-extend", false, "Don't extend any template (minimal config)")
 	cmd.MarkFlagsMutuallyExclusive("extend", "no-extend")
