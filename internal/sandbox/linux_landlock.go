@@ -71,6 +71,16 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 		}
 	}
 
+	// If /etc/resolv.conf is a cross-mount symlink (e.g., -> /mnt/wsl/resolv.conf
+	// on WSL), Landlock needs a read rule for the resolved target's parent dir,
+	// otherwise following the symlink hits EACCES.
+	if target, err := filepath.EvalSymlinks("/etc/resolv.conf"); err == nil && target != "/etc/resolv.conf" {
+		targetDir := filepath.Dir(target)
+		if err := ruleset.AllowRead(targetDir); err != nil && debug {
+			fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add resolv.conf target dir %s: %v\n", targetDir, err)
+		}
+	}
+
 	// Current working directory - read access (may be upgraded to write below)
 	if cwd != "" {
 		if err := ruleset.AllowRead(cwd); err != nil && debug {
