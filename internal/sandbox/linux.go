@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Use-Tusk/fence/internal/config"
@@ -239,6 +240,37 @@ func canMountOver(path string) bool {
 	return fileExists(path)
 }
 
+// sameDevice returns true if both paths reside on the same filesystem (device).
+func sameDevice(path1, path2 string) bool {
+	var s1, s2 syscall.Stat_t
+	if syscall.Stat(path1, &s1) != nil || syscall.Stat(path2, &s2) != nil {
+		return true // err on the side of caution
+	}
+	return s1.Dev == s2.Dev
+}
+
+// intermediaryDirs returns the chain of directories between root and targetDir,
+// from shallowest to deepest. Used to create --dir entries so bwrap can set up
+// mount points inside otherwise-empty mount-point stubs.
+//
+// Example: intermediaryDirs("/", "/run/systemd/resolve") ->
+//
+//	["/run", "/run/systemd", "/run/systemd/resolve"]
+func intermediaryDirs(root, targetDir string) []string {
+	rel, err := filepath.Rel(root, targetDir)
+	if err != nil {
+		return []string{targetDir}
+	}
+	parts := strings.Split(rel, string(filepath.Separator))
+	dirs := make([]string, 0, len(parts))
+	current := root
+	for _, part := range parts {
+		current = filepath.Join(current, part)
+		dirs = append(dirs, current)
+	}
+	return dirs
+}
+
 // getMandatoryDenyPaths returns concrete paths (not globs) that must be protected.
 // This expands the glob patterns from GetMandatoryDenyPatterns into real paths.
 func getMandatoryDenyPaths(cwd string) []string {
@@ -414,13 +446,21 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	// Ensure /etc/resolv.conf is readable inside the sandbox.
 	// On some systems (e.g., WSL), /etc/resolv.conf is a symlink to a path
 	// on a separate mount point (e.g., /mnt/wsl/resolv.conf) that isn't
-	// reachable after --ro-bind / / (non-recursive bind). We resolve the
-	// symlink and bind the real file directly so DNS resolution works.
+	// reachable after --ro-bind / / (non-recursive bind). When the target
+	// is on a different filesystem, we create intermediate directories and
+	// bind the real file at its original location so the symlink resolves.
 	if target, err := filepath.EvalSymlinks("/etc/resolv.conf"); err == nil && target != "/etc/resolv.conf" {
-		if fileExists(target) {
-			bwrapArgs = append(bwrapArgs, "--ro-bind", target, "/etc/resolv.conf")
+		if fileExists(target) && !sameDevice("/", target) {
+			// Create parent directories so bwrap can set up the mount point.
+			// These dirs are empty mount-point stubs from the root bind, so
+			// --dir is safe (no real content to lose).
+			targetDir := filepath.Dir(target)
+			for _, dir := range intermediaryDirs("/", targetDir) {
+				bwrapArgs = append(bwrapArgs, "--dir", dir)
+			}
+			bwrapArgs = append(bwrapArgs, "--ro-bind", target, target)
 			if opts.Debug {
-				fmt.Fprintf(os.Stderr, "[fence:linux] Resolved /etc/resolv.conf symlink -> %s\n", target)
+				fmt.Fprintf(os.Stderr, "[fence:linux] Resolved /etc/resolv.conf symlink -> %s (cross-mount)\n", target)
 			}
 		}
 	}
