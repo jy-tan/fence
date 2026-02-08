@@ -449,7 +449,11 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	// reachable after --ro-bind / / (non-recursive bind). When the target
 	// is on a different filesystem, we create intermediate directories and
 	// bind the real file at its original location so the symlink resolves.
-	if target, err := filepath.EvalSymlinks("/etc/resolv.conf"); err == nil && target != "/etc/resolv.conf" {
+	//
+	// Skipped in defaultDenyRead mode: system paths like /run, /sys are
+	// individually bound there, so symlink targets under them are already
+	// reachable, and a --tmpfs would overwrite those explicit binds.
+	if target, err := filepath.EvalSymlinks("/etc/resolv.conf"); !defaultDenyRead && err == nil && target != "/etc/resolv.conf" {
 		// Skip targets under specially-mounted dirs — a --tmpfs there would
 		// overwrite the --dev-bind or --proc mounts established above.
 		targetUnderSpecialMount := strings.HasPrefix(target, "/dev/") ||
