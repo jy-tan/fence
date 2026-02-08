@@ -449,16 +449,24 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	// reachable after --ro-bind / / (non-recursive bind). When the target
 	// is on a different filesystem, we create intermediate directories and
 	// bind the real file at its original location so the symlink resolves.
-	//
-	// Skipped in defaultDenyRead mode: system paths like /run, /sys are
-	// individually bound there, so symlink targets under them are already
-	// reachable, and a --tmpfs would overwrite those explicit binds.
-	if target, err := filepath.EvalSymlinks("/etc/resolv.conf"); !defaultDenyRead && err == nil && target != "/etc/resolv.conf" {
+	if target, err := filepath.EvalSymlinks("/etc/resolv.conf"); err == nil && target != "/etc/resolv.conf" {
 		// Skip targets under specially-mounted dirs — a --tmpfs there would
 		// overwrite the --dev-bind or --proc mounts established above.
 		targetUnderSpecialMount := strings.HasPrefix(target, "/dev/") ||
 			strings.HasPrefix(target, "/proc/") ||
 			strings.HasPrefix(target, "/tmp/")
+		// In defaultDenyRead mode, also skip if the target is under a path
+		// already individually bound (e.g., /run, /sys) — a --tmpfs would
+		// overwrite that explicit bind. Targets under unbound paths like
+		// /mnt/wsl still need the fix.
+		if defaultDenyRead {
+			for _, p := range GetDefaultReadablePaths() {
+				if strings.HasPrefix(target, p+"/") {
+					targetUnderSpecialMount = true
+					break
+				}
+			}
+		}
 		if fileExists(target) && !sameDevice("/", target) && !targetUnderSpecialMount {
 			// Make the symlink target reachable by creating its parent dirs.
 			// Walk down from / to the target's parent: skip dirs on the root
