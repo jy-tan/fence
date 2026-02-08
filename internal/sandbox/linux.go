@@ -452,11 +452,16 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	if target, err := filepath.EvalSymlinks("/etc/resolv.conf"); err == nil && target != "/etc/resolv.conf" {
 		if fileExists(target) && !sameDevice("/", target) {
 			// Create parent directories so bwrap can set up the mount point.
-			// These dirs are empty mount-point stubs from the root bind, so
-			// --dir is safe (no real content to lose).
+			// The first dir uses --tmpfs to override the read-only mount-point
+			// stub from --ro-bind / / (--dir is a no-op on existing dirs).
+			// Subsequent dirs use --dir inside the now-writable tmpfs.
 			targetDir := filepath.Dir(target)
-			for _, dir := range intermediaryDirs("/", targetDir) {
-				bwrapArgs = append(bwrapArgs, "--dir", dir)
+			for i, dir := range intermediaryDirs("/", targetDir) {
+				if i == 0 {
+					bwrapArgs = append(bwrapArgs, "--tmpfs", dir)
+				} else {
+					bwrapArgs = append(bwrapArgs, "--dir", dir)
+				}
 			}
 			bwrapArgs = append(bwrapArgs, "--ro-bind", target, target)
 			if opts.Debug {
