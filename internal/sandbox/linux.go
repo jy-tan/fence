@@ -451,19 +451,28 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	// bind the real file at its original location so the symlink resolves.
 	if target, err := filepath.EvalSymlinks("/etc/resolv.conf"); err == nil && target != "/etc/resolv.conf" {
 		if fileExists(target) && !sameDevice("/", target) {
-			// Create parent directories so bwrap can set up the mount point.
-			// The first dir uses --tmpfs to override the read-only mount-point
-			// stub from --ro-bind / / (--dir is a no-op on existing dirs).
-			// Subsequent dirs use --dir inside the now-writable tmpfs.
+			// Make the symlink target reachable by creating its parent dirs.
+			// Walk down from / to the target's parent: skip dirs on the root
+			// device (they have real content like /mnt/c, /mnt/d on WSL),
+			// apply --tmpfs at the mount boundary (first dir on a different
+			// device — an empty mount-point stub safe to replace), then --dir
+			// for any deeper subdirectories inside the now-writable tmpfs.
 			targetDir := filepath.Dir(target)
-			for i, dir := range intermediaryDirs("/", targetDir) {
-				if i == 0 {
-					bwrapArgs = append(bwrapArgs, "--tmpfs", dir)
+			mountBoundaryFound := false
+			for _, dir := range intermediaryDirs("/", targetDir) {
+				if !mountBoundaryFound {
+					if !sameDevice("/", dir) {
+						bwrapArgs = append(bwrapArgs, "--tmpfs", dir)
+						mountBoundaryFound = true
+					}
+					// skip dirs still on root device
 				} else {
 					bwrapArgs = append(bwrapArgs, "--dir", dir)
 				}
 			}
-			bwrapArgs = append(bwrapArgs, "--ro-bind", target, target)
+			if mountBoundaryFound {
+				bwrapArgs = append(bwrapArgs, "--ro-bind", target, target)
+			}
 			if opts.Debug {
 				fmt.Fprintf(os.Stderr, "[fence:linux] Resolved /etc/resolv.conf symlink -> %s (cross-mount)\n", target)
 			}
