@@ -450,7 +450,12 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	// is on a different filesystem, we create intermediate directories and
 	// bind the real file at its original location so the symlink resolves.
 	if target, err := filepath.EvalSymlinks("/etc/resolv.conf"); err == nil && target != "/etc/resolv.conf" {
-		if fileExists(target) && !sameDevice("/", target) {
+		// Skip targets under specially-mounted dirs — a --tmpfs there would
+		// overwrite the --dev-bind or --proc mounts established above.
+		targetUnderSpecialMount := strings.HasPrefix(target, "/dev/") ||
+			strings.HasPrefix(target, "/proc/") ||
+			strings.HasPrefix(target, "/tmp/")
+		if fileExists(target) && !sameDevice("/", target) && !targetUnderSpecialMount {
 			// Make the symlink target reachable by creating its parent dirs.
 			// Walk down from / to the target's parent: skip dirs on the root
 			// device (they have real content like /mnt/c, /mnt/d on WSL),
