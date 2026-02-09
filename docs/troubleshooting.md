@@ -151,6 +151,35 @@ If you're running a server inside the sandbox that must accept connections:
 - set `network.allowLocalBinding: true` (to bind)
 - use `-p <port>` (to expose inbound port(s))
 
+## WSL: "Permission denied" for wslpath or Windows .exe files
+
+On WSL2, commands like `wslpath` or `powershell.exe` may fail with "Permission denied" inside the sandbox.
+
+**Common causes:**
+
+- **`wslpath` fails**: Fence auto-detects WSL and allows `/init` (the binfmt_misc interpreter that `wslpath` symlinks to) via `wslInterop`. If this still fails, check that `wslInterop` is not set to `false` in your config.
+- **Windows `.exe` files fail**: Paths under `/mnt/` are not auto-allowed. You must add the specific executables you need.
+
+**Fix**: Add the Windows executables you need to `allowExecute`:
+
+```json
+{
+  "extends": "code",
+  "filesystem": {
+    "allowExecute": [
+      "/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe"
+    ]
+  }
+}
+```
+
+Use `allowExecute` (not `allowRead` or `allowWrite`) for the tightest permissions. Only add the specific executables you need — avoid allowing all of `/mnt`.
+
+> [!NOTE]
+> You do **not** need to add `/init` — it is handled automatically by `wslInterop` (enabled by default on WSL). Set `"wslInterop": false` to disable it.
+
+See [Linux Security Features > WSL2](linux-security-features.md#wsl2-windows-subsystem-for-linux) for details.
+
 ## "Permission denied" on file writes
 
 Writes are denied by default.

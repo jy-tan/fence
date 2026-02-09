@@ -91,6 +91,49 @@ This provides **defense-in-depth**: both bwrap mounts AND Landlock kernel restri
 - **Impact**: Cannot run fence on Linux
 - **Solution**: Install socat: `apt install socat` or `dnf install socat`
 
+## WSL2 (Windows Subsystem for Linux)
+
+On WSL2, fence detects the WSL environment and reports it in feature detection (`wsl` in the summary line). The WSL init binary (`/init`) is automatically allowed via `wslInterop`. However, Windows executables under `/mnt/` must be configured explicitly.
+
+### How it works
+
+Fence auto-detects WSL by checking for `/proc/sys/fs/binfmt_misc/WSLInterop` or `/proc/sys/fs/binfmt_misc/WSLInterop-late`. When detected:
+
+- The `wsl` flag appears in feature detection output
+- `/init` is automatically granted execute permission in Landlock (via `wslInterop`, enabled by default on WSL)
+
+`/init` is WSL's init binary — a statically-linked ELF executable. The kernel's binfmt_misc subsystem uses it as the interpreter for Windows PE executables. `/usr/bin/wslpath` is a symlink to `/init`.
+
+### What still needs config
+
+Windows drive mounts (`/mnt/c/`, `/mnt/d/`, etc.) are **not** auto-allowed — you must add specific executables and paths via `allowExecute` / `allowWrite`:
+
+```json
+{
+  "extends": "code",
+  "filesystem": {
+    "allowExecute": [
+      "/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe"
+    ],
+    "allowWrite": ["/mnt/c/temp"]
+  }
+}
+```
+
+### Disabling WSL interop
+
+To prevent `/init` from being auto-allowed (e.g., to fully lock down the sandbox on WSL):
+
+```json
+{
+  "filesystem": {
+    "wslInterop": false
+  }
+}
+```
+
+See [Configuration > WSL Example](configuration.md#wsl-windows-subsystem-for-linux-example) for details.
+
 ## Blocked Syscalls (seccomp)
 
 Fence blocks dangerous syscalls that could be used for sandbox escape or privilege escalation:

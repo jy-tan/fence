@@ -31,9 +31,17 @@ These are separate on purpose. A typical safe default for dev servers is:
 
 Fence is designed around "read mostly, write narrowly":
 
-- **Reads**: allowed by default (you can block specific paths via `denyRead`).
+- **Reads**: allowed by default for standard system paths (you can block specific paths via `denyRead`).
 - **Writes**: denied by default (you must opt-in with `allowWrite`).
 - **denyWrite**: overrides `allowWrite` (useful for protecting secrets and dangerous files).
+
+For paths outside the standard system directories, fence provides three permission tiers:
+
+- `allowExecute` — can read file contents and execute, but not list directory contents (tightest).
+- `allowRead` — can read files, list directories, and execute binaries.
+- `allowWrite` — full read+write+execute access (most permissive).
+
+On Linux, these map directly to [Landlock](linux-security-features.md) access rights, providing kernel-enforced restrictions beyond what bwrap's mount-based isolation offers. Use the most restrictive tier that satisfies your needs.
 
 Fence also protects some dangerous targets regardless of config (e.g. shell startup files and git hooks). See `ARCHITECTURE.md` for the full list.
 

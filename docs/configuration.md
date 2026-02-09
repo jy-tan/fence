@@ -115,10 +115,55 @@ Use this when you need to support apps that don't respect proxy environment vari
 
 | Field | Description |
 |-------|-------------|
+| `wslInterop` | WSL interop support. `null` (default) = auto-detect, `true` = force on, `false` = force off. When active, auto-allows execute on `/init`. |
+| `allowRead` | Paths to allow reading and directory listing (Landlock: `READ_FILE + READ_DIR + EXECUTE`) |
+| `allowExecute` | Paths to allow executing only (Landlock: `READ_FILE + EXECUTE`, no directory listing) |
 | `denyRead` | Paths to deny reading (deny-only pattern) |
-| `allowWrite` | Paths to allow writing |
+| `allowWrite` | Paths to allow writing (also grants read and execute) |
 | `denyWrite` | Paths to deny writing (takes precedence) |
 | `allowGitConfig` | Allow writes to `.git/config` files |
+
+### Permission Tiers
+
+Fence provides three levels of filesystem access, from most restrictive to least:
+
+| Config field | Landlock rights | Use case |
+|---|---|---|
+| `allowExecute` | `READ_FILE + EXECUTE` | Specific binaries you need to run |
+| `allowRead` | `READ_FILE + READ_DIR + EXECUTE` | Directories you need to browse and read |
+| `allowWrite` | All read rights + all write rights | Directories that need file creation/modification |
+
+> [!NOTE]
+> Both `allowRead` and `allowExecute` grant `READ_FILE + EXECUTE`. The difference is that `allowRead` also grants `READ_DIR` (directory listing), while `allowExecute` does not. For individual files there is no practical difference; the distinction matters for directories where `allowExecute` prevents listing contents while still allowing execution of known paths within.
+
+> [!TIP]
+> **Best practice**: prefer pointing `allowExecute` at specific files (e.g., `/mnt/c/.../powershell.exe`) rather than directories. When Landlock is not active (kernel < 5.13 or wrapper skipped), directory-scoped `allowExecute` behaves like `allowRead` because bwrap only enforces read-only mounts without distinguishing execute from read permissions.
+
+System paths like `/usr`, `/lib`, `/bin`, `/etc` are always readable — you don't need to add them.
+
+### WSL (Windows Subsystem for Linux) Example
+
+On WSL2, fence auto-detects the environment and allows `/init` (the WSL binfmt_misc interpreter) automatically. You only need to add the specific Windows executables and paths you use:
+
+```json
+{
+  "extends": "code",
+  "filesystem": {
+    "allowExecute": [
+      "/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe"
+    ],
+    "allowWrite": [
+      "/mnt/c/temp"
+    ]
+  }
+}
+```
+
+- `/init` is handled automatically by `wslInterop` (auto-detected). It's WSL's init binary — a statically-linked ELF executable used as the binfmt_misc interpreter for all `.exe` execution. `/usr/bin/wslpath` is a symlink to it.
+- `powershell.exe` — Specific Windows binary allowed by exact path (not the whole directory).
+- `/mnt/c/temp` — Writable temp directory on the Windows filesystem (needed when Windows programs must access the files).
+
+To disable WSL interop explicitly: `"wslInterop": false`.
 
 ## Command Configuration
 
