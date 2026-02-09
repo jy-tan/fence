@@ -147,6 +147,42 @@ func TestConfigValidate(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "empty allowExecute path",
+			config: Config{
+				Filesystem: FilesystemConfig{
+					AllowExecute: []string{""},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "valid allowExecute path",
+			config: Config{
+				Filesystem: FilesystemConfig{
+					AllowExecute: []string{"/usr/bin/ls"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid wslInterop true",
+			config: Config{
+				Filesystem: FilesystemConfig{
+					WSLInterop: boolPtr(true),
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid wslInterop false",
+			config: Config{
+				Filesystem: FilesystemConfig{
+					WSLInterop: boolPtr(false),
+				},
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -245,6 +281,77 @@ func TestLoad(t *testing.T) {
 			setup: func(dir string) string {
 				path := filepath.Join(dir, "invalid.json")
 				_ = os.WriteFile(path, []byte("{invalid json}"), 0o600)
+				return path
+			},
+			wantNil: false,
+			wantErr: true,
+		},
+		{
+			name: "config with allowExecute and wslInterop",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "wsl.json")
+				content := `{"filesystem":{"wslInterop":false,"allowExecute":["/mnt/c/bin/test.exe"]}}`
+				_ = os.WriteFile(path, []byte(content), 0o600)
+				return path
+			},
+			wantNil: false,
+			wantErr: false,
+			checkConfig: func(t *testing.T, cfg *Config) {
+				if cfg.Filesystem.WSLInterop == nil {
+					t.Fatal("expected WSLInterop to be non-nil")
+				}
+				if *cfg.Filesystem.WSLInterop != false {
+					t.Error("expected WSLInterop to be false")
+				}
+				if len(cfg.Filesystem.AllowExecute) != 1 {
+					t.Fatalf("expected 1 allowExecute path, got %d", len(cfg.Filesystem.AllowExecute))
+				}
+				if cfg.Filesystem.AllowExecute[0] != "/mnt/c/bin/test.exe" {
+					t.Errorf("expected /mnt/c/bin/test.exe, got %s", cfg.Filesystem.AllowExecute[0])
+				}
+			},
+		},
+		{
+			name: "config with wslInterop true",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "wsl_true.json")
+				content := `{"filesystem":{"wslInterop":true}}`
+				_ = os.WriteFile(path, []byte(content), 0o600)
+				return path
+			},
+			wantNil: false,
+			wantErr: false,
+			checkConfig: func(t *testing.T, cfg *Config) {
+				if cfg.Filesystem.WSLInterop == nil {
+					t.Fatal("expected WSLInterop to be non-nil")
+				}
+				if *cfg.Filesystem.WSLInterop != true {
+					t.Error("expected WSLInterop to be true")
+				}
+			},
+		},
+		{
+			name: "config with wslInterop omitted stays nil",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "wsl_omit.json")
+				content := `{"filesystem":{"allowWrite":["/tmp"]}}`
+				_ = os.WriteFile(path, []byte(content), 0o600)
+				return path
+			},
+			wantNil: false,
+			wantErr: false,
+			checkConfig: func(t *testing.T, cfg *Config) {
+				if cfg.Filesystem.WSLInterop != nil {
+					t.Errorf("expected WSLInterop to be nil (auto-detect), got %v", *cfg.Filesystem.WSLInterop)
+				}
+			},
+		},
+		{
+			name: "invalid allowExecute empty string via load",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "bad_exec.json")
+				content := `{"filesystem":{"allowExecute":[""]}}`
+				_ = os.WriteFile(path, []byte(content), 0o600)
 				return path
 			},
 			wantNil: false,
@@ -504,6 +611,117 @@ func TestMerge(t *testing.T) {
 		}
 		if len(result.Filesystem.AllowRead) != 1 {
 			t.Errorf("expected 1 allowRead path, got %d", len(result.Filesystem.AllowRead))
+		}
+	})
+
+	t.Run("merge allowExecute", func(t *testing.T) {
+		base := &Config{
+			Filesystem: FilesystemConfig{
+				AllowExecute: []string{"/usr/bin/ls"},
+			},
+		}
+		override := &Config{
+			Filesystem: FilesystemConfig{
+				AllowExecute: []string{"/usr/bin/cat"},
+			},
+		}
+		result := Merge(base, override)
+
+		if len(result.Filesystem.AllowExecute) != 2 {
+			t.Errorf("expected 2 allowExecute paths, got %d: %v", len(result.Filesystem.AllowExecute), result.Filesystem.AllowExecute)
+		}
+	})
+
+	t.Run("deduplicate merged allowExecute", func(t *testing.T) {
+		base := &Config{
+			Filesystem: FilesystemConfig{
+				AllowExecute: []string{"/usr/bin/ls", "/usr/bin/cat"},
+			},
+		}
+		override := &Config{
+			Filesystem: FilesystemConfig{
+				AllowExecute: []string{"/usr/bin/ls", "/usr/bin/grep"},
+			},
+		}
+		result := Merge(base, override)
+
+		if len(result.Filesystem.AllowExecute) != 3 {
+			t.Errorf("expected 3 allowExecute paths (deduped), got %d: %v", len(result.Filesystem.AllowExecute), result.Filesystem.AllowExecute)
+		}
+	})
+
+	t.Run("merge wslInterop override wins", func(t *testing.T) {
+		base := &Config{
+			Filesystem: FilesystemConfig{
+				WSLInterop: boolPtr(true),
+			},
+		}
+		override := &Config{
+			Filesystem: FilesystemConfig{
+				WSLInterop: boolPtr(false),
+			},
+		}
+		result := Merge(base, override)
+
+		if result.Filesystem.WSLInterop == nil {
+			t.Fatal("expected WSLInterop to be non-nil")
+		}
+		if *result.Filesystem.WSLInterop != false {
+			t.Error("expected WSLInterop to be false (override wins)")
+		}
+	})
+
+	t.Run("merge wslInterop nil base with override", func(t *testing.T) {
+		base := &Config{
+			Filesystem: FilesystemConfig{},
+		}
+		override := &Config{
+			Filesystem: FilesystemConfig{
+				WSLInterop: boolPtr(true),
+			},
+		}
+		result := Merge(base, override)
+
+		if result.Filesystem.WSLInterop == nil {
+			t.Fatal("expected WSLInterop to be non-nil")
+		}
+		if *result.Filesystem.WSLInterop != true {
+			t.Error("expected WSLInterop to be true (from override)")
+		}
+	})
+
+	t.Run("merge wslInterop nil base with false override", func(t *testing.T) {
+		override := &Config{
+			Filesystem: FilesystemConfig{
+				WSLInterop: boolPtr(false),
+			},
+		}
+		result := Merge(nil, override)
+
+		if result.Filesystem.WSLInterop == nil {
+			t.Fatal("expected WSLInterop to be non-nil")
+		}
+		if *result.Filesystem.WSLInterop != false {
+			t.Error("expected WSLInterop to be false (from override)")
+		}
+	})
+
+	t.Run("merge wslInterop base preserved when override nil", func(t *testing.T) {
+		base := &Config{
+			Filesystem: FilesystemConfig{
+				WSLInterop: boolPtr(true),
+			},
+		}
+		override := &Config{
+			Filesystem: FilesystemConfig{},
+		}
+		result := Merge(base, override)
+
+		if result.Filesystem.WSLInterop == nil {
+			t.Fatal("expected WSLInterop to be non-nil")
+		}
+		if *result.Filesystem.WSLInterop != true {
+			t.Error("expected WSLInterop to be true (from base)")
 		}
 	})
 
