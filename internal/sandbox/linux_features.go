@@ -35,6 +35,9 @@ type LinuxFeatures struct {
 	// This can be false in containerized environments (Docker, CI) without CAP_NET_ADMIN
 	CanUnshareNet bool
 
+	// WSL (Windows Subsystem for Linux) detection
+	IsWSL bool
+
 	// Kernel version
 	KernelMajor int
 	KernelMinor int
@@ -74,6 +77,9 @@ func (f *LinuxFeatures) detect() {
 
 	// Check if we can create network namespaces
 	f.detectNetworkNamespace()
+
+	// Check if running under WSL
+	f.detectWSL()
 }
 
 func (f *LinuxFeatures) parseKernelVersion() {
@@ -206,6 +212,19 @@ func (f *LinuxFeatures) detectNetworkNamespace() {
 	f.CanUnshareNet = err == nil
 }
 
+// detectWSL checks whether the system is running under Windows Subsystem for Linux.
+func (f *LinuxFeatures) detectWSL() {
+	for _, path := range []string{
+		"/proc/sys/fs/binfmt_misc/WSLInterop-late",
+		"/proc/sys/fs/binfmt_misc/WSLInterop",
+	} {
+		if _, err := os.Stat(path); err == nil {
+			f.IsWSL = true
+			return
+		}
+	}
+}
+
 // Summary returns a human-readable summary of available features.
 func (f *LinuxFeatures) Summary() string {
 	var parts []string
@@ -238,6 +257,9 @@ func (f *LinuxFeatures) Summary() string {
 		} else {
 			parts = append(parts, "ebpf(CAP_BPF)")
 		}
+	}
+	if f.IsWSL {
+		parts = append(parts, "wsl")
 	}
 
 	return strings.Join(parts, ", ")

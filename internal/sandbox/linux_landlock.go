@@ -81,6 +81,24 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 		}
 	}
 
+	// WSL interop: allow execute on /init (binfmt_misc interpreter for wslpath
+	// and all Windows .exe execution). Enabled automatically when WSL is detected
+	// unless explicitly disabled via wslInterop: false.
+	wslInterop := features.IsWSL // auto-detect by default
+	if cfg != nil && cfg.Filesystem.WSLInterop != nil {
+		wslInterop = *cfg.Filesystem.WSLInterop // explicit override
+	}
+	if wslInterop {
+		if err := ruleset.AllowExecute("/init"); err != nil && debug {
+			if !os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add WSL interop path /init: %v\n", err)
+			}
+		}
+		if debug {
+			fmt.Fprintf(os.Stderr, "[fence:landlock] WSL interop enabled (auto-allowing /init)\n")
+		}
+	}
+
 	// Current working directory - read access (may be upgraded to write below)
 	if cwd != "" {
 		if err := ruleset.AllowRead(cwd); err != nil && debug {
@@ -111,6 +129,44 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 		dir := filepath.Dir(p)
 		if err := ruleset.AllowReadWrite(dir); err != nil && debug {
 			fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add socket path %s: %v\n", dir, err)
+		}
+	}
+
+	// User-configured allowRead paths
+	if cfg != nil && cfg.Filesystem.AllowRead != nil {
+		expandedPaths := ExpandGlobPatterns(cfg.Filesystem.AllowRead)
+		for _, p := range expandedPaths {
+			if err := ruleset.AllowRead(p); err != nil && debug {
+				fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add read path %s: %v\n", p, err)
+			}
+		}
+		// Also add non-glob paths directly
+		for _, p := range cfg.Filesystem.AllowRead {
+			if !ContainsGlobChars(p) {
+				normalized := NormalizePath(p)
+				if err := ruleset.AllowRead(normalized); err != nil && debug {
+					fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add read path %s: %v\n", normalized, err)
+				}
+			}
+		}
+	}
+
+	// User-configured allowExecute paths
+	if cfg != nil && cfg.Filesystem.AllowExecute != nil {
+		expandedPaths := ExpandGlobPatterns(cfg.Filesystem.AllowExecute)
+		for _, p := range expandedPaths {
+			if err := ruleset.AllowExecute(p); err != nil && debug {
+				fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add execute path %s: %v\n", p, err)
+			}
+		}
+		// Also add non-glob paths directly
+		for _, p := range cfg.Filesystem.AllowExecute {
+			if !ContainsGlobChars(p) {
+				normalized := NormalizePath(p)
+				if err := ruleset.AllowExecute(normalized); err != nil && debug {
+					fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add execute path %s: %v\n", normalized, err)
+				}
+			}
 		}
 	}
 
@@ -258,6 +314,13 @@ func (l *LandlockRuleset) getHandledAccessFS() uint64 {
 // AllowRead adds read access to a path.
 func (l *LandlockRuleset) AllowRead(path string) error {
 	return l.addPathRule(path, LANDLOCK_ACCESS_FS_READ_FILE|LANDLOCK_ACCESS_FS_READ_DIR|LANDLOCK_ACCESS_FS_EXECUTE)
+}
+
+// AllowExecute adds execute access to a path (read+execute, no directory listing).
+// For files: allows reading and executing the binary.
+// For directories: allows reading and executing files within, but not listing contents.
+func (l *LandlockRuleset) AllowExecute(path string) error {
+	return l.addPathRule(path, LANDLOCK_ACCESS_FS_READ_FILE|LANDLOCK_ACCESS_FS_EXECUTE)
 }
 
 // AllowWrite adds write access to a path.

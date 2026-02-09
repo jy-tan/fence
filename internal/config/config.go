@@ -38,7 +38,9 @@ type NetworkConfig struct {
 // FilesystemConfig defines filesystem restrictions.
 type FilesystemConfig struct {
 	DefaultDenyRead bool     `json:"defaultDenyRead,omitempty"` // If true, deny reads by default except system paths and AllowRead
-	AllowRead       []string `json:"allowRead"`                 // Paths to allow reading (used when DefaultDenyRead is true)
+	WSLInterop      *bool    `json:"wslInterop,omitempty"`      // If nil, auto-detect WSL and allow /init; true/false to override
+	AllowRead       []string `json:"allowRead"`                 // Paths to allow reading
+	AllowExecute    []string `json:"allowExecute"`              // Paths to allow executing (read+execute only, no directory listing)
 	DenyRead        []string `json:"denyRead"`
 	AllowWrite      []string `json:"allowWrite"`
 	DenyWrite       []string `json:"denyWrite"`
@@ -209,6 +211,9 @@ func (c *Config) Validate() error {
 
 	if slices.Contains(c.Filesystem.AllowRead, "") {
 		return errors.New("filesystem.allowRead contains empty path")
+	}
+	if slices.Contains(c.Filesystem.AllowExecute, "") {
+		return errors.New("filesystem.allowExecute contains empty path")
 	}
 	if slices.Contains(c.Filesystem.DenyRead, "") {
 		return errors.New("filesystem.denyRead contains empty path")
@@ -461,11 +466,15 @@ func Merge(base, override *Config) *Config {
 			// Boolean fields: true if either enables it
 			DefaultDenyRead: base.Filesystem.DefaultDenyRead || override.Filesystem.DefaultDenyRead,
 
+			// Pointer fields: override wins if set
+			WSLInterop: mergeOptionalBool(base.Filesystem.WSLInterop, override.Filesystem.WSLInterop),
+
 			// Append slices
-			AllowRead:  mergeStrings(base.Filesystem.AllowRead, override.Filesystem.AllowRead),
-			DenyRead:   mergeStrings(base.Filesystem.DenyRead, override.Filesystem.DenyRead),
-			AllowWrite: mergeStrings(base.Filesystem.AllowWrite, override.Filesystem.AllowWrite),
-			DenyWrite:  mergeStrings(base.Filesystem.DenyWrite, override.Filesystem.DenyWrite),
+			AllowRead:    mergeStrings(base.Filesystem.AllowRead, override.Filesystem.AllowRead),
+			AllowExecute: mergeStrings(base.Filesystem.AllowExecute, override.Filesystem.AllowExecute),
+			DenyRead:     mergeStrings(base.Filesystem.DenyRead, override.Filesystem.DenyRead),
+			AllowWrite:   mergeStrings(base.Filesystem.AllowWrite, override.Filesystem.AllowWrite),
+			DenyWrite:    mergeStrings(base.Filesystem.DenyWrite, override.Filesystem.DenyWrite),
 
 			// Boolean fields: override wins if set
 			AllowGitConfig: base.Filesystem.AllowGitConfig || override.Filesystem.AllowGitConfig,
