@@ -408,10 +408,11 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 			}
 		}
 
+		// Track bound paths to avoid duplicate mounts across allowRead, allowExecute, and wslInterop
+		boundPaths := make(map[string]bool)
+
 		// Bind user-specified allowRead paths
 		if cfg != nil && cfg.Filesystem.AllowRead != nil {
-			boundPaths := make(map[string]bool)
-
 			expandedPaths := ExpandGlobPatterns(cfg.Filesystem.AllowRead)
 			for _, p := range expandedPaths {
 				if fileExists(p) && !strings.HasPrefix(p, "/dev/") && !strings.HasPrefix(p, "/proc/") && !boundPaths[p] {
@@ -419,7 +420,6 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 					bwrapArgs = append(bwrapArgs, "--ro-bind", p, p)
 				}
 			}
-			// Add non-glob paths
 			for _, p := range cfg.Filesystem.AllowRead {
 				normalized := NormalizePath(p)
 				if !ContainsGlobChars(normalized) && fileExists(normalized) &&
@@ -428,6 +428,36 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 					bwrapArgs = append(bwrapArgs, "--ro-bind", normalized, normalized)
 				}
 			}
+		}
+
+		// Bind user-specified allowExecute paths (ro-bind so they're visible)
+		if cfg != nil && cfg.Filesystem.AllowExecute != nil {
+			expandedPaths := ExpandGlobPatterns(cfg.Filesystem.AllowExecute)
+			for _, p := range expandedPaths {
+				if fileExists(p) && !strings.HasPrefix(p, "/dev/") && !strings.HasPrefix(p, "/proc/") && !boundPaths[p] {
+					boundPaths[p] = true
+					bwrapArgs = append(bwrapArgs, "--ro-bind", p, p)
+				}
+			}
+			for _, p := range cfg.Filesystem.AllowExecute {
+				normalized := NormalizePath(p)
+				if !ContainsGlobChars(normalized) && fileExists(normalized) &&
+					!strings.HasPrefix(normalized, "/dev/") && !strings.HasPrefix(normalized, "/proc/") && !boundPaths[normalized] {
+					boundPaths[normalized] = true
+					bwrapArgs = append(bwrapArgs, "--ro-bind", normalized, normalized)
+				}
+			}
+		}
+
+		// WSL interop: bind /init when wslInterop is active
+		features := DetectLinuxFeatures()
+		wslInterop := features.IsWSL
+		if cfg != nil && cfg.Filesystem.WSLInterop != nil {
+			wslInterop = *cfg.Filesystem.WSLInterop
+		}
+		if wslInterop && fileExists("/init") && !boundPaths["/init"] {
+			boundPaths["/init"] = true
+			bwrapArgs = append(bwrapArgs, "--ro-bind", "/init", "/init")
 		}
 	} else {
 		// Default mode: bind entire root filesystem read-only
@@ -527,6 +557,67 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	for p := range writablePaths {
 		if fileExists(p) {
 			bwrapArgs = append(bwrapArgs, "--bind", p, p)
+		}
+	}
+
+	// In normal mode (not defaultDenyRead), --ro-bind / / is non-recursive,
+	// so paths on separate mount points (e.g., /mnt/c on WSL's 9p/drvfs)
+	// are not captured. Bind allowExecute and allowRead paths that live on
+	// a different device so they become visible inside the sandbox.
+	if !defaultDenyRead && cfg != nil {
+		crossMountBound := make(map[string]bool)
+
+		// Collect all cross-mount paths from allowExecute and allowRead
+		var crossMountPaths []string
+		for _, p := range cfg.Filesystem.AllowExecute {
+			if !ContainsGlobChars(p) {
+				crossMountPaths = append(crossMountPaths, NormalizePath(p))
+			}
+		}
+		crossMountPaths = append(crossMountPaths, ExpandGlobPatterns(cfg.Filesystem.AllowExecute)...)
+		for _, p := range cfg.Filesystem.AllowRead {
+			if !ContainsGlobChars(p) {
+				crossMountPaths = append(crossMountPaths, NormalizePath(p))
+			}
+		}
+		crossMountPaths = append(crossMountPaths, ExpandGlobPatterns(cfg.Filesystem.AllowRead)...)
+
+		for _, p := range crossMountPaths {
+			if !fileExists(p) || sameDevice("/", p) || crossMountBound[p] {
+				continue
+			}
+			crossMountBound[p] = true
+
+			// Use the same cross-mount bind technique as the resolv.conf fix:
+			// walk from / to the target, apply --tmpfs at the mount boundary,
+			// --dir for deeper subdirs, then --ro-bind the target.
+			targetDir := p
+			if !isDirectory(p) {
+				targetDir = filepath.Dir(p)
+			}
+			mountBoundaryFound := false
+			for _, dir := range intermediaryDirs("/", targetDir) {
+				if crossMountBound[dir] {
+					mountBoundaryFound = true
+					continue
+				}
+				if !mountBoundaryFound {
+					if !sameDevice("/", dir) {
+						bwrapArgs = append(bwrapArgs, "--tmpfs", dir)
+						crossMountBound[dir] = true
+						mountBoundaryFound = true
+					}
+				} else {
+					bwrapArgs = append(bwrapArgs, "--dir", dir)
+					crossMountBound[dir] = true
+				}
+			}
+			if mountBoundaryFound {
+				bwrapArgs = append(bwrapArgs, "--ro-bind", p, p)
+				if opts.Debug {
+					fmt.Fprintf(os.Stderr, "[fence:linux] Cross-mount ro-bind: %s\n", p)
+				}
+			}
 		}
 	}
 
