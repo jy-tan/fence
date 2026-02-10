@@ -562,10 +562,13 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 
 	// In normal mode (not defaultDenyRead), --ro-bind / / is non-recursive,
 	// so paths on separate mount points (e.g., /mnt/c on WSL's 9p/drvfs)
-	// are not captured. Bind allowExecute and allowRead paths that live on
-	// a different device so they become visible inside the sandbox.
+	// are not captured. Bind allowExecute, allowRead, and allowWrite paths
+	// that live on a different device so they become visible inside the sandbox.
 	if !defaultDenyRead && cfg != nil {
 		crossMountBound := make(map[string]bool)
+
+		// Track which paths need writable bind (--bind vs --ro-bind)
+		crossMountWritable := make(map[string]bool)
 
 		// Collect all cross-mount paths from allowExecute and allowRead
 		var crossMountPaths []string
@@ -582,6 +585,19 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		}
 		crossMountPaths = append(crossMountPaths, ExpandGlobPatterns(cfg.Filesystem.AllowRead)...)
 
+		// Collect allowWrite paths and mark them as writable
+		for _, p := range cfg.Filesystem.AllowWrite {
+			if !ContainsGlobChars(p) {
+				np := NormalizePath(p)
+				crossMountPaths = append(crossMountPaths, np)
+				crossMountWritable[np] = true
+			}
+		}
+		for _, p := range ExpandGlobPatterns(cfg.Filesystem.AllowWrite) {
+			crossMountPaths = append(crossMountPaths, p)
+			crossMountWritable[p] = true
+		}
+
 		for _, p := range crossMountPaths {
 			if !fileExists(p) || sameDevice("/", p) || crossMountBound[p] {
 				continue
@@ -590,7 +606,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 
 			// Use the same cross-mount bind technique as the resolv.conf fix:
 			// walk from / to the target, apply --tmpfs at the mount boundary,
-			// --dir for deeper subdirs, then --ro-bind the target.
+			// --dir for deeper subdirs, then bind the target.
 			targetDir := p
 			if !isDirectory(p) {
 				targetDir = filepath.Dir(p)
@@ -613,9 +629,13 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 				}
 			}
 			if mountBoundaryFound {
-				bwrapArgs = append(bwrapArgs, "--ro-bind", p, p)
+				if crossMountWritable[p] {
+					bwrapArgs = append(bwrapArgs, "--bind", p, p)
+				} else {
+					bwrapArgs = append(bwrapArgs, "--ro-bind", p, p)
+				}
 				if opts.Debug {
-					fmt.Fprintf(os.Stderr, "[fence:linux] Cross-mount ro-bind: %s\n", p)
+					fmt.Fprintf(os.Stderr, "[fence:linux] Cross-mount bind: %s (writable=%v)\n", p, crossMountWritable[p])
 				}
 			}
 		}
