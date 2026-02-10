@@ -93,6 +93,17 @@ Fence reads from `~/.config/fence/fence.json` by default (or `~/Library/Applicat
 
 Use `fence --settings ./custom.json` to specify a different config.
 
+Create a starter config with sensible defaults:
+
+```bash
+# Creates config at the default path with:
+# { "extends": "code" }
+fence config init
+
+# Include scaffold arrays as editable hints
+fence config init --scaffold
+```
+
 ### Import from Claude Code
 
 ```bash

@@ -66,7 +66,21 @@ curl: (56) CONNECT tunnel failed, response 403
 
 ## Allow Specific Domains
 
-Create a config file at `~/.config/fence/fence.json` (or `~/Library/Application Support/fence/fence.json` on macOS):
+Create a starter config:
+
+```bash
+fence config init
+```
+
+By default, this writes `{"extends":"code"}` to `~/.config/fence/fence.json` (or `~/Library/Application Support/fence/fence.json` on macOS), so common coding workflows work out of the box.
+
+If you want a starter file with empty arrays as editable hints, use:
+
+```bash
+fence config init --scaffold
+```
+
+You can also create a fully custom config manually:
 
 ```json
 {
