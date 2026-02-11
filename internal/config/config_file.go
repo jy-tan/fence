@@ -28,10 +28,14 @@ type cleanNetworkConfig struct {
 
 // cleanFilesystemConfig is used for JSON output with omitempty to skip empty fields.
 type cleanFilesystemConfig struct {
-	DenyRead       []string `json:"denyRead,omitempty"`
-	AllowWrite     []string `json:"allowWrite,omitempty"`
-	DenyWrite      []string `json:"denyWrite,omitempty"`
-	AllowGitConfig bool     `json:"allowGitConfig,omitempty"`
+	DefaultDenyRead bool     `json:"defaultDenyRead,omitempty"`
+	WSLInterop      *bool    `json:"wslInterop,omitempty"`
+	AllowRead       []string `json:"allowRead,omitempty"`
+	AllowExecute    []string `json:"allowExecute,omitempty"`
+	DenyRead        []string `json:"denyRead,omitempty"`
+	AllowWrite      []string `json:"allowWrite,omitempty"`
+	DenyWrite       []string `json:"denyWrite,omitempty"`
+	AllowGitConfig  bool     `json:"allowGitConfig,omitempty"`
 }
 
 // cleanCommandConfig is used for JSON output with omitempty to skip empty fields.
@@ -41,6 +45,16 @@ type cleanCommandConfig struct {
 	UseDefaults *bool    `json:"useDefaults,omitempty"`
 }
 
+// cleanSSHConfig is used for JSON output with omitempty to skip empty fields.
+type cleanSSHConfig struct {
+	AllowedHosts     []string `json:"allowedHosts,omitempty"`
+	DeniedHosts      []string `json:"deniedHosts,omitempty"`
+	AllowedCommands  []string `json:"allowedCommands,omitempty"`
+	DeniedCommands   []string `json:"deniedCommands,omitempty"`
+	AllowAllCommands bool     `json:"allowAllCommands,omitempty"`
+	InheritDeny      bool     `json:"inheritDeny,omitempty"`
+}
+
 // cleanConfig is used for JSON output with fields in desired order and omitempty.
 type cleanConfig struct {
 	Extends    string                 `json:"extends,omitempty"`
@@ -48,6 +62,7 @@ type cleanConfig struct {
 	Network    *cleanNetworkConfig    `json:"network,omitempty"`
 	Filesystem *cleanFilesystemConfig `json:"filesystem,omitempty"`
 	Command    *cleanCommandConfig    `json:"command,omitempty"`
+	SSH        *cleanSSHConfig        `json:"ssh,omitempty"`
 }
 
 // MarshalConfigJSON marshals a fence config to clean JSON, omitting empty arrays
@@ -75,10 +90,14 @@ func MarshalConfigJSON(cfg *Config) ([]byte, error) {
 
 	// Filesystem config - only include if non-empty
 	filesystem := cleanFilesystemConfig{
-		DenyRead:       cfg.Filesystem.DenyRead,
-		AllowWrite:     cfg.Filesystem.AllowWrite,
-		DenyWrite:      cfg.Filesystem.DenyWrite,
-		AllowGitConfig: cfg.Filesystem.AllowGitConfig,
+		DefaultDenyRead: cfg.Filesystem.DefaultDenyRead,
+		WSLInterop:      cfg.Filesystem.WSLInterop,
+		AllowRead:       cfg.Filesystem.AllowRead,
+		AllowExecute:    cfg.Filesystem.AllowExecute,
+		DenyRead:        cfg.Filesystem.DenyRead,
+		AllowWrite:      cfg.Filesystem.AllowWrite,
+		DenyWrite:       cfg.Filesystem.DenyWrite,
+		AllowGitConfig:  cfg.Filesystem.AllowGitConfig,
 	}
 	if !isFilesystemEmpty(filesystem) {
 		clean.Filesystem = &filesystem
@@ -92,6 +111,19 @@ func MarshalConfigJSON(cfg *Config) ([]byte, error) {
 	}
 	if !isCommandEmpty(command) {
 		clean.Command = &command
+	}
+
+	// SSH config - only include if non-empty
+	ssh := cleanSSHConfig{
+		AllowedHosts:     cfg.SSH.AllowedHosts,
+		DeniedHosts:      cfg.SSH.DeniedHosts,
+		AllowedCommands:  cfg.SSH.AllowedCommands,
+		DeniedCommands:   cfg.SSH.DeniedCommands,
+		AllowAllCommands: cfg.SSH.AllowAllCommands,
+		InheritDeny:      cfg.SSH.InheritDeny,
+	}
+	if !isSSHEmpty(ssh) {
+		clean.SSH = &ssh
 	}
 
 	return json.MarshalIndent(clean, "", "  ")
@@ -109,7 +141,11 @@ func isNetworkEmpty(n cleanNetworkConfig) bool {
 }
 
 func isFilesystemEmpty(f cleanFilesystemConfig) bool {
-	return len(f.DenyRead) == 0 &&
+	return !f.DefaultDenyRead &&
+		f.WSLInterop == nil &&
+		len(f.AllowRead) == 0 &&
+		len(f.AllowExecute) == 0 &&
+		len(f.DenyRead) == 0 &&
 		len(f.AllowWrite) == 0 &&
 		len(f.DenyWrite) == 0 &&
 		!f.AllowGitConfig
@@ -119,6 +155,15 @@ func isCommandEmpty(c cleanCommandConfig) bool {
 	return len(c.Deny) == 0 &&
 		len(c.Allow) == 0 &&
 		c.UseDefaults == nil
+}
+
+func isSSHEmpty(s cleanSSHConfig) bool {
+	return len(s.AllowedHosts) == 0 &&
+		len(s.DeniedHosts) == 0 &&
+		len(s.AllowedCommands) == 0 &&
+		len(s.DeniedCommands) == 0 &&
+		!s.AllowAllCommands &&
+		!s.InheritDeny
 }
 
 // FormatConfigForFile returns config JSON with optional header lines.

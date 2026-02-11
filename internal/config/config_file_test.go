@@ -20,6 +20,7 @@ func TestMarshalConfigJSON_OmitsEmptySections(t *testing.T) {
 	assert.Contains(t, output, `"npm install"`)
 	assert.NotContains(t, output, `"network"`)
 	assert.NotContains(t, output, `"filesystem"`)
+	assert.NotContains(t, output, `"ssh"`)
 }
 
 func TestFormatConfigForFile_WithHeaderLines(t *testing.T) {
@@ -51,4 +52,33 @@ func TestWriteConfigFile(t *testing.T) {
 	data, err := os.ReadFile(path) //nolint:gosec // reading test output file
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"curl"`)
+}
+
+func TestMarshalConfigJSON_IncludesExtendedFilesystemAndSSH(t *testing.T) {
+	wslInterop := false
+	cfg := &Config{}
+	cfg.Filesystem.DefaultDenyRead = true
+	cfg.Filesystem.WSLInterop = &wslInterop
+	cfg.Filesystem.AllowRead = []string{"/workspace"}
+	cfg.Filesystem.AllowExecute = []string{"/usr/bin/bash"}
+	cfg.SSH.AllowedHosts = []string{"*.example.com"}
+	cfg.SSH.AllowedCommands = []string{"ls"}
+	cfg.SSH.InheritDeny = true
+
+	data, err := MarshalConfigJSON(cfg)
+	require.NoError(t, err)
+
+	output := string(data)
+	assert.Contains(t, output, `"defaultDenyRead": true`)
+	assert.Contains(t, output, `"wslInterop": false`)
+	assert.Contains(t, output, `"allowRead": [`)
+	assert.Contains(t, output, `"/workspace"`)
+	assert.Contains(t, output, `"allowExecute": [`)
+	assert.Contains(t, output, `"/usr/bin/bash"`)
+	assert.Contains(t, output, `"ssh": {`)
+	assert.Contains(t, output, `"allowedHosts": [`)
+	assert.Contains(t, output, `"*.example.com"`)
+	assert.Contains(t, output, `"allowedCommands": [`)
+	assert.Contains(t, output, `"ls"`)
+	assert.Contains(t, output, `"inheritDeny": true`)
 }
