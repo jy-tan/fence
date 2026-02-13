@@ -266,6 +266,42 @@ func TestLinux_DenyReadBlocksDirectories(t *testing.T) {
 	assertBlocked(t, result)
 }
 
+// TestLinux_DefaultDenyReadDoesNotExposeDangerousHomeFiles verifies that
+// mandatory dangerous-path protection does not re-expose files in defaultDenyRead mode.
+func TestLinux_DefaultDenyReadDoesNotExposeDangerousHomeFiles(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+
+	workspace := createTempWorkspace(t)
+	fakeHome := createTempWorkspace(t)
+	t.Setenv("HOME", fakeHome)
+
+	zshrcPath := createTestFile(t, fakeHome, ".zshrc", "secret zshrc content")
+
+	cfg := testConfigWithWorkspace(workspace)
+	cfg.Filesystem.DefaultDenyRead = true
+
+	result := runUnderSandbox(t, cfg, "cat "+zshrcPath, workspace)
+	assertBlocked(t, result)
+}
+
+// TestLinux_DenyReadTakesPrecedenceOverMandatoryDangerousPath verifies explicit
+// denyRead rules always win over mandatory dangerous-path write protection.
+func TestLinux_DenyReadTakesPrecedenceOverMandatoryDangerousPath(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+
+	workspace := createTempWorkspace(t)
+	fakeHome := createTempWorkspace(t)
+	t.Setenv("HOME", fakeHome)
+
+	zshrcPath := createTestFile(t, fakeHome, ".zshrc", "secret zshrc content")
+
+	cfg := testConfigWithWorkspace(workspace)
+	cfg.Filesystem.DenyRead = []string{"~/.zshrc"}
+
+	result := runUnderSandbox(t, cfg, "cat "+zshrcPath, workspace)
+	assertBlocked(t, result)
+}
+
 // ============================================================================
 // Network Blocking Tests
 // ============================================================================

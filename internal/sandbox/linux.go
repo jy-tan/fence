@@ -641,6 +641,10 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		}
 	}
 
+	// Track explicit denyRead paths so they always keep precedence over
+	// mandatory dangerous-path write protection.
+	denyReadPaths := make(map[string]bool)
+
 	// Handle denyRead paths - hide them
 	// For directories: use --tmpfs to replace with empty tmpfs
 	// For files: use --ro-bind /dev/null to mask with empty file
@@ -648,6 +652,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	if cfg != nil && cfg.Filesystem.DenyRead != nil {
 		expandedDenyRead := ExpandGlobPatterns(cfg.Filesystem.DenyRead)
 		for _, p := range expandedDenyRead {
+			denyReadPaths[p] = true
 			if canMountOver(p) {
 				if isDirectory(p) {
 					bwrapArgs = append(bwrapArgs, "--tmpfs", p)
@@ -661,6 +666,9 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		// Add non-glob paths
 		for _, p := range cfg.Filesystem.DenyRead {
 			normalized := NormalizePath(p)
+			if !ContainsGlobChars(normalized) {
+				denyReadPaths[normalized] = true
+			}
 			if !ContainsGlobChars(normalized) && canMountOver(normalized) {
 				if isDirectory(normalized) {
 					bwrapArgs = append(bwrapArgs, "--tmpfs", normalized)
@@ -671,8 +679,9 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		}
 	}
 
-	// Apply mandatory deny patterns (make dangerous files/dirs read-only)
-	// This overrides any writable mounts for these paths
+	// Apply mandatory dangerous-path write protection.
+	// In defaultDenyRead mode, never rebind the real path because that would
+	// make hidden files readable; mask with /dev/null or empty tmpfs instead.
 	//
 	// Note: We only use concrete paths from getMandatoryDenyPaths(), NOT glob expansion.
 	// GetMandatoryDenyPatterns() returns expensive **/pattern globs that require walking
@@ -689,9 +698,21 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	// Deduplicate
 	seen := make(map[string]bool)
 	for _, p := range mandatoryDeny {
+		if denyReadPaths[p] {
+			// Respect explicit denyRead precedence.
+			continue
+		}
 		if !seen[p] && fileExists(p) {
 			seen[p] = true
-			bwrapArgs = append(bwrapArgs, "--ro-bind", p, p)
+			if defaultDenyRead {
+				if isDirectory(p) {
+					bwrapArgs = append(bwrapArgs, "--tmpfs", p)
+				} else {
+					bwrapArgs = append(bwrapArgs, "--ro-bind", "/dev/null", p)
+				}
+			} else {
+				bwrapArgs = append(bwrapArgs, "--ro-bind", p, p)
+			}
 		}
 	}
 
