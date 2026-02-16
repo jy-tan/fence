@@ -20,6 +20,7 @@ Fence is a sandboxing tool that restricts network and filesystem access for arbi
 - [README](../README.md) - CLI usage
 - [Library Usage (Go)](library.md) - Using Fence as a Go package
 - [Configuration](./configuration.md) - How to configure Fence
+- [Config JSON Schema](schema/fence.schema.json) - Editor validation and autocomplete for `fence.json`
 - [Architecture](../ARCHITECTURE.md) - How fence works under the hood
 - [Security model](security-model.md) - Threat model, guarantees, and limitations
 - [Linux security features](linux-security-features.md) - Landlock, seccomp, eBPF details and fallback behavior

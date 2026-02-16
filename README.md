@@ -87,10 +87,11 @@ fence --help
 
 ### Configuration
 
-Fence reads from `~/.config/fence/fence.json` by default (or `~/Library/Application Support/fence/fence.json` on macOS).
+Fence reads from `~/.config/fence/fence.json` by default (or `~/Library/Application Support/fence/fence.json` on macOS). See [configuration reference](./docs/configuration.md).
 
 ```json
 {
+  "$schema": "https://raw.githubusercontent.com/Use-Tusk/fence/main/docs/schema/fence.schema.json",
   "extends": "code",
   "network": { "allowedDomains": ["private.company.com"] },
   "filesystem": { "allowWrite": ["."] },

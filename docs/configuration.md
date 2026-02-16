@@ -6,6 +6,7 @@ Example config:
 
 ```json
 {
+  "$schema": "https://raw.githubusercontent.com/Use-Tusk/fence/main/docs/schema/fence.schema.json",
   "network": {
     "allowedDomains": ["github.com", "*.npmjs.org", "registry.yarnpkg.com"],
     "deniedDomains": ["evil.com"]
@@ -24,6 +25,10 @@ Example config:
   }
 }
 ```
+
+> [!TIP]
+> The `$schema` key is optional and is only used by editors for IntelliSense/validation.
+> For the latest development schema, use the `main` URL shown above. You may also pin this URL to your installed version tag (for example, replace `main` with `v0.1.25`) so editor validation matches runtime behavior.
 
 ## Config Inheritance
 
@@ -135,7 +140,6 @@ Fence provides three levels of filesystem access, from most restrictive to least
 
 > [!NOTE]
 > Both `allowRead` and `allowExecute` grant `READ_FILE + EXECUTE`. The difference is that `allowRead` also grants `READ_DIR` (directory listing), while `allowExecute` does not. For individual files there is no practical difference; the distinction matters for directories where `allowExecute` prevents listing contents while still allowing execution of known paths within.
-
 > [!TIP]
 > **Best practice**: prefer pointing `allowExecute` at specific files (e.g., `/mnt/c/.../powershell.exe`) rather than directories. When Landlock is not active (kernel < 5.13 or wrapper skipped), directory-scoped `allowExecute` behaves like `allowRead` because bwrap only enforces read-only mounts without distinguishing execute from read permissions.
 

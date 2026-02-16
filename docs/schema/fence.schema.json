@@ -1,0 +1,169 @@
+{
+  "$id": "https://raw.githubusercontent.com/Use-Tusk/fence/main/docs/schema/fence.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "format": "uri",
+      "type": "string"
+    },
+    "allowPty": {
+      "type": "boolean"
+    },
+    "command": {
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "deny": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "useDefaults": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "extends": {
+      "type": "string"
+    },
+    "filesystem": {
+      "additionalProperties": false,
+      "properties": {
+        "allowExecute": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowGitConfig": {
+          "type": "boolean"
+        },
+        "allowRead": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowWrite": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "defaultDenyRead": {
+          "type": "boolean"
+        },
+        "denyRead": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "denyWrite": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "wslInterop": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "network": {
+      "additionalProperties": false,
+      "properties": {
+        "allowAllUnixSockets": {
+          "type": "boolean"
+        },
+        "allowLocalBinding": {
+          "type": "boolean"
+        },
+        "allowLocalOutbound": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "allowUnixSockets": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowedDomains": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "deniedDomains": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "httpProxyPort": {
+          "type": "integer"
+        },
+        "socksProxyPort": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "ssh": {
+      "additionalProperties": false,
+      "properties": {
+        "allowAllCommands": {
+          "type": "boolean"
+        },
+        "allowedCommands": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowedHosts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "deniedCommands": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "deniedHosts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "inheritDeny": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "title": "Fence configuration schema",
+  "type": "object"
+}

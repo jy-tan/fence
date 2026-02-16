@@ -6,7 +6,7 @@ GOMOD=$(GOCMD) mod
 BINARY_NAME=fence
 BINARY_UNIX=$(BINARY_NAME)_unix
 
-.PHONY: all build build-ci build-linux test test-ci clean deps install-lint-tools setup setup-ci run fmt lint release release-minor help
+.PHONY: all build build-ci build-linux test test-ci clean deps install-lint-tools setup setup-ci run fmt lint release release-minor schema help
 
 all: build
 
@@ -72,6 +72,10 @@ lint:
 	@echo "🔍 Linting code..."
 	golangci-lint run --allow-parallel-runners
 
+schema:
+	@echo "🧾 Generating config JSON schema..."
+	go run ./tools/generate-config-schema
+
 release:
 	@echo "🚀 Creating patch release..."
 	./scripts/release.sh patch
@@ -97,6 +101,7 @@ help:
 	@echo "  run                - Build and run"
 	@echo "  fmt                - Format code"
 	@echo "  lint               - Lint code"
+	@echo "  schema             - Regenerate docs/schema/fence.schema.json"
 	@echo "  release            - Create patch release (v0.0.X)"
 	@echo "  release-minor      - Create minor release (v0.X.0)"
 	@echo "  help               - Show this help"

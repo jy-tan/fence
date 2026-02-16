@@ -30,6 +30,7 @@ Common targets:
 | `make test` | Run tests |
 | `make test-ci` | Run tests with coverage |
 | `make deps` | Download/tidy modules |
+| `make schema` | Regenerate `docs/schema/fence.schema.json` from Go config structs |
 | `make fmt` | Format code with gofumpt |
 | `make lint` | Run golangci-lint |
 | `make build-ci` | Build with version info (used in CI) |
