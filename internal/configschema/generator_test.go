@@ -19,8 +19,8 @@ func TestGeneratedSchemaIsInSync(t *testing.T) {
 		t.Fatalf("failed to read schema file: %v", err)
 	}
 
-	withTrailingNewline := append(generated, '\n')
-	if string(expected) != string(withTrailingNewline) {
+	generated = append(generated, '\n')
+	if string(expected) != string(generated) {
 		t.Fatalf("schema file is stale: run `go run ./tools/generate-config-schema`")
 	}
 }
