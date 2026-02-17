@@ -266,12 +266,14 @@ func FindDangerousFiles(root string, maxDepth int) []string {
 		}
 
 		// Check multi-component dangerous dirs like ".claude/commands":
-		// match when the relative path ends with the full pattern.
+		// match when the relative path ends with the full pattern on a
+		// path-component boundary (so "not.claude/commands" won't match).
 		if d.IsDir() {
 			for _, dd := range DangerousDirectories {
 				if strings.Contains(dd, string(filepath.Separator)) &&
+					subdirLevel <= maxDepth &&
 					strings.HasSuffix(rel, dd) &&
-					subdirLevel <= maxDepth {
+					(rel == dd || rel[len(rel)-len(dd)-1] == filepath.Separator) {
 					results = append(results, path)
 					return filepath.SkipDir
 				}

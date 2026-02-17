@@ -218,6 +218,10 @@ func TestFindDangerousFiles(t *testing.T) {
 	// File in node_modules — should be excluded
 	mkfile("node_modules/pkg/.bashrc")
 
+	// Directory with name that is a suffix-match for a dangerous dir but not
+	// on a path boundary (e.g. "not.claude/commands" should NOT match ".claude/commands")
+	mkdir("sub/not.claude/commands")
+
 	// Safe file — should not appear
 	mkfile("subdir/safe.txt")
 
@@ -240,6 +244,8 @@ func TestFindDangerousFiles(t *testing.T) {
 			filepath.Join(tmpDir, "a/b/c/d/.bashrc"),
 			// node_modules should be excluded
 			filepath.Join(tmpDir, "node_modules/pkg/.bashrc"),
+			// suffix false-positive: "not.claude/commands" should not match ".claude/commands"
+			filepath.Join(tmpDir, "sub/not.claude/commands"),
 			// safe files should never appear
 			filepath.Join(tmpDir, "subdir/safe.txt"),
 		}
