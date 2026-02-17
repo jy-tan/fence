@@ -272,36 +272,37 @@ func intermediaryDirs(root, targetDir string) []string {
 }
 
 // getMandatoryDenyPaths returns concrete paths (not globs) that must be protected.
-// This expands the glob patterns from GetMandatoryDenyPatterns into real paths.
+// Covers dangerous files/dirs in cwd, home, and subdirectories up to
+// DefaultMaxDangerousFileDepth levels deep (using a depth-limited walk).
 func getMandatoryDenyPaths(cwd string) []string {
 	var paths []string
 
 	// Dangerous files in cwd
 	for _, f := range DangerousFiles {
-		p := filepath.Join(cwd, f)
-		paths = append(paths, p)
+		paths = append(paths, filepath.Join(cwd, f))
 	}
 
 	// Dangerous directories in cwd
 	for _, d := range DangerousDirectories {
-		p := filepath.Join(cwd, d)
-		paths = append(paths, p)
+		paths = append(paths, filepath.Join(cwd, d))
 	}
 
-	// Git hooks in cwd
+	// Git hooks and config in cwd
 	paths = append(paths, filepath.Join(cwd, ".git/hooks"))
-
-	// Git config in cwd
 	paths = append(paths, filepath.Join(cwd, ".git/config"))
 
-	// Also protect home directory dangerous files
+	// Dangerous files in home directory
 	home, err := os.UserHomeDir()
 	if err == nil {
 		for _, f := range DangerousFiles {
-			p := filepath.Join(home, f)
-			paths = append(paths, p)
+			paths = append(paths, filepath.Join(home, f))
 		}
 	}
+
+	// Depth-limited walk to find dangerous files in subdirectories.
+	// This catches .bashrc, .zshrc, .git/hooks, etc. in nested project dirs
+	// without the cost of a full recursive glob expansion.
+	paths = append(paths, FindDangerousFiles(cwd, DefaultMaxDangerousFileDepth)...)
 
 	return paths
 }
@@ -683,16 +684,9 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	// In defaultDenyRead mode, never rebind the real path because that would
 	// make hidden files readable; mask with /dev/null or empty tmpfs instead.
 	//
-	// Note: We only use concrete paths from getMandatoryDenyPaths(), NOT glob expansion.
-	// GetMandatoryDenyPatterns() returns expensive **/pattern globs that require walking
-	// the entire directory tree - this can hang on large directories (see issue #27).
-	//
-	// The concrete paths cover dangerous files in cwd and home directory. Files like
-	// .bashrc in subdirectories are not protected, but this may be lower-risk since shell
-	// rc files in project subdirectories are uncommon and not automatically sourced.
-	//
-	// TODO: consider depth-limited glob expansion (e.g., max 3 levels) to protect
-	// subdirectory dangerous files without full tree walks that hang on large dirs.
+	// getMandatoryDenyPaths covers: cwd-level files, home dir files, and a
+	// depth-limited walk (DefaultMaxDangerousFileDepth levels) to find dangerous
+	// files in subdirectories without full tree walks that hang on large dirs.
 	mandatoryDeny := getMandatoryDenyPaths(cwd)
 
 	// Deduplicate
