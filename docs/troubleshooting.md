@@ -117,6 +117,23 @@ Common causes:
 - A tool attempting direct sockets that don't respect proxy environment variables
 - Localhost outbound blocked (DB/cache on `127.0.0.1`)
 - Writes blocked (you didn't include a directory in `filesystem.allowWrite`)
+- Shell startup/env differences (default is deterministic `bash -c`)
+
+## "command not found" for tools available in your shell
+
+By default, fence runs commands in a deterministic shell mode (`bash -c`), not necessarily your current interactive shell.
+
+If a tool is only available after your shell startup config runs (for example via zsh setup), use:
+
+```bash
+fence --shell user --shell-login -c "your-command"
+```
+
+Notes:
+
+- `--shell user` uses your validated `$SHELL` path.
+- `--shell-login` uses `-lc` so login startup files are loaded.
+- If your required `PATH` is already exported before launching fence, `--shell user` without `--shell-login` may be enough.
 
 ## Node.js HTTP(S) doesn't use proxy env vars by default
 
