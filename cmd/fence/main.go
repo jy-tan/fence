@@ -36,6 +36,8 @@ var (
 	listTemplates bool
 	cmdString     string
 	exposePorts   []string
+	shellMode     string
+	shellLogin    bool
 	exitCode      int
 	showVersion   bool
 	linuxFeatures bool
@@ -67,6 +69,7 @@ Examples:
   fence -t npm-install npm install        # Use built-in npm-install template
   fence -t ai-coding-agents -- agent-cmd  # Use AI coding agents template
   fence -p 3000 -c "npm run dev"          # Expose port 3000 for inbound connections
+  fence --shell user -c "nvim"            # Use validated $SHELL for command execution
   fence --list-templates                  # Show available built-in templates
 
 Configuration file format:
@@ -97,6 +100,8 @@ Configuration file format:
 	rootCmd.Flags().BoolVar(&listTemplates, "list-templates", false, "List available templates")
 	rootCmd.Flags().StringVarP(&cmdString, "c", "c", "", "Run command string directly (like sh -c)")
 	rootCmd.Flags().StringArrayVarP(&exposePorts, "port", "p", nil, "Expose port for inbound connections (can be used multiple times)")
+	rootCmd.Flags().StringVar(&shellMode, "shell", sandbox.ShellModeDefault, "Shell mode for command execution: default (bash) or user ($SHELL)")
+	rootCmd.Flags().BoolVar(&shellLogin, "shell-login", false, "Run shell as login shell (-lc). Use with --shell user for shell init compatibility")
 	rootCmd.Flags().BoolVarP(&showVersion, "version", "v", false, "Show version information")
 	rootCmd.Flags().BoolVar(&linuxFeatures, "linux-features", false, "Show available Linux security features and exit")
 
@@ -159,6 +164,11 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "[fence] Exposing ports: %v\n", ports)
 	}
 
+	// Validate shell mode early to fail before proxy/sandbox initialization.
+	if _, _, err := sandbox.ResolveExecutionShell(shellMode, shellLogin); err != nil {
+		return fmt.Errorf("invalid shell options: %w", err)
+	}
+
 	// Load config: template > settings file > default path
 	var cfg *config.Config
 	var err error
@@ -203,6 +213,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 
 	manager := sandbox.NewManager(cfg, debug, monitor)
 	manager.SetExposedPorts(ports)
+	manager.SetShellOptions(shellMode, shellLogin)
 	defer manager.Cleanup()
 
 	if err := manager.Initialize(); err != nil {

@@ -19,6 +19,8 @@ type Manager struct {
 	httpPort      int
 	socksPort     int
 	exposedPorts  []int
+	shellMode     string
+	shellLogin    bool
 	debug         bool
 	monitor       bool
 	initialized   bool
@@ -27,15 +29,25 @@ type Manager struct {
 // NewManager creates a new sandbox manager.
 func NewManager(cfg *config.Config, debug, monitor bool) *Manager {
 	return &Manager{
-		config:  cfg,
-		debug:   debug,
-		monitor: monitor,
+		config:    cfg,
+		shellMode: ShellModeDefault,
+		debug:     debug,
+		monitor:   monitor,
 	}
 }
 
 // SetExposedPorts sets the ports to expose for inbound connections.
 func (m *Manager) SetExposedPorts(ports []int) {
 	m.exposedPorts = ports
+}
+
+// SetShellOptions sets shell selection options for command execution.
+func (m *Manager) SetShellOptions(mode string, login bool) {
+	if mode == "" {
+		mode = ShellModeDefault
+	}
+	m.shellMode = mode
+	m.shellLogin = login
 }
 
 // Initialize sets up the sandbox infrastructure (proxies, etc.).
@@ -114,9 +126,9 @@ func (m *Manager) WrapCommand(command string) (string, error) {
 	plat := platform.Detect()
 	switch plat {
 	case platform.MacOS:
-		return WrapCommandMacOS(m.config, command, m.httpPort, m.socksPort, m.exposedPorts, m.debug)
+		return WrapCommandMacOS(m.config, command, m.httpPort, m.socksPort, m.exposedPorts, m.debug, m.shellMode, m.shellLogin)
 	case platform.Linux:
-		return WrapCommandLinux(m.config, command, m.linuxBridge, m.reverseBridge, m.debug)
+		return WrapCommandLinuxWithShell(m.config, command, m.linuxBridge, m.reverseBridge, m.debug, m.shellMode, m.shellLogin)
 	default:
 		return "", fmt.Errorf("unsupported platform: %s", plat)
 	}

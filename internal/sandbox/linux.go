@@ -47,6 +47,10 @@ type LinuxSandboxOptions struct {
 	Monitor bool
 	// Debug mode
 	Debug bool
+	// Shell selection mode (default|user)
+	ShellMode string
+	// Whether to run shell as login shell.
+	ShellLogin bool
 }
 
 // NewLinuxBridge creates Unix socket bridges to the proxy servers.
@@ -318,16 +322,27 @@ func WrapCommandLinux(cfg *config.Config, command string, bridge *LinuxBridge, r
 	})
 }
 
+// WrapCommandLinuxWithShell wraps a command with configurable shell selection.
+func WrapCommandLinuxWithShell(cfg *config.Config, command string, bridge *LinuxBridge, reverseBridge *ReverseBridge, debug bool, shellMode string, shellLogin bool) (string, error) {
+	return WrapCommandLinuxWithOptions(cfg, command, bridge, reverseBridge, LinuxSandboxOptions{
+		UseLandlock: true,
+		UseSeccomp:  true,
+		UseEBPF:     true,
+		Debug:       debug,
+		ShellMode:   shellMode,
+		ShellLogin:  shellLogin,
+	})
+}
+
 // WrapCommandLinuxWithOptions wraps a command with configurable sandbox options.
 func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *LinuxBridge, reverseBridge *ReverseBridge, opts LinuxSandboxOptions) (string, error) {
 	if _, err := exec.LookPath("bwrap"); err != nil {
 		return "", fmt.Errorf("bubblewrap (bwrap) is required on Linux but not found: %w", err)
 	}
 
-	shell := "bash"
-	shellPath, err := exec.LookPath(shell)
+	shellPath, shellFlag, err := ResolveExecutionShell(opts.ShellMode, opts.ShellLogin)
 	if err != nil {
-		return "", fmt.Errorf("shell %q not found: %w", shell, err)
+		return "", err
 	}
 
 	cwd, _ := os.Getwd()
@@ -761,7 +776,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		fmt.Fprintf(os.Stderr, "[fence:linux] Skipping Landlock wrapper (running as library, not fence CLI)\n")
 	}
 
-	bwrapArgs = append(bwrapArgs, "--", shellPath, "-c")
+	bwrapArgs = append(bwrapArgs, "--", shellPath, shellFlag)
 
 	// Build the inner command that sets up socat listeners and runs the user command
 	var innerScript strings.Builder
@@ -837,7 +852,7 @@ sleep 0.1
 		if opts.Debug {
 			wrapperArgs = append(wrapperArgs, "--debug")
 		}
-		wrapperArgs = append(wrapperArgs, "--", "bash", "-c", command)
+		wrapperArgs = append(wrapperArgs, "--", shellPath, shellFlag, command)
 
 		// Use exec to replace bash with the wrapper (which will exec the command)
 		innerScript.WriteString(fmt.Sprintf("exec %s\n", ShellQuote(wrapperArgs)))

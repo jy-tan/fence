@@ -27,6 +27,8 @@ type LinuxSandboxOptions struct {
 	UseEBPF     bool
 	Monitor     bool
 	Debug       bool
+	ShellMode   string
+	ShellLogin  bool
 }
 
 // NewLinuxBridge returns an error on non-Linux platforms.
@@ -47,6 +49,11 @@ func (b *ReverseBridge) Cleanup() {}
 
 // WrapCommandLinux returns an error on non-Linux platforms.
 func WrapCommandLinux(cfg *config.Config, command string, bridge *LinuxBridge, reverseBridge *ReverseBridge, debug bool) (string, error) {
+	return "", fmt.Errorf("Linux sandbox not available on this platform")
+}
+
+// WrapCommandLinuxWithShell returns an error on non-Linux platforms.
+func WrapCommandLinuxWithShell(cfg *config.Config, command string, bridge *LinuxBridge, reverseBridge *ReverseBridge, debug bool, shellMode string, shellLogin bool) (string, error) {
 	return "", fmt.Errorf("Linux sandbox not available on this platform")
 }
 

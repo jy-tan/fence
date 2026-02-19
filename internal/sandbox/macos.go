@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -42,7 +41,6 @@ type MacOSSandboxParams struct {
 	WriteDenyPaths          []string
 	AllowPty                bool
 	AllowGitConfig          bool
-	Shell                   string
 }
 
 // GlobToRegex converts a glob pattern to a regex for macOS sandbox profiles.
@@ -568,7 +566,7 @@ func GenerateSandboxProfile(params MacOSSandboxParams) string {
 }
 
 // WrapCommandMacOS wraps a command with macOS sandbox restrictions.
-func WrapCommandMacOS(cfg *config.Config, command string, httpPort, socksPort int, exposedPorts []int, debug bool) (string, error) {
+func WrapCommandMacOS(cfg *config.Config, command string, httpPort, socksPort int, exposedPorts []int, debug bool, shellMode string, shellLogin bool) (string, error) {
 	// Check if allowedDomains contains "*" (wildcard = allow all direct network)
 	// In this mode, we still run the proxy for apps that respect HTTP_PROXY,
 	// but allow direct connections for apps that don't (like cursor-agent, opencode).
@@ -627,14 +625,9 @@ func WrapCommandMacOS(cfg *config.Config, command string, httpPort, socksPort in
 
 	profile := GenerateSandboxProfile(params)
 
-	// Find shell
-	shell := params.Shell
-	if shell == "" {
-		shell = "bash"
-	}
-	shellPath, err := exec.LookPath(shell)
+	shellPath, shellFlag, err := ResolveExecutionShell(shellMode, shellLogin)
 	if err != nil {
-		return "", fmt.Errorf("shell %q not found: %w", shell, err)
+		return "", err
 	}
 
 	proxyEnvs := GenerateProxyEnvVars(httpPort, socksPort)
@@ -644,7 +637,7 @@ func WrapCommandMacOS(cfg *config.Config, command string, httpPort, socksPort in
 	var parts []string
 	parts = append(parts, "env")
 	parts = append(parts, proxyEnvs...)
-	parts = append(parts, "sandbox-exec", "-p", profile, shellPath, "-c", command)
+	parts = append(parts, "sandbox-exec", "-p", profile, shellPath, shellFlag, command)
 
 	return ShellQuote(parts), nil
 }
