@@ -114,22 +114,37 @@ func GenerateProxyEnvVars(httpPort, socksPort int) []string {
 // ensureSandboxTMPDIR ensures the dedicated sandbox TMPDIR exists and is usable.
 // Falls back to /tmp if the dedicated directory cannot be created.
 func ensureSandboxTMPDIR() string {
-	info, err := os.Stat(sandboxTMPDIR)
+	return ensureSandboxTMPDIRPath(sandboxTMPDIR, sandboxTMPDIRFallback)
+}
+
+// ensureSandboxTMPDIRPath ensures tmpDir exists and is a real directory (not a symlink).
+// Falls back to fallbackDir if the path is unsafe or cannot be created.
+func ensureSandboxTMPDIRPath(tmpDir, fallbackDir string) string {
+	info, err := os.Lstat(tmpDir)
 	if err == nil {
-		if !info.IsDir() {
-			return sandboxTMPDIRFallback
+		// Reject symlinks to avoid following attacker-controlled links in /tmp.
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fallbackDir
 		}
-		//nolint:gosec // G302 targets files; TMPDIR is a directory and needs execute bit (0700) to be usable.
-		_ = os.Chmod(sandboxTMPDIR, 0o700)
-		return sandboxTMPDIR
+		return tmpDir
 	}
 
-	if err := os.MkdirAll(sandboxTMPDIR, 0o700); err != nil {
-		return sandboxTMPDIRFallback
+	// Any error except non-existence means path is not safely usable.
+	if !os.IsNotExist(err) {
+		return fallbackDir
 	}
-	//nolint:gosec // G302 targets files; TMPDIR is a directory and needs execute bit (0700) to be usable.
-	_ = os.Chmod(sandboxTMPDIR, 0o700)
-	return sandboxTMPDIR
+
+	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
+		return fallbackDir
+	}
+
+	// Re-check after creation to ensure we still have a real directory.
+	info, err = os.Lstat(tmpDir)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fallbackDir
+	}
+
+	return tmpDir
 }
 
 // EncodeSandboxedCommand encodes a command for sandbox monitoring.

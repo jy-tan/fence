@@ -238,6 +238,44 @@ func TestGenerateProxyEnvVars(t *testing.T) {
 	}
 }
 
+func TestEnsureSandboxTMPDIRPathRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "real-target")
+	link := filepath.Join(root, "tmp-link")
+	fallback := filepath.Join(root, "fallback")
+
+	if err := os.MkdirAll(target, 0o700); err != nil {
+		t.Fatalf("failed to create target dir: %v", err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("failed to create symlink: %v", err)
+	}
+
+	got := ensureSandboxTMPDIRPath(link, fallback)
+	if got != fallback {
+		t.Fatalf("expected fallback for symlink tmpdir, got %q", got)
+	}
+}
+
+func TestEnsureSandboxTMPDIRPathCreatesDirectory(t *testing.T) {
+	root := t.TempDir()
+	tmpDir := filepath.Join(root, "new-tmpdir")
+	fallback := filepath.Join(root, "fallback")
+
+	got := ensureSandboxTMPDIRPath(tmpDir, fallback)
+	if got != tmpDir {
+		t.Fatalf("expected tmpdir path, got %q", got)
+	}
+
+	info, err := os.Stat(tmpDir)
+	if err != nil {
+		t.Fatalf("expected created directory, stat failed: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("expected directory at %q", tmpDir)
+	}
+}
+
 func TestEncodeSandboxedCommand(t *testing.T) {
 	tests := []struct {
 		name    string
