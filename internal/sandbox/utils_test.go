@@ -137,7 +137,6 @@ func TestGenerateProxyEnvVars(t *testing.T) {
 			socksPort: 0,
 			wantEnvs: []string{
 				"FENCE_SANDBOX=1",
-				"TMPDIR=/tmp/fence",
 			},
 			dontWant: []string{
 				"HTTP_PROXY=",
@@ -218,6 +217,22 @@ func TestGenerateProxyEnvVars(t *testing.T) {
 						t.Errorf("GenerateProxyEnvVars(%d, %d) should not contain %q, got %q", tt.httpPort, tt.socksPort, dontWant, env)
 					}
 				}
+			}
+
+			// TMPDIR should always be set. Use /tmp/fence when available, fallback to /tmp otherwise.
+			tmpDirFound := false
+			for _, env := range got {
+				if !strings.HasPrefix(env, "TMPDIR=") {
+					continue
+				}
+				tmpDirFound = true
+				tmpDir := strings.TrimPrefix(env, "TMPDIR=")
+				if tmpDir != "/tmp/fence" && tmpDir != "/tmp" {
+					t.Errorf("GenerateProxyEnvVars(%d, %d) TMPDIR should be /tmp/fence or /tmp, got %q", tt.httpPort, tt.socksPort, tmpDir)
+				}
+			}
+			if !tmpDirFound {
+				t.Errorf("GenerateProxyEnvVars(%d, %d) missing TMPDIR env", tt.httpPort, tt.socksPort)
 			}
 		})
 	}

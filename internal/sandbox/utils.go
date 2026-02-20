@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+const (
+	sandboxTMPDIR         = "/tmp/fence"
+	sandboxTMPDIRFallback = "/tmp"
+)
+
 // ContainsGlobChars checks if a path pattern contains glob characters.
 func ContainsGlobChars(pattern string) bool {
 	return strings.ContainsAny(pattern, "*?[]")
@@ -50,9 +55,11 @@ func NormalizePath(pathPattern string) string {
 
 // GenerateProxyEnvVars creates environment variables for proxy configuration.
 func GenerateProxyEnvVars(httpPort, socksPort int) []string {
+	tmpDir := ensureSandboxTMPDIR()
+
 	envVars := []string{
 		"FENCE_SANDBOX=1",
-		"TMPDIR=/tmp/fence",
+		"TMPDIR=" + tmpDir,
 	}
 
 	if httpPort == 0 && socksPort == 0 {
@@ -102,6 +109,25 @@ func GenerateProxyEnvVars(httpPort, socksPort int) []string {
 	}
 
 	return envVars
+}
+
+// ensureSandboxTMPDIR ensures the dedicated sandbox TMPDIR exists and is usable.
+// Falls back to /tmp if the dedicated directory cannot be created.
+func ensureSandboxTMPDIR() string {
+	info, err := os.Stat(sandboxTMPDIR)
+	if err == nil {
+		if !info.IsDir() {
+			return sandboxTMPDIRFallback
+		}
+		_ = os.Chmod(sandboxTMPDIR, 0o700)
+		return sandboxTMPDIR
+	}
+
+	if err := os.MkdirAll(sandboxTMPDIR, 0o700); err != nil {
+		return sandboxTMPDIRFallback
+	}
+	_ = os.Chmod(sandboxTMPDIR, 0o700)
+	return sandboxTMPDIR
 }
 
 // EncodeSandboxedCommand encodes a command for sandbox monitoring.
