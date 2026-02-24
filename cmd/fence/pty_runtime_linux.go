@@ -3,10 +3,13 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -15,6 +18,8 @@ import (
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 )
+
+const maxSIGWINCHSignalsPerResize = 256
 
 type resizeDebouncer struct {
 	timer *time.Timer
@@ -85,6 +90,15 @@ func startCommandWithPTY(execCmd *exec.Cmd) (func(), error) {
 			debouncer.MarkHandled()
 			_ = pty.InheritSize(os.Stdin, ptmx)
 			forwardSIGWINCHToPTYForegroundPgrp(ptmx)
+
+			// bwrap --new-session breaks the normal "SIGWINCH goes to the
+			// controlling terminal foreground pgrp" behavior. Some TUIs end up
+			// in a different session/pgrp, so also signal the process tree as a
+			// bounded fallback.
+			if execCmd.Process != nil {
+				_ = execCmd.Process.Signal(syscall.SIGWINCH)
+				signalSIGWINCHProcessTree(execCmd.Process.Pid, maxSIGWINCHSignalsPerResize)
+			}
 		}
 
 		sigCount := 0
@@ -154,4 +168,125 @@ func ptyForegroundPgrp(ptmx *os.File) (int, bool) {
 		return 0, false
 	}
 	return pgid, true
+}
+
+func signalSIGWINCHProcessTree(rootPID int, maxSignals int) {
+	if rootPID <= 0 || maxSignals <= 0 {
+		return
+	}
+
+	children, parentPID := buildProcChildrenMap("/proc")
+	if len(children) == 0 {
+		return
+	}
+
+	queue := []int{rootPID}
+	visited := make(map[int]bool)
+	signaled := 0
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if visited[current] {
+			continue
+		}
+		visited[current] = true
+
+		for _, child := range children[current] {
+			if !visited[child] {
+				queue = append(queue, child)
+			}
+		}
+
+		// Skip the root itself; we already signaled it directly.
+		if current == rootPID {
+			continue
+		}
+
+		// Guard against pid reuse / partial maps: only signal nodes that still
+		// trace back to root in the parent map.
+		if !isDescendantOfRoot(current, rootPID, parentPID) {
+			continue
+		}
+
+		_ = syscall.Kill(current, syscall.SIGWINCH)
+		signaled++
+		if signaled >= maxSignals {
+			return
+		}
+	}
+}
+
+func buildProcChildrenMap(procBasePath string) (map[int][]int, map[int]int) {
+	children := make(map[int][]int)
+	parentPID := make(map[int]int)
+
+	entries, err := os.ReadDir(procBasePath)
+	if err != nil {
+		return children, parentPID
+	}
+
+	for _, entry := range entries {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid <= 0 {
+			continue
+		}
+		ppid, ok := readProcPPID(procBasePath, pid)
+		if !ok || ppid <= 0 {
+			continue
+		}
+		parentPID[pid] = ppid
+		children[ppid] = append(children[ppid], pid)
+	}
+
+	return children, parentPID
+}
+
+func isDescendantOfRoot(pid, rootPID int, parentPID map[int]int) bool {
+	if pid <= 0 || rootPID <= 0 {
+		return false
+	}
+	current := pid
+	for current > 0 {
+		parent, ok := parentPID[current]
+		if !ok {
+			return false
+		}
+		if parent == rootPID {
+			return true
+		}
+		if parent == current {
+			return false
+		}
+		current = parent
+	}
+	return false
+}
+
+func readProcPPID(procBasePath string, pid int) (int, bool) {
+	statusPath := fmt.Sprintf("%s/%d/status", procBasePath, pid)
+	data, err := os.ReadFile(statusPath)
+	if err != nil {
+		return 0, false
+	}
+	return parsePPIDFromStatus(string(data))
+}
+
+func parsePPIDFromStatus(status string) (int, bool) {
+	lines := strings.Split(status, "\n")
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "PPid:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			return 0, false
+		}
+		ppid, err := strconv.Atoi(fields[1])
+		if err != nil {
+			return 0, false
+		}
+		return ppid, true
+	}
+	return 0, false
 }
