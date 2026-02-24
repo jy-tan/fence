@@ -265,7 +265,7 @@ func isDescendantOfRoot(pid, rootPID int, parentPID map[int]int) bool {
 
 func readProcPPID(procBasePath string, pid int) (int, bool) {
 	statusPath := fmt.Sprintf("%s/%d/status", procBasePath, pid)
-	data, err := os.ReadFile(statusPath)
+	data, err := os.ReadFile(statusPath) //nolint:gosec // G304: intentional read of /proc/<pid>/status; pid is numeric and base is procfs
 	if err != nil {
 		return 0, false
 	}
