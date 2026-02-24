@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/Use-Tusk/fence/internal/config"
@@ -19,6 +20,7 @@ import (
 	"github.com/Use-Tusk/fence/internal/sandbox"
 	"github.com/Use-Tusk/fence/internal/templates"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // Build-time variables (set via -ldflags)
@@ -250,17 +252,29 @@ func runCommand(cmd *cobra.Command, args []string) error {
 
 	execCmd := exec.Command("sh", "-c", sandboxedCommand) //nolint:gosec // sandboxedCommand is constructed from user input - intentional
 	execCmd.Env = hardenedEnv
-	execCmd.Stdin = os.Stdin
-	execCmd.Stdout = os.Stdout
-	execCmd.Stderr = os.Stderr
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	// On Linux, bubblewrap runs with --new-session. That breaks the normal TTY
+	// SIGWINCH delivery behavior for interactive TUIs unless we relay it.
+	//
+	// PTY relay is only enabled for interactive sessions to avoid surprising
+	// behavior changes (e.g., piping output through fence).
+	usePTY := cfg != nil &&
+		cfg.AllowPty &&
+		platform.Detect() == platform.Linux &&
+		term.IsTerminal(int(os.Stdin.Fd())) &&
+		term.IsTerminal(int(os.Stdout.Fd()))
 
-	// Start the command (non-blocking) so we can get the PID
-	if err := execCmd.Start(); err != nil {
-		return fmt.Errorf("failed to start command: %w", err)
+	if !usePTY {
+		execCmd.Stdin = os.Stdin
+		execCmd.Stdout = os.Stdout
+		execCmd.Stderr = os.Stderr
 	}
+
+	cleanup, startErr := startCommand(execCmd, usePTY)
+	if startErr != nil {
+		return fmt.Errorf("failed to start command: %w", startErr)
+	}
+	defer cleanup()
 
 	// Start Linux monitors (eBPF tracing for filesystem violations)
 	var linuxMonitors *sandbox.LinuxMonitors
@@ -281,22 +295,6 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	// For now, filesystem isolation relies on bwrap mount namespaces.
 	// Landlock code exists for future integration (e.g., via a wrapper binary).
 
-	go func() {
-		sigCount := 0
-		for sig := range sigChan {
-			sigCount++
-			if execCmd.Process == nil {
-				continue
-			}
-			// First signal: graceful termination; second signal: force kill
-			if sigCount >= 2 {
-				_ = execCmd.Process.Kill()
-			} else {
-				_ = execCmd.Process.Signal(sig)
-			}
-		}
-	}()
-
 	// Wait for command to finish
 	if err := execCmd.Wait(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -308,6 +306,61 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func startCommand(execCmd *exec.Cmd, usePTY bool) (func(), error) {
+	if usePTY {
+		return startCommandWithPTY(execCmd)
+	}
+	return startCommandWithSignalProxy(execCmd)
+}
+
+func startCommandWithSignalProxy(execCmd *exec.Cmd) (func(), error) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGWINCH)
+	done := make(chan struct{})
+	var cleanupOnce sync.Once
+
+	if err := execCmd.Start(); err != nil {
+		signal.Stop(sigChan)
+		return nil, err
+	}
+
+	go func() {
+		sigCount := 0
+		for {
+			select {
+			case <-done:
+				return
+			case sig := <-sigChan:
+				if execCmd.Process == nil {
+					continue
+				}
+
+				// Best-effort: forward SIGWINCH to the child. On Linux with bwrap
+				// --new-session, interactive TUIs generally need PTY relay instead.
+				if sig == syscall.SIGWINCH {
+					_ = execCmd.Process.Signal(syscall.SIGWINCH)
+					continue
+				}
+
+				// First signal: graceful termination; second signal: force kill
+				sigCount++
+				if sigCount >= 2 {
+					_ = execCmd.Process.Kill()
+				} else {
+					_ = execCmd.Process.Signal(sig)
+				}
+			}
+		}
+	}()
+
+	return func() {
+		cleanupOnce.Do(func() {
+			signal.Stop(sigChan)
+			close(done)
+		})
+	}, nil
 }
 
 // newImportCmd creates the import subcommand.

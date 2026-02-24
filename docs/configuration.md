@@ -317,7 +317,13 @@ SSH host patterns support wildcards anywhere:
 
 | Field | Description |
 |-------|-------------|
-| `allowPty` | Allow pseudo-terminal (PTY) allocation in the sandbox (for MacOS) |
+| `allowPty` | Enable interactive PTY behavior. On macOS this allows PTY access in sandbox policy; on Linux this enables a PTY relay mode for interactive TUIs/editors while keeping `bwrap --new-session` enabled. |
+
+### `allowPty` notes (Linux)
+
+- Use `allowPty: true` for interactive terminal apps (TUIs/editors) that need proper resize redraw behavior.
+- PTY relay is only used when stdin/stdout are both terminals (non-interactive pipes keep the normal stdio behavior).
+- Resize handling relays `SIGWINCH` to the PTY foreground process group so terminal apps can redraw after window size changes.
 
 ## Importing from Claude Code
 

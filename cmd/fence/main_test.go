@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -168,4 +169,19 @@ func TestFormatInitConfigWithComment(t *testing.T) {
 	if !strings.Contains(output, "\n{\n  \"extends\": \"code\"\n}\n") {
 		t.Fatal("expected JSON body below comment header")
 	}
+}
+
+func TestStartCommandWithSignalProxy_CleanupIsIdempotent(t *testing.T) {
+	execCmd := exec.Command("sh", "-c", "exit 0")
+	cleanup, err := startCommandWithSignalProxy(execCmd)
+	if err != nil {
+		t.Fatalf("startCommandWithSignalProxy() error = %v", err)
+	}
+
+	if err := execCmd.Wait(); err != nil {
+		t.Fatalf("execCmd.Wait() error = %v", err)
+	}
+
+	cleanup()
+	cleanup()
 }
