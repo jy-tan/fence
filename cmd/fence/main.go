@@ -20,6 +20,7 @@ import (
 	"github.com/Use-Tusk/fence/internal/sandbox"
 	"github.com/Use-Tusk/fence/internal/templates"
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 )
 
@@ -264,6 +265,20 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		term.IsTerminal(int(os.Stdin.Fd())) &&
 		term.IsTerminal(int(os.Stdout.Fd()))
 
+	// When stdin is a terminal, place the child in its own process group so
+	// we can hand it terminal foreground control after Start(). This allows
+	// interactive shells (e.g. "fence bash") to call tcsetpgrp() and enable
+	// job control. Without this, bash prints:
+	//   "cannot set terminal process group: Operation not permitted"
+	//   "no job control in this shell"
+	isTTY := term.IsTerminal(int(os.Stdin.Fd()))
+	if isTTY {
+		execCmd.SysProcAttr = &syscall.SysProcAttr{
+			Setpgid: true,
+			Pgid:    0, // child gets its own process group (pgid = child pid)
+		}
+	}
+
 	if !usePTY {
 		execCmd.Stdin = os.Stdin
 		execCmd.Stdout = os.Stdout
@@ -275,6 +290,26 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to start command: %w", startErr)
 	}
 	defer cleanup()
+
+	// Give the child process group terminal foreground control. We do this
+	// from the parent because only the current foreground process group can
+	// call tcsetpgrp. We ignore SIGTTOU so we don't get stopped when we
+	// later reclaim the foreground (at that point we'll be in the background
+	// process group).
+	if isTTY && execCmd.Process != nil {
+		stdinFd := int(os.Stdin.Fd())
+		savedPgrp := syscall.Getpgrp()
+		signal.Ignore(syscall.SIGTTOU)
+		if err := unix.IoctlSetPointerInt(stdinFd, unix.TIOCSPGRP, execCmd.Process.Pid); err != nil {
+			if debug {
+				fmt.Fprintf(os.Stderr, "[fence] Warning: failed to set child as foreground: %v\n", err)
+			}
+		}
+		defer func() {
+			_ = unix.IoctlSetPointerInt(stdinFd, unix.TIOCSPGRP, savedPgrp)
+			signal.Reset(syscall.SIGTTOU)
+		}()
+	}
 
 	// Start Linux monitors (eBPF tracing for filesystem violations)
 	var linuxMonitors *sandbox.LinuxMonitors

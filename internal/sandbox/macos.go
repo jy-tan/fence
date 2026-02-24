@@ -483,6 +483,12 @@ func GenerateSandboxProfile(params MacOSSandboxParams) string {
 (allow file-ioctl (literal "/dev/dtracehelper"))
 (allow file-ioctl (literal "/dev/tty"))
 
+; Allow ioctl on the inherited terminal (PTY slave). This is needed for
+; isatty(), tcgetpgrp(), and tcsetpgrp() to work on the inherited stdin/
+; stdout/stderr when they are connected to a terminal. This does not allow
+; allocating new PTYs (that requires allowPty).
+(allow file-ioctl (regex #"^/dev/ttys"))
+
 (allow file-ioctl file-read-data file-write-data
   (require-all
     (literal "/dev/null")
