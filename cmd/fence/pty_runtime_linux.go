@@ -89,14 +89,18 @@ func startCommandWithPTY(execCmd *exec.Cmd) (func(), error) {
 		forwardResize := func() {
 			debouncer.MarkHandled()
 			_ = pty.InheritSize(os.Stdin, ptmx)
-			forwardSIGWINCHToPTYForegroundPgrp(ptmx)
+			fgPgid, signaledPgrp := forwardSIGWINCHToPTYForegroundPgrp(ptmx)
 
 			// bwrap --new-session breaks the normal "SIGWINCH goes to the
 			// controlling terminal foreground pgrp" behavior. Some TUIs end up
 			// in a different session/pgrp, so also signal the process tree as a
 			// bounded fallback.
 			if execCmd.Process != nil {
-				_ = execCmd.Process.Signal(syscall.SIGWINCH)
+				// Avoid double-signaling the root when it is already part of the
+				// PTY foreground process group (common case for PTY-launched shells).
+				if !signaledPgrp || !pidInProcessGroup(execCmd.Process.Pid, fgPgid) {
+					_ = execCmd.Process.Signal(syscall.SIGWINCH)
+				}
 				signalSIGWINCHProcessTree(execCmd.Process.Pid, maxSIGWINCHSignalsPerResize)
 			}
 		}
@@ -156,10 +160,12 @@ func startCommandWithPTY(execCmd *exec.Cmd) (func(), error) {
 	}, nil
 }
 
-func forwardSIGWINCHToPTYForegroundPgrp(ptmx *os.File) {
+func forwardSIGWINCHToPTYForegroundPgrp(ptmx *os.File) (int, bool) {
 	if pgid, ok := ptyForegroundPgrp(ptmx); ok {
 		_ = syscall.Kill(-pgid, syscall.SIGWINCH)
+		return pgid, true
 	}
+	return 0, false
 }
 
 func ptyForegroundPgrp(ptmx *os.File) (int, bool) {
@@ -168,6 +174,14 @@ func ptyForegroundPgrp(ptmx *os.File) (int, bool) {
 		return 0, false
 	}
 	return pgid, true
+}
+
+func pidInProcessGroup(pid int, pgid int) bool {
+	if pid <= 0 || pgid <= 0 {
+		return false
+	}
+	got, err := syscall.Getpgid(pid)
+	return err == nil && got == pgid
 }
 
 func signalSIGWINCHProcessTree(rootPID int, maxSignals int) {

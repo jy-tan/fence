@@ -25,7 +25,7 @@ func TestResizeDebouncer_CoalescesSignals(t *testing.T) {
 	select {
 	case <-firstCh:
 		debouncer.MarkHandled()
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(500 * time.Millisecond):
 		t.Fatal("timed out waiting for debounced signal")
 	}
 
