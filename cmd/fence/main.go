@@ -298,17 +298,30 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	// process group).
 	if isTTY && execCmd.Process != nil {
 		stdinFd := int(os.Stdin.Fd())
-		savedPgrp := syscall.Getpgrp()
-		signal.Ignore(syscall.SIGTTOU)
-		if err := unix.IoctlSetPointerInt(stdinFd, unix.TIOCSPGRP, execCmd.Process.Pid); err != nil {
+
+		savedFgPgrp, err := unix.IoctlGetInt(stdinFd, unix.TIOCGPGRP)
+		if err != nil {
 			if debug {
-				fmt.Fprintf(os.Stderr, "[fence] Warning: failed to set child as foreground: %v\n", err)
+				fmt.Fprintf(os.Stderr, "[fence] Warning: failed to get foreground pgrp: %v\n", err)
 			}
+		} else {
+			childPid := execCmd.Process.Pid
+			childPgrp, err := syscall.Getpgid(childPid)
+			if err != nil {
+				childPgrp = childPid // fallback: Setpgid with Pgid=0 sets pgid=pid
+			}
+
+			signal.Ignore(syscall.SIGTTOU)
+			if err := unix.IoctlSetPointerInt(stdinFd, unix.TIOCSPGRP, childPgrp); err != nil {
+				if debug {
+					fmt.Fprintf(os.Stderr, "[fence] Warning: failed to set child as foreground: %v\n", err)
+				}
+			}
+			defer func() {
+				_ = unix.IoctlSetPointerInt(stdinFd, unix.TIOCSPGRP, savedFgPgrp)
+				signal.Reset(syscall.SIGTTOU)
+			}()
 		}
-		defer func() {
-			_ = unix.IoctlSetPointerInt(stdinFd, unix.TIOCSPGRP, savedPgrp)
-			signal.Reset(syscall.SIGTTOU)
-		}()
 	}
 
 	// Start Linux monitors (eBPF tracing for filesystem violations)
