@@ -584,11 +584,9 @@ func GenerateSandboxProfile(params MacOSSandboxParams) string {
 
 // WrapCommandMacOS wraps a command with macOS sandbox restrictions.
 func WrapCommandMacOS(cfg *config.Config, command string, httpPort, socksPort int, exposedPorts []int, debug bool, shellMode string, shellLogin bool) (string, error) {
-	// Check if allowedDomains contains "*" (wildcard = allow all direct network)
-	// In this mode, we still run the proxy for apps that respect HTTP_PROXY,
-	// but allow direct connections for apps that don't (like cursor-agent, opencode).
-	// deniedDomains will only be enforced for apps that use the proxy.
-	hasWildcardAllow := slices.Contains(cfg.Network.AllowedDomains, "*")
+	// In wildcard mode ("*"), still run the proxy for apps that respect
+	// HTTP_PROXY, but allow direct connections for apps that don't.
+	hasWildcardAllow := hasWildcardAllowedDomain(cfg)
 
 	needsNetwork := len(cfg.Network.AllowedDomains) > 0 || len(cfg.Network.DeniedDomains) > 0
 

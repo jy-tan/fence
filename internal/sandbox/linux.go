@@ -244,6 +244,23 @@ func canMountOver(path string) bool {
 	return fileExists(path)
 }
 
+// resolvePathForMount resolves symlinks before a self-bind mount.
+// bubblewrap cannot reliably mount over a symlink path, so when the source
+// is a symlink we enforce against its resolved target path instead.
+func resolvePathForMount(path string) (string, bool) {
+	if !fileExists(path) {
+		return "", false
+	}
+	if !isSymlink(path) {
+		return path, true
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil || resolved == "" || !fileExists(resolved) {
+		return "", false
+	}
+	return resolved, true
+}
+
 // sameDevice returns true if both paths reside on the same filesystem (device).
 func sameDevice(path1, path2 string) bool {
 	var s1, s2 syscall.Stat_t
@@ -363,13 +380,9 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		fmt.Fprintf(os.Stderr, "[fence:linux] Available features: %s\n", features.Summary())
 	}
 
-	// Check if allowedDomains contains "*" (wildcard = allow all direct network)
-	// In this mode, we skip network namespace isolation so apps that don't
-	// respect HTTP_PROXY can make direct connections.
-	hasWildcardAllow := false
-	if cfg != nil {
-		hasWildcardAllow = slices.Contains(cfg.Network.AllowedDomains, "*")
-	}
+	// In wildcard mode ("*"), skip network namespace isolation so apps that
+	// don't respect HTTP_PROXY can still make direct connections.
+	hasWildcardAllow := hasWildcardAllowedDomain(cfg)
 
 	if opts.Debug && hasWildcardAllow {
 		fmt.Fprintf(os.Stderr, "[fence:linux] Wildcard allowedDomains detected - allowing direct network connections\n")
@@ -722,16 +735,21 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 			// Respect explicit denyRead precedence.
 			continue
 		}
-		if !seen[p] && fileExists(p) {
+		mountPath, ok := resolvePathForMount(p)
+		if !ok || denyReadPaths[mountPath] {
+			continue
+		}
+		if !seen[mountPath] && canMountOver(mountPath) {
+			seen[mountPath] = true
 			seen[p] = true
 			if defaultDenyRead {
-				if isDirectory(p) {
-					bwrapArgs = append(bwrapArgs, "--tmpfs", p)
+				if isDirectory(mountPath) {
+					bwrapArgs = append(bwrapArgs, "--tmpfs", mountPath)
 				} else {
-					bwrapArgs = append(bwrapArgs, "--ro-bind", "/dev/null", p)
+					bwrapArgs = append(bwrapArgs, "--ro-bind", "/dev/null", mountPath)
 				}
 			} else {
-				bwrapArgs = append(bwrapArgs, "--ro-bind", p, p)
+				bwrapArgs = append(bwrapArgs, "--ro-bind", mountPath, mountPath)
 			}
 		}
 	}

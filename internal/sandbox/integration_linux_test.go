@@ -228,6 +228,26 @@ func TestLinux_LandlockAllowsTmpFence(t *testing.T) {
 	assertFileExists(t, testFile)
 }
 
+// TestLinux_SymlinkedGlobalGitConfigDoesNotBreakSandbox reproduces issue #51
+// conditions: HOME has a .gitconfig symlink to a different filesystem target.
+func TestLinux_SymlinkedGlobalGitConfigDoesNotBreakSandbox(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+
+	workspace := createTempWorkspace(t)
+	fakeHome := createTempWorkspace(t)
+	gitconfigPath := filepath.Join(fakeHome, ".gitconfig")
+	if err := os.Symlink("/proc/version", gitconfigPath); err != nil {
+		t.Fatalf("failed to create symlinked .gitconfig: %v", err)
+	}
+	t.Setenv("HOME", fakeHome)
+
+	cfg := testConfigWithWorkspace(workspace)
+	result := runUnderSandbox(t, cfg, "echo 'sandbox ok'", workspace)
+
+	assertAllowed(t, result)
+	assertContains(t, result.Stdout, "sandbox ok")
+}
+
 // TestLinux_DenyReadBlocksFiles verifies that denyRead correctly blocks file access.
 // This test ensures that when denyRead contains file paths (not directories),
 // sandbox is properly set up and denies read access.
