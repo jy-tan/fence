@@ -104,7 +104,7 @@ func TestGetRuntimeDeniedExecutablePaths_DedupesCanonicalAliasInputs(t *testing.
 func TestResolveExecutablePaths_ReturnsOriginalAbsolutePathWhenNotSymlink(t *testing.T) {
 	tmpDir := t.TempDir()
 	exePath := filepath.Join(tmpDir, "fake-exe")
-	if err := os.WriteFile(exePath, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+	if err := os.WriteFile(exePath, []byte("#!/bin/sh\nexit 0\n"), 0o600); err != nil {
 		t.Fatalf("failed to create fake executable: %v", err)
 	}
 
