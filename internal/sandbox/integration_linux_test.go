@@ -248,6 +248,67 @@ func TestLinux_SymlinkedGlobalGitConfigDoesNotBreakSandbox(t *testing.T) {
 	assertContains(t, result.Stdout, "sandbox ok")
 }
 
+// TestLinux_RuntimeExecDeny_DoesNotCrashOnBinAliasPath verifies that enabling a
+// runtime exec deny for "chroot" does not crash sandbox startup on usr-merged
+// systems where /bin may be a symlink alias.
+func TestLinux_RuntimeExecDeny_DoesNotCrashOnBinAliasPath(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+	skipIfCommandNotFound(t, "chroot")
+
+	workspace := createTempWorkspace(t)
+	cfg := testConfigWithWorkspace(workspace)
+	cfg.Command.Deny = []string{"chroot"}
+	cfg.Command.UseDefaults = boolPtr(false)
+
+	result := runUnderSandbox(t, cfg, "echo 'sandbox ok'", workspace)
+	assertAllowed(t, result)
+	assertContains(t, result.Stdout, "sandbox ok")
+}
+
+// TestLinux_RuntimeExecDeny_ChrootBlockedWhenMountable verifies runtime exec
+// deny blocks direct chroot execution (when the mask mount can be applied).
+func TestLinux_RuntimeExecDeny_ChrootBlockedWhenMountable(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+	skipIfCommandNotFound(t, "chroot")
+
+	workspace := createTempWorkspace(t)
+	cfg := testConfigWithWorkspace(workspace)
+	cfg.Command.Deny = []string{"chroot"}
+	cfg.Command.UseDefaults = boolPtr(false)
+
+	result := runUnderSandbox(t, cfg, "chroot --version", workspace)
+	assertBlocked(t, result)
+}
+
+// TestLinux_DenyPrecedence_DenyReadMandatoryAndRuntimeExec verifies denyRead
+// still takes precedence when mandatory dangerous-path and runtime exec deny are
+// also enabled in the same config.
+func TestLinux_DenyPrecedence_DenyReadMandatoryAndRuntimeExec(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+	skipIfCommandNotFound(t, "chroot")
+
+	workspace := createTempWorkspace(t)
+	fakeHome := createTempWorkspace(t)
+	t.Setenv("HOME", fakeHome)
+
+	zshrcPath := createTestFile(t, fakeHome, ".zshrc", "secret zshrc content")
+
+	cfg := testConfigWithWorkspace(workspace)
+	cfg.Filesystem.DenyRead = []string{"~/.zshrc"}
+	cfg.Command.Deny = []string{"chroot"}
+	cfg.Command.UseDefaults = boolPtr(false)
+
+	result := runUnderSandbox(t, cfg, "cat "+zshrcPath, workspace)
+	assertBlocked(t, result)
+}
+
+// TestLinux_RuntimeExecDeny_BadTargetDoesNotAbortAll is the intended behavior
+// for the upcoming mount-planner refactor where unmountable deny entries are
+// skipped instead of aborting sandbox startup.
+func TestLinux_RuntimeExecDeny_BadTargetDoesNotAbortAll(t *testing.T) {
+	t.Skip("pending mount-planner refactor: non-fatal handling for unmountable runtime deny targets")
+}
+
 // TestLinux_DenyReadBlocksFiles verifies that denyRead correctly blocks file access.
 // This test ensures that when denyRead contains file paths (not directories),
 // sandbox is properly set up and denies read access.

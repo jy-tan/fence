@@ -244,21 +244,27 @@ func canMountOver(path string) bool {
 	return fileExists(path)
 }
 
-// resolvePathForMount resolves symlinks before a self-bind mount.
-// bubblewrap cannot reliably mount over a symlink path, so when the source
-// is a symlink we enforce against its resolved target path instead.
+// resolvePathForMount canonicalizes a path before a self-bind mount.
+// bubblewrap can fail when destination paths include symlink components
+// (common on usr-merged distros, e.g. /bin -> /usr/bin), so always prefer the
+// fully-resolved path.
 func resolvePathForMount(path string) (string, bool) {
 	if !fileExists(path) {
 		return "", false
 	}
-	if !isSymlink(path) {
-		return path, true
-	}
+	// Resolve full path even when only an ancestor is a symlink.
 	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil || resolved == "" || !fileExists(resolved) {
+	if err == nil && resolved != "" && fileExists(resolved) {
+		return resolved, true
+	}
+	// If canonicalization fails for a symlink path, skip mounting that entry
+	// instead of risking a hard bwrap startup failure.
+	if isSymlink(path) {
 		return "", false
 	}
-	return resolved, true
+	// Fall back for non-symlink paths where EvalSymlinks can fail due to
+	// transient lookup errors.
+	return path, true
 }
 
 // sameDevice returns true if both paths reside on the same filesystem (device).
@@ -777,9 +783,17 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	// This masks resolved executable paths so execve fails even when launched
 	// from an allowed wrapper process (e.g., agent subprocesses).
 	for _, p := range deniedExecPaths {
-		if fileExists(p) && !seen[p] {
+		mountPath, ok := resolvePathForMount(p)
+		if !ok {
+			if opts.Debug {
+				fmt.Fprintf(os.Stderr, "[fence:linux] Skipping runtime exec deny mount for %s (unmountable)\n", p)
+			}
+			continue
+		}
+		if !seen[mountPath] {
+			seen[mountPath] = true
 			seen[p] = true
-			bwrapArgs = append(bwrapArgs, "--ro-bind", "/dev/null", p)
+			bwrapArgs = append(bwrapArgs, "--ro-bind", "/dev/null", mountPath)
 		}
 	}
 

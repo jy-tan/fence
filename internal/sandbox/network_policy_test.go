@@ -135,3 +135,19 @@ func TestWildcardDetectionLogic(t *testing.T) {
 		})
 	}
 }
+
+func TestHasWildcardAllowedDomain_ExactStarOnly(t *testing.T) {
+	cfg := &config.Config{
+		Network: config.NetworkConfig{
+			AllowedDomains: []string{"example.com", "*.example.com", "foo*bar.com"},
+		},
+	}
+	if hasWildcardAllowedDomain(cfg) {
+		t.Fatalf("expected false when allowedDomains has no exact '*' entry")
+	}
+
+	cfg.Network.AllowedDomains = append(cfg.Network.AllowedDomains, "*")
+	if !hasWildcardAllowedDomain(cfg) {
+		t.Fatalf("expected true when allowedDomains contains exact '*' entry")
+	}
+}
