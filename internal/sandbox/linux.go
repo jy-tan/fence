@@ -626,7 +626,9 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		crossMountWritable := make(map[string]bool)
 
 		// Collect all cross-mount paths from allowExecute and allowRead
-		var crossMountPaths []string
+		// Keep explicit extra mount roots first so they cannot be shadowed by
+		// earlier child paths marking parent dirs as already bound.
+		crossMountPaths := append([]string(nil), extraReadableMountPaths...)
 		for _, p := range cfg.Filesystem.AllowExecute {
 			if !ContainsGlobChars(p) {
 				crossMountPaths = append(crossMountPaths, NormalizePath(p))
@@ -652,7 +654,6 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 			crossMountPaths = append(crossMountPaths, p)
 			crossMountWritable[p] = true
 		}
-		crossMountPaths = append(crossMountPaths, extraReadableMountPaths...)
 
 		for _, p := range crossMountPaths {
 			if !fileExists(p) || sameDevice("/", p) || crossMountBound[p] {
