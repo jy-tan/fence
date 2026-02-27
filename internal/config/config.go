@@ -37,14 +37,15 @@ type NetworkConfig struct {
 
 // FilesystemConfig defines filesystem restrictions.
 type FilesystemConfig struct {
-	DefaultDenyRead bool     `json:"defaultDenyRead,omitempty"` // If true, deny reads by default except system paths and AllowRead
-	WSLInterop      *bool    `json:"wslInterop,omitempty"`      // If nil, auto-detect WSL and allow /init; true/false to override
-	AllowRead       []string `json:"allowRead"`                 // Paths to allow reading
-	AllowExecute    []string `json:"allowExecute"`              // Paths to allow executing (read+execute only, no directory listing)
-	DenyRead        []string `json:"denyRead"`
-	AllowWrite      []string `json:"allowWrite"`
-	DenyWrite       []string `json:"denyWrite"`
-	AllowGitConfig  bool     `json:"allowGitConfig,omitempty"`
+	DefaultDenyRead     bool     `json:"defaultDenyRead,omitempty"`     // If true, deny reads by default except system paths and AllowRead
+	WSLInterop          *bool    `json:"wslInterop,omitempty"`          // If nil, auto-detect WSL and allow /init; true/false to override
+	ExtraReadableMounts []string `json:"extraReadableMounts,omitempty"` // Linux-only: additional mount roots to expose (and include descendant submounts)
+	AllowRead           []string `json:"allowRead"`                     // Paths to allow reading
+	AllowExecute        []string `json:"allowExecute"`                  // Paths to allow executing (read+execute only, no directory listing)
+	DenyRead            []string `json:"denyRead"`
+	AllowWrite          []string `json:"allowWrite"`
+	DenyWrite           []string `json:"denyWrite"`
+	AllowGitConfig      bool     `json:"allowGitConfig,omitempty"`
 }
 
 // CommandConfig defines command restrictions.
@@ -211,6 +212,14 @@ func (c *Config) Validate() error {
 
 	if slices.Contains(c.Filesystem.AllowRead, "") {
 		return errors.New("filesystem.allowRead contains empty path")
+	}
+	if slices.Contains(c.Filesystem.ExtraReadableMounts, "") {
+		return errors.New("filesystem.extraReadableMounts contains empty path")
+	}
+	for _, p := range c.Filesystem.ExtraReadableMounts {
+		if !filepath.IsAbs(p) {
+			return fmt.Errorf("filesystem.extraReadableMounts path must be absolute: %q", p)
+		}
 	}
 	if slices.Contains(c.Filesystem.AllowExecute, "") {
 		return errors.New("filesystem.allowExecute contains empty path")
@@ -470,11 +479,12 @@ func Merge(base, override *Config) *Config {
 			WSLInterop: mergeOptionalBool(base.Filesystem.WSLInterop, override.Filesystem.WSLInterop),
 
 			// Append slices
-			AllowRead:    mergeStrings(base.Filesystem.AllowRead, override.Filesystem.AllowRead),
-			AllowExecute: mergeStrings(base.Filesystem.AllowExecute, override.Filesystem.AllowExecute),
-			DenyRead:     mergeStrings(base.Filesystem.DenyRead, override.Filesystem.DenyRead),
-			AllowWrite:   mergeStrings(base.Filesystem.AllowWrite, override.Filesystem.AllowWrite),
-			DenyWrite:    mergeStrings(base.Filesystem.DenyWrite, override.Filesystem.DenyWrite),
+			ExtraReadableMounts: mergeStrings(base.Filesystem.ExtraReadableMounts, override.Filesystem.ExtraReadableMounts),
+			AllowRead:           mergeStrings(base.Filesystem.AllowRead, override.Filesystem.AllowRead),
+			AllowExecute:        mergeStrings(base.Filesystem.AllowExecute, override.Filesystem.AllowExecute),
+			DenyRead:            mergeStrings(base.Filesystem.DenyRead, override.Filesystem.DenyRead),
+			AllowWrite:          mergeStrings(base.Filesystem.AllowWrite, override.Filesystem.AllowWrite),
+			DenyWrite:           mergeStrings(base.Filesystem.DenyWrite, override.Filesystem.DenyWrite),
 
 			// Boolean fields: override wins if set
 			AllowGitConfig: base.Filesystem.AllowGitConfig || override.Filesystem.AllowGitConfig,

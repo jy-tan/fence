@@ -127,3 +127,49 @@ func TestWrapCommandLinuxWithOptions_DropsShellFromRuntimeDenyMounts(t *testing.
 		t.Fatalf("shell path should not be masked in runtime deny mounts: %s", shellPath)
 	}
 }
+
+func TestParseMountInfoLineMountPoint(t *testing.T) {
+	line := "2475 2474 0:406 / /run rw,nosuid,nodev - tmpfs tmpfs rw,size=1234k"
+	mountPoint, ok := parseMountInfoLineMountPoint(line)
+	if !ok {
+		t.Fatalf("expected mount point to parse")
+	}
+	if mountPoint != "/run" {
+		t.Fatalf("expected /run, got %q", mountPoint)
+	}
+}
+
+func TestParseMountInfoLineMountPoint_UnescapesSpaces(t *testing.T) {
+	line := "275 1 0:45 / /mnt/with\\040space rw,relatime - ext4 /dev/vda rw"
+	mountPoint, ok := parseMountInfoLineMountPoint(line)
+	if !ok {
+		t.Fatalf("expected mount point to parse")
+	}
+	if mountPoint != "/mnt/with space" {
+		t.Fatalf("expected unescaped mount point, got %q", mountPoint)
+	}
+}
+
+func TestExpandRootsWithDescendantMounts(t *testing.T) {
+	roots := []string{"/run", "/nix"}
+	mountPoints := []string{
+		"/",
+		"/run",
+		"/run/user",
+		"/run/user/1000",
+		"/nix",
+		"/nix/store",
+		"/var",
+	}
+
+	got := expandRootsWithDescendantMounts(roots, mountPoints)
+	want := []string{"/nix", "/nix/store", "/run", "/run/user", "/run/user/1000"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d paths, got %d (%v)", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected %q at index %d, got %q", want[i], i, got[i])
+		}
+	}
+}

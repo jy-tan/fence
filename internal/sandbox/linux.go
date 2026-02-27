@@ -434,6 +434,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	}
 
 	defaultDenyRead := cfg != nil && cfg.Filesystem.DefaultDenyRead
+	extraReadableMountPaths := getExtraReadableMountPaths(cfg, opts.Debug)
 
 	if defaultDenyRead {
 		// In defaultDenyRead mode, we only bind essential system paths read-only
@@ -456,6 +457,14 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 
 		// Track bound paths to avoid duplicate mounts across allowRead, allowExecute, and wslInterop
 		boundPaths := make(map[string]bool)
+
+		// Bind additional Linux mount roots (and descendant submounts) explicitly.
+		for _, p := range extraReadableMountPaths {
+			if !boundPaths[p] {
+				boundPaths[p] = true
+				bwrapArgs = append(bwrapArgs, "--ro-bind", p, p)
+			}
+		}
 
 		// Bind user-specified allowRead paths
 		if cfg != nil && cfg.Filesystem.AllowRead != nil {
@@ -643,6 +652,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 			crossMountPaths = append(crossMountPaths, p)
 			crossMountWritable[p] = true
 		}
+		crossMountPaths = append(crossMountPaths, extraReadableMountPaths...)
 
 		for _, p := range crossMountPaths {
 			if !fileExists(p) || sameDevice("/", p) || crossMountBound[p] {

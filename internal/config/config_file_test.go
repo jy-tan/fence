@@ -59,6 +59,7 @@ func TestMarshalConfigJSON_IncludesExtendedFilesystemAndSSH(t *testing.T) {
 	cfg := &Config{}
 	cfg.Filesystem.DefaultDenyRead = true
 	cfg.Filesystem.WSLInterop = &wslInterop
+	cfg.Filesystem.ExtraReadableMounts = []string{"/run", "/nix"}
 	cfg.Filesystem.AllowRead = []string{"/workspace"}
 	cfg.Filesystem.AllowExecute = []string{"/usr/bin/bash"}
 	cfg.SSH.AllowedHosts = []string{"*.example.com"}
@@ -71,6 +72,9 @@ func TestMarshalConfigJSON_IncludesExtendedFilesystemAndSSH(t *testing.T) {
 	output := string(data)
 	assert.Contains(t, output, `"defaultDenyRead": true`)
 	assert.Contains(t, output, `"wslInterop": false`)
+	assert.Contains(t, output, `"extraReadableMounts": [`)
+	assert.Contains(t, output, `"/run"`)
+	assert.Contains(t, output, `"/nix"`)
 	assert.Contains(t, output, `"allowRead": [`)
 	assert.Contains(t, output, `"/workspace"`)
 	assert.Contains(t, output, `"allowExecute": [`)

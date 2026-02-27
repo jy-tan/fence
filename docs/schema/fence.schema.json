@@ -76,6 +76,12 @@
           },
           "type": "array"
         },
+        "extraReadableMounts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "wslInterop": {
           "type": [
             "boolean",

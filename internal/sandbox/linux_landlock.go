@@ -151,6 +151,13 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 		}
 	}
 
+	// Extra Linux mount roots requested by config (plus descendant submounts).
+	for _, p := range getExtraReadableMountPaths(cfg, debug) {
+		if err := ruleset.AllowRead(p); err != nil && debug {
+			fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add extra readable mount path %s: %v\n", p, err)
+		}
+	}
+
 	// User-configured allowExecute paths
 	if cfg != nil && cfg.Filesystem.AllowExecute != nil {
 		expandedPaths := ExpandGlobPatterns(cfg.Filesystem.AllowExecute)
