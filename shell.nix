@@ -7,6 +7,8 @@ pkgs.mkShell {
     with pkgs;
     [
       go
+      golangci-lint
+      gofumpt
       python3
       nodejs
       git
