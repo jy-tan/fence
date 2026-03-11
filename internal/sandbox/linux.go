@@ -710,7 +710,10 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		return "", err
 	}
 
-	deniedExecPaths := GetRuntimeDeniedExecutablePaths(cfg)
+	deniedExecPaths, runtimeExecDenyDiagnostics := GetRuntimeDeniedExecutablePathsWithDiagnostics(cfg, opts.Debug)
+	for _, msg := range runtimeExecDenyDiagnostics {
+		fmt.Fprintf(os.Stderr, "[fence:linux] %s\n", msg)
+	}
 	if resolvedShellPath, err := filepath.EvalSymlinks(shellPath); err == nil {
 		deniedExecPaths = slices.DeleteFunc(deniedExecPaths, func(p string) bool {
 			return p == shellPath || p == resolvedShellPath

@@ -1190,6 +1190,39 @@ func TestSSHConfigValidation(t *testing.T) {
 	}
 }
 
+func TestMergeAllowBlockingCritical(t *testing.T) {
+	t.Run("override false wins over base true (last-writer-wins)", func(t *testing.T) {
+		base := &Config{Command: CommandConfig{AllowBlockingCritical: boolPtr(true)}}
+		override := &Config{Command: CommandConfig{AllowBlockingCritical: boolPtr(false)}}
+		result := Merge(base, override)
+		if result.Command.AllowBlockingCritical == nil {
+			t.Fatal("expected non-nil AllowBlockingCritical")
+		}
+		if *result.Command.AllowBlockingCritical {
+			t.Error("expected AllowBlockingCritical=false when override explicitly sets it false")
+		}
+	})
+
+	t.Run("base true is inherited when override is unset", func(t *testing.T) {
+		base := &Config{Command: CommandConfig{AllowBlockingCritical: boolPtr(true)}}
+		override := &Config{}
+		result := Merge(base, override)
+		if result.Command.AllowBlockingCritical == nil {
+			t.Fatal("expected non-nil AllowBlockingCritical")
+		}
+		if !*result.Command.AllowBlockingCritical {
+			t.Error("expected AllowBlockingCritical=true when base is true and override is nil")
+		}
+	})
+
+	t.Run("nil result when both unset", func(t *testing.T) {
+		result := Merge(&Config{}, &Config{})
+		if result.Command.AllowBlockingCritical != nil {
+			t.Errorf("expected nil AllowBlockingCritical when both unset, got %v", *result.Command.AllowBlockingCritical)
+		}
+	})
+}
+
 func TestMergeSSHConfig(t *testing.T) {
 	t.Run("merge SSH allowed hosts", func(t *testing.T) {
 		base := &Config{

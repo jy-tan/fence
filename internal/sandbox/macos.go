@@ -618,7 +618,10 @@ func WrapCommandMacOS(cfg *config.Config, command string, httpPort, socksPort in
 		return "", err
 	}
 
-	deniedExecPaths := GetRuntimeDeniedExecutablePaths(cfg)
+	deniedExecPaths, runtimeExecDenyDiagnostics := GetRuntimeDeniedExecutablePathsWithDiagnostics(cfg, debug)
+	for _, msg := range runtimeExecDenyDiagnostics {
+		fmt.Fprintf(os.Stderr, "[fence:macos] %s\n", msg)
+	}
 	if resolvedShellPath, err := filepath.EvalSymlinks(shellPath); err == nil {
 		deniedExecPaths = slices.DeleteFunc(deniedExecPaths, func(p string) bool {
 			return p == shellPath || p == resolvedShellPath

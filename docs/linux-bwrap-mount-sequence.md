@@ -325,6 +325,27 @@ Why this phase exists:
 - runtime exec masks stop already-running wrapper processes from launching a
   denied child executable later
 
+#### Multicall binary protection
+
+Before masking an executable, Fence checks whether it is a multicall binary —
+a single file that implements many commands via hardlinks or symlinks (e.g.,
+busybox, some coreutils builds). It does this by comparing inode and device
+numbers across all directories in the search path.
+
+If the target binary also implements critical shell commands (`ls`, `cat`,
+`head`, `tail`, `env`, `echo`, and similar), masking it would break the shell
+environment. In that case Fence skips the mask and emits a diagnostic
+instead of adding the `--ro-bind /dev/null` argument.
+
+Two `command` config fields control this behaviour:
+
+- `allowBlockingCritical: true` — force the mask even with critical collisions
+- `silenceSharedBinaryWarning: ["<token>"]` — skip silently without a diagnostic
+
+When all shared names are themselves deny targets (e.g., blocking both
+`python` and `python3` on a shared binary), no critical collision is recorded
+and the mask is applied normally.
+
 ### 13. Bridge And Reverse-Bridge Socket Binds
 
 Once the filesystem policy is in place, Fence binds the socket paths needed by
