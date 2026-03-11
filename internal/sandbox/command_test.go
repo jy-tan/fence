@@ -433,11 +433,26 @@ func TestMatchesPrefix(t *testing.T) {
 		prefix   string
 		expected bool
 	}{
+		// Basic prefix matching
 		{"git push", "git push", true},
 		{"git push origin main", "git push", true},
 		{"git pushall", "git push", false}, // "pushall" is different word
 		{"git status", "git push", false},
 		{"gitpush", "git push", false},
+
+		// Equals suffix matching (for commands like "dd if=", "mkfs.ext4 -t", etc.)
+		{"dd if=/dev/zero", "dd if=", true},
+		{"dd of=/tmp/file", "dd of=", true},
+		{"dd if=/dev/zero of=/tmp/file", "dd if=", true},
+		{"dd of=/tmp/file if=/dev/zero", "dd of=", true}, // of= can come first too
+		{"dd if=", "dd if=", true},                       // exact match
+
+		// False negatives for equals suffix
+		{"dd if /dev/zero", "dd if=", false},      // space instead of equals
+		{"ddx=/path", "dd=", false},               // different command
+		{"dd iflag=direct", "dd if=", false},      // different parameter
+		{"dd oflag=sync", "dd of=", false},        // different parameter
+		{"sudo dd if=/dev/zero", "dd if=", false}, // different base command
 	}
 
 	for _, tt := range tests {

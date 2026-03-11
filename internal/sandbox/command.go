@@ -301,6 +301,11 @@ func matchesPrefix(command, prefix string) bool {
 		return true
 	}
 
+	// Also match prefixes that end with = (e.g., "dd if=" matches "dd if=/dev/zero")
+	if strings.HasSuffix(prefix, "=") && strings.HasPrefix(command, prefix) {
+		return true
+	}
+
 	return false
 }
 
