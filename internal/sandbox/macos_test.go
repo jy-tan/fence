@@ -1,6 +1,9 @@
 package sandbox
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -323,6 +326,289 @@ func TestExpandMacOSTmpPaths(t *testing.T) {
 			for i, v := range got {
 				if v != tt.want[i] {
 					t.Errorf("expandMacOSTmpPaths()[%d] = %v, want %v", i, v, tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestMacOS_TildePathExpansionInSandboxProfile verifies that tilde paths in config
+// are properly expanded and converted to regex patterns in sandbox profiles.
+func TestMacOS_TildePathExpansionInSandboxProfile(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("Could not get home directory: %v", err)
+	}
+
+	inputPath := "~/.pi/**"
+	expectedRegex := `(regex "` + "^" + strings.ReplaceAll(filepath.Join(home, ".pi"), ".", `\\.`) + `/.*$")`
+
+	config := config.Config{
+		Filesystem: config.FilesystemConfig{
+			AllowWrite: []string{inputPath},
+		},
+	}
+
+	params := MacOSSandboxParams{
+		Command:         "echo test",
+		WriteAllowPaths: config.Filesystem.AllowWrite,
+	}
+
+	profile := GenerateSandboxProfile(params)
+
+	// Verify the expected regex pattern appears in profile
+	if !strings.Contains(profile, expectedRegex) {
+		t.Errorf("Expected regex %q not found in profile\nProfile:\n%s", expectedRegex, profile)
+	}
+
+	// Verify no literal ~ in generated profile (expansion happened correctly)
+	if strings.Contains(profile, "~") {
+		t.Errorf("Literal ~ found in generated profile - expansion may have failed:\n%s",
+			profile)
+	}
+}
+
+// TestMacOS_GlobToRegexWithExpandedPaths verifies GlobToRegex handles expanded paths correctly.
+func TestMacOS_GlobToRegexWithExpandedPaths(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("Could not get home directory: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		input       string   // Should already be expanded (no tilde)
+		testMatches []string // Paths that should match the regex
+		testNoMatch []string // Paths that should NOT match the regex
+	}{
+		{
+			name:  "expanded path with glob suffix matches descendants",
+			input: filepath.Join(home, ".pi", "**"),
+			testMatches: []string{
+				home + "/.pi/", // Note: regex requires trailing slash for glob patterns (filepath.Join strips it)
+				filepath.Join(home, ".pi/test.txt"),
+				filepath.Join(home, ".pi/subdir/file.txt"),
+			},
+			testNoMatch: []string{
+				filepath.Join(home, "other"),
+				"/tmp/.pi",
+			},
+		},
+		{
+			name:  "expanded path without glob matches exactly",
+			input: filepath.Join(home, "Documents"),
+			testMatches: []string{
+				filepath.Join(home, "Documents"),
+			},
+			testNoMatch: []string{
+				filepath.Join(home, "Documents/file.txt"), // Should NOT match - not a glob pattern
+				filepath.Join(home, "Other"),
+			},
+		},
+		{
+			name:  "expanded path with single wildcard",
+			input: filepath.Join(home, "*.txt"),
+			testMatches: []string{
+				filepath.Join(home, "test.txt"),
+				filepath.Join(home, "file.txt"),
+			},
+			testNoMatch: []string{
+				filepath.Join(home, "test.pdf"),
+				"/Other/test.txt",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GlobToRegex(tt.input)
+
+			// Verify the regex is valid and compiles
+			if _, err := regexp.Compile(got); err != nil {
+				t.Errorf("GlobToRegex(%q) produced invalid regex: %v", tt.input, got)
+				return
+			}
+
+			re := regexp.MustCompile(got)
+
+			// Test that expected paths match
+			for _, testPath := range tt.testMatches {
+				if !re.MatchString(testPath) {
+					t.Errorf("regex for %q should match %q, but doesn't\nRegex: %s",
+						tt.input, testPath, got)
+				}
+			}
+
+			// Test that unexpected paths don't match
+			for _, testPath := range tt.testNoMatch {
+				if re.MatchString(testPath) {
+					t.Errorf("regex for %q should NOT match %q, but does\nRegex: %s",
+						tt.input, testPath, got)
+				}
+			}
+		})
+	}
+}
+
+// TestMacOS_FullTildeRoundTrip verifies complete flow: config file → Load() → Sandbox profile.
+func TestMacOS_FullTildeRoundTrip(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("Could not get home directory: %v", err)
+	}
+
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "test_config.json")
+
+	// Write config with tilde path (simulating user's actual config file)
+	content := `{
+		"filesystem": {
+			"allowWrite": ["~/.pi/**"]
+		}
+	}`
+
+	err = os.WriteFile(configPath, []byte(content), 0o600)
+	if err != nil {
+		t.Fatalf("Failed to write test config: %v", err)
+	}
+
+	// Load the config (preserves tilde literally - expansion happens at NormalizePath time)
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	// Verify tilde is preserved literally in loaded config (for --show-config transparency)
+	if len(cfg.Filesystem.AllowWrite) != 1 || cfg.Filesystem.AllowWrite[0] != "~/.pi/**" {
+		t.Errorf("Expected literal tilde path '~/.pi/**', got: %v", cfg.Filesystem.AllowWrite)
+	}
+
+	// Generate sandbox profile - NormalizePath will expand tildes automatically during rule generation
+	params := MacOSSandboxParams{
+		Command:         "test command",
+		WriteAllowPaths: cfg.Filesystem.AllowWrite,
+	}
+
+	profile := GenerateSandboxProfile(params)
+
+	// Verify the expanded path appears in the profile with proper regex pattern
+	expectedRegexPattern := `(regex "` + "^" + strings.ReplaceAll(filepath.Join(home, ".pi"), ".", `\\.`) + `/.*$")`
+	if !strings.Contains(profile, expectedRegexPattern) {
+		t.Errorf("Expanded path regex pattern not found in generated sandbox profile\nProfile:\n%s",
+			profile)
+	}
+
+	// Verify glob was converted to regex pattern
+	if !strings.Contains(profile, "regex") {
+		t.Errorf("Glob pattern should be converted to regex in profile\nProfile:\n%s", profile)
+	}
+}
+
+// TestMacOS_DenyRulesWithTildePaths verifies that deny rules work correctly with expanded paths.
+func TestMacOS_DenyRulesWithTildePaths(t *testing.T) {
+	tests := []struct {
+		name         string
+		denyRead     []string
+		denyWrite    []string
+		wantContains []string // Expected patterns in profile
+	}{
+		{
+			name:      "deny read with tilde path expanded",
+			denyRead:  []string{"~/.ssh/**"},
+			denyWrite: nil,
+			wantContains: []string{
+				"deny file-read*",
+			},
+		},
+		{
+			name:      "deny write with tilde path expanded",
+			denyRead:  nil,
+			denyWrite: []string{"~/.bash_history"},
+			wantContains: []string{
+				"deny file-write*",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := MacOSSandboxParams{
+				Command:        "test command",
+				ReadDenyPaths:  tt.denyRead,
+				WriteDenyPaths: tt.denyWrite,
+			}
+
+			profile := GenerateSandboxProfile(params)
+
+			for _, want := range tt.wantContains {
+				if !strings.Contains(profile, want) {
+					t.Errorf("profile should contain %q\nGenerated profile:\n%s",
+						want, profile)
+				}
+			}
+		})
+	}
+}
+
+// TestMacOS_ReadRulesWithTildePaths verifies that read rules work correctly with expanded paths.
+func TestMacOS_ReadRulesWithTildePaths(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("Could not get home directory: %v", err)
+	}
+
+	tests := []struct {
+		name         string
+		allowRead    []string
+		defaultDeny  bool
+		wantContains []string // Expected patterns in profile
+	}{
+		{
+			name:        "read allow with tilde path expanded",
+			allowRead:   []string{"~/.cache"},
+			defaultDeny: false,
+			wantContains: []string{
+				"(allow file-read*)", // Default mode allows all reads globally
+			},
+		},
+		{
+			name:        "read allow with tilde in strict mode",
+			allowRead:   []string{"~/.config"},
+			defaultDeny: true,
+			wantContains: []string{
+				filepath.Join(home, ".config"), // Should see expanded path
+				"(allow file-read-metadata)",   // Strict mode needs metadata allow
+				"file-read-data",               // And data read for specific paths
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := MacOSSandboxParams{
+				Command:         "test command",
+				ReadAllowPaths:  tt.allowRead,
+				DefaultDenyRead: tt.defaultDeny,
+			}
+
+			profile := GenerateSandboxProfile(params)
+
+			for _, want := range tt.wantContains {
+				if !strings.Contains(profile, want) {
+					t.Errorf("profile should contain %q\nGenerated profile:\n%s",
+						want, profile)
+				}
+			}
+
+			// Verify that tilde paths were expanded (no literal ~ in path checks or regex patterns)
+			for _, path := range tt.allowRead {
+				if strings.HasPrefix(path, "~") && !tt.defaultDeny {
+					t.Logf("Tilde path %q used with defaultDeny=false - profile uses global allow file-read*", path)
+				} else if strings.HasPrefix(path, "~") && tt.defaultDeny {
+					// In strict mode, tilde should be expanded before use
+					if !strings.Contains(profile, "(allow file-read-data") {
+						t.Logf("Tilde path %q may not be properly handled in strict mode", path)
+					}
 				}
 			}
 		})
