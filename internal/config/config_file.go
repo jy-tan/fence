@@ -28,14 +28,15 @@ type cleanNetworkConfig struct {
 
 // cleanFilesystemConfig is used for JSON output with omitempty to skip empty fields.
 type cleanFilesystemConfig struct {
-	DefaultDenyRead bool     `json:"defaultDenyRead,omitempty"`
-	WSLInterop      *bool    `json:"wslInterop,omitempty"`
-	AllowRead       []string `json:"allowRead,omitempty"`
-	AllowExecute    []string `json:"allowExecute,omitempty"`
-	DenyRead        []string `json:"denyRead,omitempty"`
-	AllowWrite      []string `json:"allowWrite,omitempty"`
-	DenyWrite       []string `json:"denyWrite,omitempty"`
-	AllowGitConfig  bool     `json:"allowGitConfig,omitempty"`
+	DefaultDenyRead     bool     `json:"defaultDenyRead,omitempty"`
+	WSLInterop          *bool    `json:"wslInterop,omitempty"`
+	ExtraReadableMounts []string `json:"extraReadableMounts,omitempty"`
+	AllowRead           []string `json:"allowRead,omitempty"`
+	AllowExecute        []string `json:"allowExecute,omitempty"`
+	DenyRead            []string `json:"denyRead,omitempty"`
+	AllowWrite          []string `json:"allowWrite,omitempty"`
+	DenyWrite           []string `json:"denyWrite,omitempty"`
+	AllowGitConfig      bool     `json:"allowGitConfig,omitempty"`
 }
 
 // cleanCommandConfig is used for JSON output with omitempty to skip empty fields.
@@ -90,14 +91,15 @@ func MarshalConfigJSON(cfg *Config) ([]byte, error) {
 
 	// Filesystem config - only include if non-empty
 	filesystem := cleanFilesystemConfig{
-		DefaultDenyRead: cfg.Filesystem.DefaultDenyRead,
-		WSLInterop:      cfg.Filesystem.WSLInterop,
-		AllowRead:       cfg.Filesystem.AllowRead,
-		AllowExecute:    cfg.Filesystem.AllowExecute,
-		DenyRead:        cfg.Filesystem.DenyRead,
-		AllowWrite:      cfg.Filesystem.AllowWrite,
-		DenyWrite:       cfg.Filesystem.DenyWrite,
-		AllowGitConfig:  cfg.Filesystem.AllowGitConfig,
+		DefaultDenyRead:     cfg.Filesystem.DefaultDenyRead,
+		WSLInterop:          cfg.Filesystem.WSLInterop,
+		ExtraReadableMounts: cfg.Filesystem.ExtraReadableMounts,
+		AllowRead:           cfg.Filesystem.AllowRead,
+		AllowExecute:        cfg.Filesystem.AllowExecute,
+		DenyRead:            cfg.Filesystem.DenyRead,
+		AllowWrite:          cfg.Filesystem.AllowWrite,
+		DenyWrite:           cfg.Filesystem.DenyWrite,
+		AllowGitConfig:      cfg.Filesystem.AllowGitConfig,
 	}
 	if !isFilesystemEmpty(filesystem) {
 		clean.Filesystem = &filesystem
@@ -143,6 +145,7 @@ func isNetworkEmpty(n cleanNetworkConfig) bool {
 func isFilesystemEmpty(f cleanFilesystemConfig) bool {
 	return !f.DefaultDenyRead &&
 		f.WSLInterop == nil &&
+		len(f.ExtraReadableMounts) == 0 &&
 		len(f.AllowRead) == 0 &&
 		len(f.AllowExecute) == 0 &&
 		len(f.DenyRead) == 0 &&

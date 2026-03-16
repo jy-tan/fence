@@ -112,6 +112,33 @@ func TestConfigValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "empty extraReadableMounts path",
+			config: Config{
+				Filesystem: FilesystemConfig{
+					ExtraReadableMounts: []string{""},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "relative extraReadableMounts path",
+			config: Config{
+				Filesystem: FilesystemConfig{
+					ExtraReadableMounts: []string{"run"},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "absolute extraReadableMounts path",
+			config: Config{
+				Filesystem: FilesystemConfig{
+					ExtraReadableMounts: []string{"/run"},
+				},
+			},
+			wantErr: false,
+		},
+		{
 			name: "empty allowRead path",
 			config: Config{
 				Filesystem: FilesystemConfig{
@@ -547,14 +574,16 @@ func TestMerge(t *testing.T) {
 	t.Run("merge filesystem config", func(t *testing.T) {
 		base := &Config{
 			Filesystem: FilesystemConfig{
-				AllowWrite: []string{"."},
-				DenyRead:   []string{"~/.ssh/**"},
+				AllowWrite:          []string{"."},
+				DenyRead:            []string{"~/.ssh/**"},
+				ExtraReadableMounts: []string{"/nix"},
 			},
 		}
 		override := &Config{
 			Filesystem: FilesystemConfig{
-				AllowWrite: []string{"/tmp"},
-				DenyWrite:  []string{".env"},
+				AllowWrite:          []string{"/tmp"},
+				DenyWrite:           []string{".env"},
+				ExtraReadableMounts: []string{"/run"},
 			},
 		}
 		result := Merge(base, override)
@@ -567,6 +596,9 @@ func TestMerge(t *testing.T) {
 		}
 		if len(result.Filesystem.DenyWrite) != 1 {
 			t.Errorf("expected 1 deny write path, got %d", len(result.Filesystem.DenyWrite))
+		}
+		if len(result.Filesystem.ExtraReadableMounts) != 2 {
+			t.Errorf("expected 2 extraReadableMounts paths, got %d", len(result.Filesystem.ExtraReadableMounts))
 		}
 	})
 

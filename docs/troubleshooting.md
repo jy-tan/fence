@@ -135,6 +135,30 @@ Notes:
 - `--shell-login` uses `-lc` so login startup files are loaded.
 - If your required `PATH` is already exported before launching fence, `--shell user` without `--shell-login` may be enough.
 
+## NixOS: `/nix` or `/run` appears empty inside sandbox
+
+On NixOS and similar setups with many sub-mounts, bubblewrap's root bind is non-recursive. Some mount roots (commonly `/nix` and `/run`) may not be visible unless explicitly exposed.
+
+Quick way to choose what to add:
+
+- Run with debug: `fence -d <command>`
+- Find the missing path in the error output
+- Add only that path's top-level mount root:
+  - missing `/nix/store/...` -> add `/nix`
+  - missing `/run/...` -> add `/run`
+
+Fix: add required roots to `filesystem.extraReadableMounts`:
+
+```json
+{
+  "filesystem": {
+    "extraReadableMounts": ["/nix", "/run"]
+  }
+}
+```
+
+Then rerun with debug mode (`fence -d <command>`) to confirm the mount paths are bound. See [Filesystem Configuration](/configuration#filesystem-configuration) for details.
+
 ## Node.js HTTP(S) doesn't use proxy env vars by default
 
 Node's built-in `http`/`https` modules ignore `HTTP_PROXY`/`HTTPS_PROXY`.

@@ -121,6 +121,7 @@ Use this when you need to support apps that don't respect proxy environment vari
 | Field | Description |
 |-------|-------------|
 | `wslInterop` | WSL interop support. `null` (default) = auto-detect, `true` = force on, `false` = force off. When active, auto-allows execute on `/init`. |
+| `extraReadableMounts` | Linux-only absolute mount roots (must start with `/`) to expose when using bubblewrap's non-recursive root bind (for example `/run` or `/nix`). Fence also includes descendant submounts under each root. |
 | `allowRead` | Paths to allow reading and directory listing (Landlock: `READ_FILE + READ_DIR + EXECUTE`) |
 | `allowExecute` | Paths to allow executing only (Landlock: `READ_FILE + EXECUTE`, no directory listing) |
 | `denyRead` | Paths to deny reading (deny-only pattern) |
@@ -144,6 +145,28 @@ Fence provides three levels of filesystem access, from most restrictive to least
 > **Best practice**: prefer pointing `allowExecute` at specific files (e.g., `/mnt/c/.../powershell.exe`) rather than directories. When Landlock is not active (kernel < 5.13 or wrapper skipped), directory-scoped `allowExecute` behaves like `allowRead` because bwrap only enforces read-only mounts without distinguishing execute from read permissions.
 
 System paths like `/usr`, `/lib`, `/bin`, `/etc` are always readable — you don't need to add them.
+
+### NixOS / Nix Example
+
+On systems with many sub-mounts (for example NixOS), bubblewrap's root bind is non-recursive. Paths like `/nix` or `/run` can appear empty inside the sandbox unless you expose those mount roots explicitly.
+
+Use `extraReadableMounts` for those roots:
+
+```json
+{
+  "extends": "code",
+  "filesystem": {
+    "extraReadableMounts": [
+      "/nix",
+      "/run"
+    ]
+  }
+}
+```
+
+- Entries must be absolute paths (start with `/`)
+- Fence includes descendant submounts under each configured root
+- Keep this list minimal; only add roots you actually need
 
 ### WSL (Windows Subsystem for Linux) Example
 
