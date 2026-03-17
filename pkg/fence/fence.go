@@ -24,6 +24,18 @@ type NetworkConfig = config.NetworkConfig
 // FilesystemConfig defines filesystem restrictions.
 type FilesystemConfig = config.FilesystemConfig
 
+// DevicesConfig defines device exposure inside the sandbox.
+type DevicesConfig = config.DevicesConfig
+
+// DeviceMode controls how /dev is set up inside Linux sandboxes.
+type DeviceMode = config.DeviceMode
+
+const (
+	DeviceModeAuto    DeviceMode = config.DeviceModeAuto
+	DeviceModeMinimal DeviceMode = config.DeviceModeMinimal
+	DeviceModeHost    DeviceMode = config.DeviceModeHost
+)
+
 // Manager handles sandbox initialization and command wrapping.
 type Manager = sandbox.Manager
 

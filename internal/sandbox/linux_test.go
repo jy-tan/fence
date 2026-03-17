@@ -127,3 +127,124 @@ func TestWrapCommandLinuxWithOptions_DropsShellFromRuntimeDenyMounts(t *testing.
 		t.Fatalf("shell path should not be masked in runtime deny mounts: %s", shellPath)
 	}
 }
+
+func TestResolveLinuxDeviceMode(t *testing.T) {
+	tests := []struct {
+		name          string
+		requested     config.DeviceMode
+		euid          int
+		bwrapSetuid   bool
+		insideContain bool
+		want          config.DeviceMode
+	}{
+		{
+			name:      "explicit host mode wins",
+			requested: config.DeviceModeHost,
+			want:      config.DeviceModeHost,
+		},
+		{
+			name:      "explicit minimal mode wins",
+			requested: config.DeviceModeMinimal,
+			want:      config.DeviceModeMinimal,
+		},
+		{
+			name:          "auto prefers minimal in containers",
+			requested:     config.DeviceModeAuto,
+			insideContain: true,
+			want:          config.DeviceModeMinimal,
+		},
+		{
+			name:        "auto keeps host mode for setuid non-root bwrap",
+			requested:   config.DeviceModeAuto,
+			euid:        1000,
+			bwrapSetuid: true,
+			want:        config.DeviceModeHost,
+		},
+		{
+			name:        "auto uses minimal for root even if bwrap is setuid",
+			requested:   config.DeviceModeAuto,
+			euid:        0,
+			bwrapSetuid: true,
+			want:        config.DeviceModeMinimal,
+		},
+		{
+			name:      "empty requested mode behaves like auto",
+			requested: "",
+			want:      config.DeviceModeMinimal,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveLinuxDeviceMode(tt.requested, tt.euid, tt.bwrapSetuid, tt.insideContain)
+			if got != tt.want {
+				t.Fatalf("resolveLinuxDeviceMode(%q, %d, %v, %v) = %q, want %q",
+					tt.requested, tt.euid, tt.bwrapSetuid, tt.insideContain, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWrapCommandLinuxWithOptions_UsesMinimalDevMode(t *testing.T) {
+	if _, err := exec.LookPath("bwrap"); err != nil {
+		t.Skip("bwrap not available")
+	}
+
+	cfg := &config.Config{
+		Devices: config.DevicesConfig{
+			Mode:  config.DeviceModeMinimal,
+			Allow: []string{"/dev/null"},
+		},
+	}
+	cmd, err := WrapCommandLinuxWithOptions(cfg, "echo ok", nil, nil, LinuxSandboxOptions{
+		UseLandlock: false,
+		UseSeccomp:  false,
+		UseEBPF:     false,
+		ShellMode:   ShellModeDefault,
+	})
+	if err != nil {
+		t.Fatalf("WrapCommandLinuxWithOptions failed: %v", err)
+	}
+
+	if !strings.Contains(cmd, ShellQuote([]string{"--dev", "/dev"})) {
+		t.Fatalf("expected minimal /dev mount in command: %s", cmd)
+	}
+	if strings.Contains(cmd, ShellQuote([]string{"--dev-bind", "/dev", "/dev"})) {
+		t.Fatalf("did not expect host /dev bind in minimal mode: %s", cmd)
+	}
+	if !strings.Contains(cmd, ShellQuote([]string{"--dev-bind", "/dev/null", "/dev/null"})) {
+		t.Fatalf("expected explicit device passthrough in minimal mode: %s", cmd)
+	}
+}
+
+func TestWrapCommandLinuxWithOptions_UsesHostDevMode(t *testing.T) {
+	if _, err := exec.LookPath("bwrap"); err != nil {
+		t.Skip("bwrap not available")
+	}
+
+	cfg := &config.Config{
+		Devices: config.DevicesConfig{
+			Mode:  config.DeviceModeHost,
+			Allow: []string{"/dev/null"},
+		},
+	}
+	cmd, err := WrapCommandLinuxWithOptions(cfg, "echo ok", nil, nil, LinuxSandboxOptions{
+		UseLandlock: false,
+		UseSeccomp:  false,
+		UseEBPF:     false,
+		ShellMode:   ShellModeDefault,
+	})
+	if err != nil {
+		t.Fatalf("WrapCommandLinuxWithOptions failed: %v", err)
+	}
+
+	if !strings.Contains(cmd, ShellQuote([]string{"--dev-bind", "/dev", "/dev"})) {
+		t.Fatalf("expected host /dev bind in command: %s", cmd)
+	}
+	if strings.Contains(cmd, ShellQuote([]string{"--dev", "/dev"})) {
+		t.Fatalf("did not expect minimal /dev mount in host mode: %s", cmd)
+	}
+	if strings.Contains(cmd, ShellQuote([]string{"--dev-bind", "/dev/null", "/dev/null"})) {
+		t.Fatalf("did not expect per-device passthroughs in host mode: %s", cmd)
+	}
+}

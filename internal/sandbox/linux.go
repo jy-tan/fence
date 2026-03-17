@@ -521,9 +521,69 @@ func bootstrapSocketPaths(reverseBridge *ReverseBridge) []string {
 	return reverseBridge.SocketPaths
 }
 
+func effectiveLinuxDeviceMode(cfg *config.Config, bwrapPath string) config.DeviceMode {
+	requested := config.DeviceModeAuto
+	if cfg != nil && cfg.Devices.Mode != "" {
+		requested = cfg.Devices.Mode
+	}
+	return resolveLinuxDeviceMode(requested, os.Geteuid(), isSetuidBinary(bwrapPath), isInsideContainer())
+}
+
+// resolveLinuxDeviceMode chooses the /dev mount strategy to use on Linux.
+// Auto mode prefers a fresh minimal /dev unless we're relying on setuid bwrap
+// compatibility outside containers.
+func resolveLinuxDeviceMode(requested config.DeviceMode, euid int, bwrapSetuid, insideContainer bool) config.DeviceMode {
+	switch requested {
+	case config.DeviceModeHost, config.DeviceModeMinimal:
+		return requested
+	case "", config.DeviceModeAuto:
+		if insideContainer {
+			return config.DeviceModeMinimal
+		}
+		if euid != 0 && bwrapSetuid {
+			return config.DeviceModeHost
+		}
+		return config.DeviceModeMinimal
+	default:
+		return config.DeviceModeMinimal
+	}
+}
+
+func isSetuidBinary(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeSetuid != 0
+}
+
+func isInsideContainer() bool {
+	for _, marker := range []string{"/.dockerenv", "/run/.containerenv"} {
+		if fileExists(marker) {
+			return true
+		}
+	}
+
+	data, err := os.ReadFile("/proc/1/cgroup")
+	if err != nil {
+		return false
+	}
+	content := string(data)
+	for _, hint := range []string{"docker", "containerd", "kubepods", "libpod", "podman", "lxc"} {
+		if strings.Contains(content, hint) {
+			return true
+		}
+	}
+	return false
+}
+
 // WrapCommandLinuxWithOptions wraps a command with configurable sandbox options.
 func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *LinuxBridge, reverseBridge *ReverseBridge, opts LinuxSandboxOptions) (string, error) {
-	if _, err := exec.LookPath("bwrap"); err != nil {
+	bwrapPath, err := exec.LookPath("bwrap")
+	if err != nil {
 		return "", fmt.Errorf("bubblewrap (bwrap) is required on Linux but not found: %w", err)
 	}
 
@@ -548,6 +608,11 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 
 	if opts.Debug {
 		fmt.Fprintf(os.Stderr, "[fence:linux] Available features: %s\n", features.Summary())
+	}
+
+	deviceMode := effectiveLinuxDeviceMode(cfg, bwrapPath)
+	if opts.Debug {
+		fmt.Fprintf(os.Stderr, "[fence:linux] Device mode: %s\n", deviceMode)
 	}
 
 	// In wildcard mode ("*"), skip network namespace isolation so apps that
@@ -674,10 +739,29 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		bwrapArgs = append(bwrapArgs, "--ro-bind", "/", "/")
 	}
 
-	// Mount special filesystems
-	// Use --dev-bind for /dev instead of --dev to preserve host device permissions
-	// (the --dev minimal devtmpfs has permission issues when bwrap is setuid)
-	bwrapArgs = append(bwrapArgs, "--dev-bind", "/dev", "/dev")
+	switch deviceMode {
+	case config.DeviceModeHost:
+		// Preserve the outer /dev when we're relying on setuid-bwrap compatibility.
+		bwrapArgs = append(bwrapArgs, "--dev-bind", "/dev", "/dev")
+	default:
+		// Prefer a fresh minimal /dev for predictable sandbox behavior.
+		bwrapArgs = append(bwrapArgs, "--dev", "/dev")
+		if cfg != nil && len(cfg.Devices.Allow) > 0 {
+			boundDevicePaths := make(map[string]bool, len(cfg.Devices.Allow))
+			for _, path := range cfg.Devices.Allow {
+				normalized := filepath.Clean(path)
+				if boundDevicePaths[normalized] {
+					continue
+				}
+				if fileExists(normalized) {
+					bwrapArgs = append(bwrapArgs, "--dev-bind", normalized, normalized)
+					boundDevicePaths[normalized] = true
+				} else if opts.Debug {
+					fmt.Fprintf(os.Stderr, "[fence:linux] Skipping missing device passthrough: %s\n", normalized)
+				}
+			}
+		}
+	}
 	bwrapArgs = append(bwrapArgs, "--proc", "/proc")
 
 	// /tmp needs to be writable for many programs
@@ -690,8 +774,8 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	// is on a different filesystem, we create intermediate directories and
 	// bind the real file at its original location so the symlink resolves.
 	if target, err := filepath.EvalSymlinks("/etc/resolv.conf"); err == nil && target != "/etc/resolv.conf" {
-		// Skip targets under specially-mounted dirs — a --tmpfs there would
-		// overwrite the --dev-bind or --proc mounts established above.
+		// Skip targets under specially-mounted dirs - a --tmpfs there would
+		// overwrite the /dev or /proc mounts established above.
 		targetUnderSpecialMount := strings.HasPrefix(target, "/dev/") ||
 			strings.HasPrefix(target, "/proc/") ||
 			strings.HasPrefix(target, "/tmp/")
@@ -1009,6 +1093,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		} else {
 			featureList = append(featureList, "bwrap(pid,fs)")
 		}
+		featureList = append(featureList, "dev:"+string(deviceMode))
 		if features.HasSeccomp && opts.UseSeccomp && seccompFilterPath != "" {
 			featureList = append(featureList, "seccomp")
 		}

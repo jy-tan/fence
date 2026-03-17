@@ -16,6 +16,10 @@ Example config:
     "allowWrite": [".", "/tmp"],
     "denyWrite": [".git/hooks"]
   },
+  "devices": {
+    "mode": "minimal",
+    "allow": ["/dev/dri"]
+  },
   "command": {
     "deny": ["git push", "npm publish"]
   },
@@ -82,6 +86,7 @@ The `extends` value is treated as a file path if it contains `/` or `\`, or star
 
 - Slice fields (domains, paths, commands) are appended and deduplicated
 - Boolean fields use OR logic (true if either base or override enables it)
+- Enum/string fields use override-wins semantics when the override is non-empty (for example, `devices.mode`)
 - Integer fields (ports) use override-wins semantics (0 keeps base value)
 
 ### Chaining
@@ -145,6 +150,8 @@ Fence provides three levels of filesystem access, from most restrictive to least
 
 System paths like `/usr`, `/lib`, `/bin`, `/etc` are always readable — you don't need to add them.
 
+Device exposure under `/dev` is configured separately via [`devices`](#device-configuration), not via `filesystem.allowRead`/`allowWrite`.
+
 ### WSL (Windows Subsystem for Linux) Example
 
 On WSL2, fence auto-detects the environment and allows `/init` (the WSL binfmt_misc interpreter) automatically. You only need to add the specific Windows executables and paths you use:
@@ -168,6 +175,69 @@ On WSL2, fence auto-detects the environment and allows `/init` (the WSL binfmt_m
 - `/mnt/c/temp` — Writable temp directory on the Windows filesystem (needed when Windows programs must access the files).
 
 To disable WSL interop explicitly: `"wslInterop": false`.
+
+## Device Configuration
+
+> [!NOTE]
+> Device configuration currently applies to Linux sandboxes. macOS does not use these settings.
+
+| Field | Description |
+|-------|-------------|
+| `mode` | How `/dev` is set up inside the sandbox: `auto`, `minimal`, or `host` |
+| `allow` | Extra `/dev/...` paths to pass through when using a minimal `/dev` |
+
+### Device Modes
+
+#### `minimal`
+
+Creates a fresh minimal `/dev` inside the sandbox using `bwrap --dev /dev`.
+
+This is the most predictable and least-privileged mode. It includes standard essentials such as `/dev/null`, `/dev/zero`, `/dev/random`, `/dev/urandom`, `/dev/tty`, `/dev/shm`, and `devpts`.
+
+Use this when you want sandbox behavior to be consistent across hosts and containers.
+
+#### `host`
+
+Bind-mounts the outer environment's `/dev` into the sandbox using `bwrap --dev-bind /dev /dev`.
+
+Use this only when you intentionally need the outer environment's full device tree. In this mode, `devices.allow` is redundant because the entire outer `/dev` is already available inside the sandbox.
+
+#### `auto`
+
+Picks the safest compatible mode automatically.
+
+Current behavior:
+
+- Prefers `minimal` inside containers
+- Prefers `host` only for the older setuid-`bwrap`, non-root compatibility case
+- Uses `minimal` otherwise
+
+If you need deterministic behavior, prefer setting `mode` explicitly instead of relying on `auto`.
+
+### Device Passthroughs
+
+When `mode` is `minimal`, you can opt specific host devices back in with `allow`:
+
+```json
+{
+  "devices": {
+    "mode": "minimal",
+    "allow": ["/dev/dri", "/dev/fuse"]
+  }
+}
+```
+
+Rules:
+
+- Paths must be under `/dev/`
+- `"/dev"` itself is not allowed in `allow`; use `mode: "host"` if you want the full outer device tree
+- Missing device paths are skipped at runtime
+
+### Choosing a Mode
+
+- Use `minimal` for most sandboxing and containerized workflows
+- Use `minimal` plus `allow` for targeted hardware passthrough like GPUs or FUSE
+- Use `host` only when you explicitly need the full outer `/dev`
 
 ## Command Configuration
 

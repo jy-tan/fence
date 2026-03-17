@@ -183,6 +183,61 @@ func TestConfigValidate(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "valid devices minimal mode",
+			config: Config{
+				Devices: DevicesConfig{
+					Mode:  DeviceModeMinimal,
+					Allow: []string{"/dev/dri", "/dev/fuse"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid devices host mode",
+			config: Config{
+				Devices: DevicesConfig{
+					Mode: DeviceModeHost,
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid devices mode",
+			config: Config{
+				Devices: DevicesConfig{
+					Mode: "invalid",
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "empty devices allow path",
+			config: Config{
+				Devices: DevicesConfig{
+					Allow: []string{""},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "devices allow path outside dev",
+			config: Config{
+				Devices: DevicesConfig{
+					Allow: []string{"/tmp/not-a-device"},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "devices allow root dev path too broad",
+			config: Config{
+				Devices: DevicesConfig{
+					Allow: []string{"/dev"},
+				},
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -214,6 +269,9 @@ func TestDefault(t *testing.T) {
 	}
 	if cfg.Filesystem.DenyWrite == nil {
 		t.Error("DenyWrite should not be nil")
+	}
+	if cfg.Devices.Allow == nil {
+		t.Error("Devices.Allow should not be nil")
 	}
 }
 
@@ -273,6 +331,28 @@ func TestLoad(t *testing.T) {
 				}
 				if cfg.Network.AllowedDomains[0] != "example.com" {
 					t.Errorf("expected example.com, got %s", cfg.Network.AllowedDomains[0])
+				}
+			},
+		},
+		{
+			name: "config with devices config",
+			setup: func(dir string) string {
+				path := filepath.Join(dir, "devices.json")
+				content := `{"devices":{"mode":"minimal","allow":["/dev/dri","/dev/fuse"]}}`
+				_ = os.WriteFile(path, []byte(content), 0o600)
+				return path
+			},
+			wantNil: false,
+			wantErr: false,
+			checkConfig: func(t *testing.T, cfg *Config) {
+				if cfg.Devices.Mode != DeviceModeMinimal {
+					t.Fatalf("expected devices mode %q, got %q", DeviceModeMinimal, cfg.Devices.Mode)
+				}
+				if len(cfg.Devices.Allow) != 2 {
+					t.Fatalf("expected 2 device allow paths, got %d", len(cfg.Devices.Allow))
+				}
+				if cfg.Devices.Allow[0] != "/dev/dri" || cfg.Devices.Allow[1] != "/dev/fuse" {
+					t.Fatalf("unexpected devices allow paths: %v", cfg.Devices.Allow)
 				}
 			},
 		},
@@ -567,6 +647,50 @@ func TestMerge(t *testing.T) {
 		}
 		if len(result.Filesystem.DenyWrite) != 1 {
 			t.Errorf("expected 1 deny write path, got %d", len(result.Filesystem.DenyWrite))
+		}
+	})
+
+	t.Run("merge devices config", func(t *testing.T) {
+		base := &Config{
+			Devices: DevicesConfig{
+				Mode:  DeviceModeHost,
+				Allow: []string{"/dev/dri"},
+			},
+		}
+		override := &Config{
+			Devices: DevicesConfig{
+				Mode:  DeviceModeMinimal,
+				Allow: []string{"/dev/fuse"},
+			},
+		}
+		result := Merge(base, override)
+
+		if result.Devices.Mode != DeviceModeMinimal {
+			t.Errorf("expected devices mode %q, got %q", DeviceModeMinimal, result.Devices.Mode)
+		}
+		if len(result.Devices.Allow) != 2 {
+			t.Fatalf("expected 2 device allow paths, got %d: %v", len(result.Devices.Allow), result.Devices.Allow)
+		}
+	})
+
+	t.Run("merge devices mode preserves base when override unset", func(t *testing.T) {
+		base := &Config{
+			Devices: DevicesConfig{
+				Mode: DeviceModeHost,
+			},
+		}
+		override := &Config{
+			Devices: DevicesConfig{
+				Allow: []string{"/dev/fuse"},
+			},
+		}
+		result := Merge(base, override)
+
+		if result.Devices.Mode != DeviceModeHost {
+			t.Errorf("expected devices mode %q, got %q", DeviceModeHost, result.Devices.Mode)
+		}
+		if len(result.Devices.Allow) != 1 || result.Devices.Allow[0] != "/dev/fuse" {
+			t.Errorf("unexpected devices allow paths: %v", result.Devices.Allow)
 		}
 	})
 

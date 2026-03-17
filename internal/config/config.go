@@ -18,6 +18,7 @@ type Config struct {
 	Extends    string           `json:"extends,omitempty"`
 	Network    NetworkConfig    `json:"network"`
 	Filesystem FilesystemConfig `json:"filesystem"`
+	Devices    DevicesConfig    `json:"devices,omitempty"`
 	Command    CommandConfig    `json:"command"`
 	SSH        SSHConfig        `json:"ssh"`
 	AllowPty   bool             `json:"allowPty,omitempty"`
@@ -33,6 +34,21 @@ type NetworkConfig struct {
 	AllowLocalOutbound  *bool    `json:"allowLocalOutbound,omitempty"` // If nil, defaults to AllowLocalBinding value
 	HTTPProxyPort       int      `json:"httpProxyPort,omitempty"`
 	SOCKSProxyPort      int      `json:"socksProxyPort,omitempty"`
+}
+
+// DeviceMode controls how /dev is set up inside Linux sandboxes.
+type DeviceMode string
+
+const (
+	DeviceModeAuto    DeviceMode = "auto"    // Picks the safest compatible /dev layout for the current environment.
+	DeviceModeMinimal DeviceMode = "minimal" // Creates a fresh minimal /dev inside the sandbox.
+	DeviceModeHost    DeviceMode = "host"    // Bind-mounts the outer environment's /dev into the sandbox.
+)
+
+// DevicesConfig defines device exposure inside the sandbox.
+type DevicesConfig struct {
+	Mode  DeviceMode `json:"mode,omitempty"`  // auto|minimal|host
+	Allow []string   `json:"allow,omitempty"` // Extra /dev paths to pass through when using a minimal /dev
 }
 
 // FilesystemConfig defines filesystem restrictions.
@@ -119,6 +135,9 @@ func Default() *Config {
 			DenyRead:   []string{},
 			AllowWrite: []string{},
 			DenyWrite:  []string{},
+		},
+		Devices: DevicesConfig{
+			Allow: []string{},
 		},
 		Command: CommandConfig{
 			Deny:  []string{},
@@ -223,6 +242,24 @@ func (c *Config) Validate() error {
 	}
 	if slices.Contains(c.Filesystem.DenyWrite, "") {
 		return errors.New("filesystem.denyWrite contains empty path")
+	}
+
+	switch c.Devices.Mode {
+	case "", DeviceModeAuto, DeviceModeMinimal, DeviceModeHost:
+	default:
+		return fmt.Errorf("invalid devices.mode %q (expected one of: auto, minimal, host)", c.Devices.Mode)
+	}
+	if slices.Contains(c.Devices.Allow, "") {
+		return errors.New("devices.allow contains empty path")
+	}
+	for _, path := range c.Devices.Allow {
+		cleaned := filepath.Clean(path)
+		switch {
+		case cleaned == "/dev":
+			return fmt.Errorf("devices.allow path %q is too broad; use devices.mode %q instead", path, DeviceModeHost)
+		case !strings.HasPrefix(cleaned, "/dev/"):
+			return fmt.Errorf("devices.allow path %q must be under /dev/", path)
+		}
 	}
 
 	if slices.Contains(c.Command.Deny, "") {
@@ -480,6 +517,14 @@ func Merge(base, override *Config) *Config {
 			AllowGitConfig: base.Filesystem.AllowGitConfig || override.Filesystem.AllowGitConfig,
 		},
 
+		Devices: DevicesConfig{
+			// Mode: override wins if set, otherwise base
+			Mode: mergeDeviceMode(base.Devices.Mode, override.Devices.Mode),
+
+			// Append slices
+			Allow: mergeStrings(base.Devices.Allow, override.Devices.Allow),
+		},
+
 		Command: CommandConfig{
 			// Append slices
 			Deny:  mergeStrings(base.Command.Deny, override.Command.Deny),
@@ -535,6 +580,14 @@ func mergeStrings(base, override []string) []string {
 // mergeOptionalBool returns override if non-nil, otherwise base.
 func mergeOptionalBool(base, override *bool) *bool {
 	if override != nil {
+		return override
+	}
+	return base
+}
+
+// mergeDeviceMode returns override if non-empty, otherwise base.
+func mergeDeviceMode(base, override DeviceMode) DeviceMode {
+	if override != "" {
 		return override
 	}
 	return base
