@@ -147,6 +147,7 @@ func TestLinux_LandlockProtectsGitConfig(t *testing.T) {
 // when allowGitConfig is true.
 func TestLinux_LandlockAllowsGitConfigWhenEnabled(t *testing.T) {
 	skipIfAlreadySandboxed(t)
+	skipIfCommandNotFound(t, "socat")
 
 	workspace := createTempWorkspace(t)
 	createGitRepo(t, workspace)
@@ -155,12 +156,17 @@ func TestLinux_LandlockAllowsGitConfigWhenEnabled(t *testing.T) {
 
 	configPath := filepath.Join(workspace, ".git", "config")
 
-	// This may or may not work depending on the implementation
-	// The key is that hooks should ALWAYS be protected, but config might be allowed
 	result := runUnderSandbox(t, cfg, "echo '[test]' >> "+configPath, workspace)
 
-	// We just verify it doesn't crash; actual behavior depends on implementation
-	_ = result
+	assertAllowed(t, result)
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("failed to read git config: %v", err)
+	}
+	if !strings.Contains(string(content), "[test]") {
+		t.Errorf("expected git config to include appended section, got:\n%s", content)
+	}
 }
 
 // TestLinux_LandlockProtectsBashrc verifies shell config files are protected.

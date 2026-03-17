@@ -307,7 +307,7 @@ func intermediaryDirs(root, targetDir string) []string {
 // getMandatoryDenyPaths returns concrete paths (not globs) that must be protected.
 // Covers dangerous files/dirs in cwd, home, and subdirectories up to
 // DefaultMaxDangerousFileDepth levels deep (using a depth-limited walk).
-func getMandatoryDenyPaths(cwd string) []string {
+func getMandatoryDenyPaths(cwd string, allowGitConfig bool) []string {
 	var paths []string
 
 	// Dangerous files in cwd
@@ -320,9 +320,11 @@ func getMandatoryDenyPaths(cwd string) []string {
 		paths = append(paths, filepath.Join(cwd, d))
 	}
 
-	// Git hooks and config in cwd
+	// Git hooks are always blocked; .git/config is optional
 	paths = append(paths, filepath.Join(cwd, ".git/hooks"))
-	paths = append(paths, filepath.Join(cwd, ".git/config"))
+	if !allowGitConfig {
+		paths = append(paths, filepath.Join(cwd, ".git/config"))
+	}
 
 	// Dangerous files in home directory
 	home, err := os.UserHomeDir()
@@ -335,7 +337,18 @@ func getMandatoryDenyPaths(cwd string) []string {
 	// Depth-limited walk to find dangerous files in subdirectories.
 	// This catches .bashrc, .zshrc, .git/hooks, etc. in nested project dirs
 	// without the cost of a full recursive glob expansion.
-	paths = append(paths, FindDangerousFiles(cwd, DefaultMaxDangerousFileDepth)...)
+	dangerous := FindDangerousFiles(cwd, DefaultMaxDangerousFileDepth)
+	if allowGitConfig {
+		gitConfigSuffix := string(filepath.Separator) + filepath.Join(".git", "config")
+		for _, p := range dangerous {
+			if strings.HasSuffix(p, gitConfigSuffix) {
+				continue
+			}
+			paths = append(paths, p)
+		}
+	} else {
+		paths = append(paths, dangerous...)
+	}
 
 	return paths
 }
@@ -896,7 +909,8 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	// getMandatoryDenyPaths covers: cwd-level files, home dir files, and a
 	// depth-limited walk (DefaultMaxDangerousFileDepth levels) to find dangerous
 	// files in subdirectories without full tree walks that hang on large dirs.
-	mandatoryDeny := getMandatoryDenyPaths(cwd)
+	allowGitConfig := cfg != nil && cfg.Filesystem.AllowGitConfig
+	mandatoryDeny := getMandatoryDenyPaths(cwd, allowGitConfig)
 
 	// Deduplicate
 	seen := make(map[string]bool)
