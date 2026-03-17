@@ -502,7 +502,7 @@ func TestLinux_ExposedPortAllowsHostReachability(t *testing.T) {
 		t.Fatalf("failed to wrap command: %v", err)
 	}
 
-	cmd := exec.Command("/bin/sh", "-c", wrappedCmd)
+	cmd := exec.Command("/bin/sh", "-c", wrappedCmd) //nolint:gosec // wrappedCmd is generated from trusted test input via the sandbox manager
 	cmd.Dir = workspace
 
 	var stdout, stderr strings.Builder
