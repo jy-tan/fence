@@ -47,8 +47,8 @@ const (
 
 // DevicesConfig defines device exposure inside the sandbox.
 type DevicesConfig struct {
-	Mode  DeviceMode `json:"mode,omitempty"`  // auto|minimal|host
-	Allow []string   `json:"allow,omitempty"` // Extra /dev paths to pass through when using a minimal /dev
+	Mode  DeviceMode `json:"mode,omitempty" schema:"enum=auto|minimal|host"` // auto|minimal|host
+	Allow []string   `json:"allow,omitempty" schema:"itemsPattern=^/dev/.+"` // Extra /dev paths to pass through when using a minimal /dev
 }
 
 // FilesystemConfig defines filesystem restrictions.

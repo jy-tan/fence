@@ -39,11 +39,17 @@
       "properties": {
         "allow": {
           "items": {
+            "pattern": "^/dev/.+",
             "type": "string"
           },
           "type": "array"
         },
         "mode": {
+          "enum": [
+            "auto",
+            "minimal",
+            "host"
+          ],
           "type": "string"
         }
       },

@@ -3,6 +3,7 @@ package configschema
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 
@@ -71,6 +72,10 @@ func schemaForType(t reflect.Type) (map[string]any, error) {
 			if err != nil {
 				return nil, err
 			}
+			fieldSchema, err = applySchemaTag(field, fieldSchema)
+			if err != nil {
+				return nil, err
+			}
 			properties[jsonName] = fieldSchema
 		}
 
@@ -103,11 +108,53 @@ func schemaForType(t reflect.Type) (map[string]any, error) {
 	}
 }
 
+func applySchemaTag(field reflect.StructField, schema map[string]any) (map[string]any, error) {
+	tag := field.Tag.Get("schema")
+	if tag == "" {
+		return schema, nil
+	}
+
+	updated := cloneSchemaMap(schema)
+	for _, directive := range strings.Split(tag, ";") {
+		if directive == "" {
+			continue
+		}
+
+		key, value, ok := strings.Cut(directive, "=")
+		if !ok {
+			return nil, fmt.Errorf("invalid schema tag %q on field %s", tag, field.Name)
+		}
+
+		switch key {
+		case "enum":
+			updated["enum"] = strings.Split(value, "|")
+		case "pattern":
+			updated["pattern"] = value
+		case "itemsPattern":
+			items, ok := updated["items"].(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("schema tag %q on field %s requires an array field", tag, field.Name)
+			}
+			itemSchema := cloneSchemaMap(items)
+			itemSchema["pattern"] = value
+			updated["items"] = itemSchema
+		default:
+			return nil, fmt.Errorf("unsupported schema tag key %q on field %s", key, field.Name)
+		}
+	}
+
+	return updated, nil
+}
+
+func cloneSchemaMap(schema map[string]any) map[string]any {
+	cloned := make(map[string]any, len(schema))
+	maps.Copy(cloned, schema)
+	return cloned
+}
+
 func nullable(base map[string]any) map[string]any {
 	copied := make(map[string]any, len(base)+1)
-	for k, v := range base {
-		copied[k] = v
-	}
+	maps.Copy(copied, base)
 
 	typeValue, hasType := copied["type"]
 	if !hasType {
