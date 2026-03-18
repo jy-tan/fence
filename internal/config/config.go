@@ -154,19 +154,35 @@ func Default() *Config {
 	}
 }
 
-// DefaultConfigPath returns the default config file path.
+// DefaultConfigPath returns the canonical config file path for new configs.
 // Uses ~/.config/fence/fence.json as the canonical path on macOS and the OS config dir elsewhere.
-// Falls back to legacy macOS Application Support and ~/.fence.json when those paths exist.
 func DefaultConfigPath() string {
 	home, _ := os.UserHomeDir()
 	configDir, _ := os.UserConfigDir()
 
-	return defaultConfigPathFor(runtime.GOOS, home, configDir, pathExists)
+	return defaultConfigPathFor(runtime.GOOS, home, configDir)
 }
 
-func defaultConfigPathFor(goos, home, userConfigDir string, exists func(string) bool) string {
+// ResolveDefaultConfigPath returns the config path fence should load by default.
+// It prefers the canonical path, but falls back to legacy locations if they exist.
+func ResolveDefaultConfigPath() string {
+	home, _ := os.UserHomeDir()
+	configDir, _ := os.UserConfigDir()
+
+	return resolveDefaultConfigPathFor(runtime.GOOS, home, configDir, pathExists)
+}
+
+func defaultConfigPathFor(goos, home, userConfigDir string) string {
 	canonicalPath := canonicalConfigPath(goos, home, userConfigDir)
 	if canonicalPath != "" {
+		return canonicalPath
+	}
+	return "fence.json"
+}
+
+func resolveDefaultConfigPathFor(goos, home, userConfigDir string, exists func(string) bool) string {
+	canonicalPath := defaultConfigPathFor(goos, home, userConfigDir)
+	if canonicalPath != "fence.json" {
 		if exists(canonicalPath) {
 			return canonicalPath
 		}
@@ -183,10 +199,7 @@ func defaultConfigPathFor(goos, home, userConfigDir string, exists func(string) 
 		}
 	}
 
-	if canonicalPath != "" {
-		return canonicalPath
-	}
-	return "fence.json"
+	return canonicalPath
 }
 
 func canonicalConfigPath(goos, home, userConfigDir string) string {

@@ -83,7 +83,7 @@ cfg.Network.AllowedDomains = []string{"example.com"}
 Loads configuration from a JSON file. Supports JSONC (comments allowed).
 
 ```go
-cfg, err := fence.LoadConfig(fence.DefaultConfigPath())
+cfg, err := fence.LoadConfig(fence.ResolveDefaultConfigPath())
 if err != nil {
     log.Fatal(err)
 }
@@ -94,7 +94,11 @@ if cfg == nil {
 
 #### `DefaultConfigPath() string`
 
-Returns the default config file path (`~/.config/fence/fence.json` on Linux and macOS, with fallback to legacy macOS `~/Library/Application Support/fence/fence.json` and legacy `~/.fence.json`).
+Returns the canonical config file path for new configs (`~/.config/fence/fence.json` on Linux and macOS).
+
+#### `ResolveDefaultConfigPath() string`
+
+Returns the config path fence should load by default. This prefers `~/.config/fence/fence.json`, but falls back to legacy macOS `~/Library/Application Support/fence/fence.json` and legacy `~/.fence.json` when those files exist.
 
 #### `NewManager(cfg *Config, debug, monitor bool) *Manager`
 
@@ -271,7 +275,7 @@ wrapped, _ := manager.WrapCommand("npm run dev")
 ### Load and extend config
 
 ```go
-cfg, err := fence.LoadConfig(fence.DefaultConfigPath())
+cfg, err := fence.LoadConfig(fence.ResolveDefaultConfigPath())
 if err != nil {
     log.Fatal(err)
 }

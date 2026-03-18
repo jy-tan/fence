@@ -196,7 +196,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to resolve extends: %w", err)
 		}
 	default:
-		configPath := config.DefaultConfigPath()
+		configPath := config.ResolveDefaultConfigPath()
 		cfg, err = config.Load(configPath)
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
