@@ -160,7 +160,7 @@ func TestLinux_LandlockAllowsGitConfigWhenEnabled(t *testing.T) {
 
 	assertAllowed(t, result)
 
-	content, err := os.ReadFile(configPath)
+	content, err := os.ReadFile(configPath) //nolint:gosec // test reads a temp repo config path created within the test
 	if err != nil {
 		t.Fatalf("failed to read git config: %v", err)
 	}
