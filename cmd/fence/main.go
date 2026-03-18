@@ -61,8 +61,9 @@ func main() {
 with network and filesystem restrictions.
 
 By default, all network access is blocked. Configure allowed domains in
-~/.config/fence/fence.json (or ~/Library/Application Support/fence/fence.json on macOS)
-or pass a settings file with --settings, or use a built-in template with --template.
+$XDG_CONFIG_HOME/fence/fence.json on Linux (typically
+~/.config/fence/fence.json) or ~/.config/fence/fence.json on macOS, or pass
+a settings file with --settings, or use a built-in template with --template.
 
 Examples:
   fence curl https://example.com          # Will be blocked (no domains allowed)
@@ -196,7 +197,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to resolve extends: %w", err)
 		}
 	default:
-		configPath := config.DefaultConfigPath()
+		configPath := config.ResolveDefaultConfigPath()
 		cfg, err = config.Load(configPath)
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
@@ -440,8 +441,8 @@ Examples:
   fence import --claude
 
   # Save to the default config path
-  #   Linux: ~/.config/fence/fence.json
-  #   macOS: ~/Library/Application Support/fence/fence.json
+  #   Linux: $XDG_CONFIG_HOME/fence/fence.json (typically ~/.config/fence/fence.json)
+  #   macOS: ~/.config/fence/fence.json
   fence import --claude --save
 
   # Save to a specific output file

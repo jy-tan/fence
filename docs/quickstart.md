@@ -15,11 +15,12 @@ To update:
 brew upgrade use-tusk/tap/fence
 ```
 
-### NIX (macOS, Linux, Windows(WSL))
+### Nix (macOS, Linux, Windows (WSL))
 
 ```sh
 nix run nixpkgs#fence -- --help
 ```
+
 This runs it directly from the repository, without installing `fence`. If you want to install it, follow the guidelines [from NixOS](https://nix.dev) or [nix-darwin](https://github.com/nix-darwin/nix-darwin).
 
 ### From Source
@@ -92,7 +93,7 @@ Create a starter config:
 fence config init
 ```
 
-By default, this writes `{"extends":"code"}` to `~/.config/fence/fence.json` (or `~/Library/Application Support/fence/fence.json` on macOS), so common coding workflows work out of the box.
+By default, this writes `{"extends":"code"}` to `$XDG_CONFIG_HOME/fence/fence.json` on Linux (typically `~/.config/fence/fence.json`) and `~/.config/fence/fence.json` on macOS, so common coding workflows work out of the box.
 
 If you want a starter file with empty arrays as editable hints, use:
 

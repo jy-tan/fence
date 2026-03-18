@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -153,39 +154,78 @@ func Default() *Config {
 	}
 }
 
-// DefaultConfigPath returns the default config file path.
-// Uses the OS-preferred config directory (XDG on Linux, ~/Library/Application Support on macOS).
-// Falls back to ~/.fence.json if the new location doesn't exist but the legacy one does.
+// DefaultConfigPath returns the canonical config file path for new configs.
+// Uses ~/.config/fence/fence.json as the canonical path on macOS and the OS config dir elsewhere.
 func DefaultConfigPath() string {
-	// Try OS-preferred config directory first
-	configDir, err := os.UserConfigDir()
-	if err == nil {
-		newPath := filepath.Join(configDir, "fence", "fence.json")
-		if _, err := os.Stat(newPath); err == nil {
-			return newPath
-		}
-		// Check if parent directory exists (user has set up the new location)
-		// If so, prefer this even if config doesn't exist yet
-		if _, err := os.Stat(filepath.Dir(newPath)); err == nil {
-			return newPath
+	home, _ := os.UserHomeDir()
+	configDir, _ := os.UserConfigDir()
+
+	return defaultConfigPathFor(runtime.GOOS, home, configDir)
+}
+
+// ResolveDefaultConfigPath returns the config path fence should load by default.
+// It prefers the canonical path when that file exists, but falls back to legacy
+// locations while migrating older configs.
+func ResolveDefaultConfigPath() string {
+	home, _ := os.UserHomeDir()
+	configDir, _ := os.UserConfigDir()
+
+	return resolveDefaultConfigPathFor(runtime.GOOS, home, configDir, pathExists)
+}
+
+func defaultConfigPathFor(goos, home, userConfigDir string) string {
+	canonicalPath := canonicalConfigPath(goos, home, userConfigDir)
+	if canonicalPath != "" {
+		return canonicalPath
+	}
+	return "fence.json"
+}
+
+func resolveDefaultConfigPathFor(goos, home, userConfigDir string, exists func(string) bool) string {
+	canonicalPath := defaultConfigPathFor(goos, home, userConfigDir)
+	if canonicalPath != "fence.json" {
+		if exists(canonicalPath) {
+			return canonicalPath
 		}
 	}
 
-	// Fall back to legacy path if it exists
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "fence.json"
-	}
-	legacyPath := filepath.Join(home, ".fence.json")
-	if _, err := os.Stat(legacyPath); err == nil {
-		return legacyPath
+	for _, legacyPath := range legacyConfigPaths(goos, home) {
+		if exists(legacyPath) {
+			return legacyPath
+		}
 	}
 
-	// Neither exists, prefer new XDG-compliant path
-	if configDir != "" {
-		return filepath.Join(configDir, "fence", "fence.json")
+	return canonicalPath
+}
+
+func canonicalConfigPath(goos, home, userConfigDir string) string {
+	switch {
+	case goos == "darwin" && home != "":
+		return filepath.Join(home, ".config", "fence", "fence.json")
+	case userConfigDir != "":
+		return filepath.Join(userConfigDir, "fence", "fence.json")
+	case home != "":
+		return filepath.Join(home, ".config", "fence", "fence.json")
+	default:
+		return ""
 	}
-	return filepath.Join(home, ".config", "fence", "fence.json")
+}
+
+func legacyConfigPaths(goos, home string) []string {
+	if home == "" {
+		return nil
+	}
+
+	paths := make([]string, 0, 2)
+	if goos == "darwin" {
+		paths = append(paths, filepath.Join(home, "Library", "Application Support", "fence", "fence.json"))
+	}
+	return append(paths, filepath.Join(home, ".fence.json"))
+}
+
+func pathExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // Load loads configuration from a file path.

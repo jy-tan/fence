@@ -71,7 +71,12 @@ func MergeConfigs(base, override *Config) *Config {
 	return config.Merge(base, override)
 }
 
-// DefaultConfigPath returns the default config file path.
+// DefaultConfigPath returns the canonical config path for new configs.
 func DefaultConfigPath() string {
 	return config.DefaultConfigPath()
+}
+
+// ResolveDefaultConfigPath returns the config path fence should load by default.
+func ResolveDefaultConfigPath() string {
+	return config.ResolveDefaultConfigPath()
 }

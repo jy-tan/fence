@@ -1,6 +1,13 @@
 # Configuration
 
-Fence reads settings from `~/.config/fence/fence.json` by default (or `~/Library/Application Support/fence/fence.json` on macOS). Legacy `~/.fence.json` is also supported. Pass `--settings ./fence.json` to use a custom path. Config files support JSONC.
+Fence reads settings from:
+
+- Linux: `$XDG_CONFIG_HOME/fence/fence.json` (typically `~/.config/fence/fence.json`)
+- macOS: `~/.config/fence/fence.json`
+- Legacy paths still supported: macOS `~/Library/Application Support/fence/fence.json` and `~/.fence.json`
+- Custom path: pass `--settings ./fence.json`
+
+Config files support JSONC.
 
 Example config:
 

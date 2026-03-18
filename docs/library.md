@@ -82,8 +82,19 @@ cfg.Network.AllowedDomains = []string{"example.com"}
 
 Loads configuration from a JSON file. Supports JSONC (comments allowed).
 
+This is a low-level loader and does not resolve `extends` entries relative to
+the config file location. Use `LoadConfigResolved` if your config may use
+relative `extends` paths.
+
+#### `LoadConfigResolved(path string) (*Config, error)`
+
+Loads configuration from a JSON file and resolves `extends` entries relative to
+that file's parent directory. This matches the CLI's behavior.
+
 ```go
-cfg, err := fence.LoadConfig(fence.DefaultConfigPath())
+path := fence.ResolveDefaultConfigPath()
+
+cfg, err := fence.LoadConfigResolved(path)
 if err != nil {
     log.Fatal(err)
 }
@@ -94,7 +105,11 @@ if cfg == nil {
 
 #### `DefaultConfigPath() string`
 
-Returns the default config file path (`~/.config/fence/fence.json` on Linux, `~/Library/Application Support/fence/fence.json` on macOS, with fallback to legacy `~/.fence.json`).
+Returns the canonical config file path for new configs (`$XDG_CONFIG_HOME/fence/fence.json` on Linux, typically `~/.config/fence/fence.json`; `~/.config/fence/fence.json` on macOS).
+
+#### `ResolveDefaultConfigPath() string`
+
+Returns the config path fence should load by default. It uses the canonical path (`$XDG_CONFIG_HOME/fence/fence.json` on Linux, typically `~/.config/fence/fence.json`; `~/.config/fence/fence.json` on macOS) when that file exists, and otherwise falls back to legacy macOS `~/Library/Application Support/fence/fence.json` and legacy `~/.fence.json` when those files exist.
 
 #### `NewManager(cfg *Config, debug, monitor bool) *Manager`
 
@@ -271,7 +286,9 @@ wrapped, _ := manager.WrapCommand("npm run dev")
 ### Load and extend config
 
 ```go
-cfg, err := fence.LoadConfig(fence.DefaultConfigPath())
+path := fence.ResolveDefaultConfigPath()
+
+cfg, err := fence.LoadConfigResolved(path)
 if err != nil {
     log.Fatal(err)
 }
