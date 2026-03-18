@@ -71,7 +71,7 @@ type Config struct {
 }
 ```
 
-- Loads from XDG config dir (`~/.config/fence/fence.json` or `~/Library/Application Support/fence/fence.json`) or custom path
+- Loads from `~/.config/fence/fence.json` or a custom path
 - Falls back to restrictive defaults (block all network, default command deny list)
 - Validates paths and normalizes them
 

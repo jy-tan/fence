@@ -94,7 +94,7 @@ if cfg == nil {
 
 #### `DefaultConfigPath() string`
 
-Returns the default config file path (`~/.config/fence/fence.json` on Linux, `~/Library/Application Support/fence/fence.json` on macOS, with fallback to legacy `~/.fence.json`).
+Returns the default config file path (`~/.config/fence/fence.json` on Linux and macOS, with fallback to legacy macOS `~/Library/Application Support/fence/fence.json` and legacy `~/.fence.json`).
 
 #### `NewManager(cfg *Config, debug, monitor bool) *Manager`
 

@@ -61,8 +61,8 @@ func main() {
 with network and filesystem restrictions.
 
 By default, all network access is blocked. Configure allowed domains in
-~/.config/fence/fence.json (or ~/Library/Application Support/fence/fence.json on macOS)
-or pass a settings file with --settings, or use a built-in template with --template.
+~/.config/fence/fence.json on Linux and macOS, or pass
+a settings file with --settings, or use a built-in template with --template.
 
 Examples:
   fence curl https://example.com          # Will be blocked (no domains allowed)
@@ -440,8 +440,7 @@ Examples:
   fence import --claude
 
   # Save to the default config path
-  #   Linux: ~/.config/fence/fence.json
-  #   macOS: ~/Library/Application Support/fence/fence.json
+  #   Linux/macOS: ~/.config/fence/fence.json
   fence import --claude --save
 
   # Save to a specific output file

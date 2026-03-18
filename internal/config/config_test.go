@@ -482,10 +482,109 @@ func TestDefaultConfigPath(t *testing.T) {
 	if path == "" {
 		t.Error("DefaultConfigPath() returned empty string")
 	}
-	// Should end with fence.json (either new XDG path or legacy .fence.json)
+	// Should end with fence.json (canonical path or legacy macOS path) or .fence.json.
 	base := filepath.Base(path)
 	if base != "fence.json" && base != ".fence.json" {
 		t.Errorf("DefaultConfigPath() = %q, expected to end with fence.json or .fence.json", path)
+	}
+}
+
+func TestDefaultConfigPathFor(t *testing.T) {
+	darwinHome := filepath.Join(string(os.PathSeparator), "Users", "alice")
+	darwinCanonical := filepath.Join(darwinHome, ".config", "fence", "fence.json")
+	darwinLegacyAppSupport := filepath.Join(darwinHome, "Library", "Application Support", "fence", "fence.json")
+	darwinLegacyDotfile := filepath.Join(darwinHome, ".fence.json")
+
+	linuxHome := filepath.Join(string(os.PathSeparator), "home", "alice")
+	linuxConfigDir := filepath.Join(linuxHome, ".config")
+	linuxLegacyDotfile := filepath.Join(linuxHome, ".fence.json")
+
+	tests := []struct {
+		name          string
+		goos          string
+		home          string
+		userConfigDir string
+		existing      map[string]bool
+		want          string
+	}{
+		{
+			name:          "darwin prefers canonical config file",
+			goos:          "darwin",
+			home:          darwinHome,
+			userConfigDir: filepath.Join(darwinHome, "Library", "Application Support"),
+			existing: map[string]bool{
+				darwinCanonical:        true,
+				darwinLegacyAppSupport: true,
+				darwinLegacyDotfile:    true,
+			},
+			want: darwinCanonical,
+		},
+		{
+			name:          "darwin prefers canonical path when canonical directory exists",
+			goos:          "darwin",
+			home:          darwinHome,
+			userConfigDir: filepath.Join(darwinHome, "Library", "Application Support"),
+			existing: map[string]bool{
+				filepath.Dir(darwinCanonical): true,
+				darwinLegacyAppSupport:        true,
+			},
+			want: darwinCanonical,
+		},
+		{
+			name:          "darwin falls back to legacy application support file",
+			goos:          "darwin",
+			home:          darwinHome,
+			userConfigDir: filepath.Join(darwinHome, "Library", "Application Support"),
+			existing: map[string]bool{
+				darwinLegacyAppSupport: true,
+			},
+			want: darwinLegacyAppSupport,
+		},
+		{
+			name:          "darwin falls back to legacy dotfile",
+			goos:          "darwin",
+			home:          darwinHome,
+			userConfigDir: filepath.Join(darwinHome, "Library", "Application Support"),
+			existing: map[string]bool{
+				darwinLegacyDotfile: true,
+			},
+			want: darwinLegacyDotfile,
+		},
+		{
+			name:          "linux keeps os config dir",
+			goos:          "linux",
+			home:          linuxHome,
+			userConfigDir: linuxConfigDir,
+			existing:      map[string]bool{},
+			want:          filepath.Join(linuxConfigDir, "fence", "fence.json"),
+		},
+		{
+			name:          "linux falls back to legacy dotfile",
+			goos:          "linux",
+			home:          linuxHome,
+			userConfigDir: linuxConfigDir,
+			existing: map[string]bool{
+				linuxLegacyDotfile: true,
+			},
+			want: linuxLegacyDotfile,
+		},
+		{
+			name:     "returns local fallback when home and config dir are unavailable",
+			goos:     "linux",
+			existing: map[string]bool{},
+			want:     "fence.json",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := defaultConfigPathFor(tt.goos, tt.home, tt.userConfigDir, func(path string) bool {
+				return tt.existing[path]
+			})
+			if got != tt.want {
+				t.Fatalf("defaultConfigPathFor() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

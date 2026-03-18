@@ -36,11 +36,12 @@ brew tap use-tusk/tap
 brew install use-tusk/tap/fence
 ```
 
-**NIX (macOS, Linux, Windows(WSL))**
+**Nix (macOS, Linux, Windows (WSL)):**
 
 ```sh
 nix run nixpkgs#fence -- --help
 ```
+
 This runs it directly from the repository, without installing `fence`. If you want to install it, follow the guidelines [from NixOS](https://nix.dev) or [nix-darwin](https://github.com/nix-darwin/nix-darwin).
 
 <details>
@@ -94,7 +95,7 @@ fence --help
 
 ### Configuration
 
-Fence reads from `~/.config/fence/fence.json` by default (or `~/Library/Application Support/fence/fence.json` on macOS). See [configuration reference](./docs/configuration.md).
+Fence reads from `~/.config/fence/fence.json` by default on Linux and macOS. Legacy macOS `~/Library/Application Support/fence/fence.json` and legacy `~/.fence.json` are also supported. See [configuration reference](./docs/configuration.md).
 
 ```json
 {
