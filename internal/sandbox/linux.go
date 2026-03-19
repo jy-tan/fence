@@ -59,6 +59,16 @@ const (
 	linuxBootstrapLogPath   = linuxBootstrapDir + "/bootstrap.log"
 )
 
+var linuxMinimalCoreDevicePaths = []string{
+	"/dev/null",
+	"/dev/zero",
+	"/dev/full",
+	"/dev/random",
+	"/dev/urandom",
+	"/dev/tty",
+	"/dev/ptmx",
+}
+
 // NewLinuxBridge creates Unix socket bridges to the proxy servers.
 // This allows sandboxed processes to communicate with the host's proxy (outbound).
 func NewLinuxBridge(httpProxyPort, socksProxyPort int, debug bool) (*LinuxBridge, error) {
@@ -220,6 +230,35 @@ func (b *ReverseBridge) Cleanup() {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func appendLinuxDevicePassthrough(bwrapArgs []string, path string, bound map[string]bool, debug bool, reason string) []string {
+	normalized := filepath.Clean(path)
+	if bound[normalized] {
+		return bwrapArgs
+	}
+	if fileExists(normalized) {
+		bound[normalized] = true
+		return append(bwrapArgs, "--dev-bind", normalized, normalized)
+	}
+	if debug {
+		fmt.Fprintf(os.Stderr, "[fence:linux] Skipping missing %s device passthrough: %s\n", reason, normalized)
+	}
+	return bwrapArgs
+}
+
+func insertLinuxArgsBeforeSpecialMounts(args []string, insert []string) []string {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--dev" || args[i] == "--proc" ||
+			(args[i] == "--dev-bind" && i+2 < len(args) && args[i+1] == "/dev" && args[i+2] == "/dev") {
+			updated := make([]string, 0, len(args)+len(insert))
+			updated = append(updated, args[:i]...)
+			updated = append(updated, insert...)
+			updated = append(updated, args[i:]...)
+			return updated
+		}
+	}
+	return append(args, insert...)
 }
 
 // isDirectory returns true if the path exists and is a directory.
@@ -758,20 +797,16 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		bwrapArgs = append(bwrapArgs, "--dev-bind", "/dev", "/dev")
 	default:
 		// Prefer a fresh minimal /dev for predictable sandbox behavior.
+		// Rebind core devices from the outer environment so they remain usable
+		// even if the synthetic /dev tmpfs inherits restrictive mount flags.
 		bwrapArgs = append(bwrapArgs, "--dev", "/dev")
+		boundDevicePaths := make(map[string]bool, len(linuxMinimalCoreDevicePaths))
+		for _, path := range linuxMinimalCoreDevicePaths {
+			bwrapArgs = appendLinuxDevicePassthrough(bwrapArgs, path, boundDevicePaths, opts.Debug, "core")
+		}
 		if cfg != nil && len(cfg.Devices.Allow) > 0 {
-			boundDevicePaths := make(map[string]bool, len(cfg.Devices.Allow))
 			for _, path := range cfg.Devices.Allow {
-				normalized := filepath.Clean(path)
-				if boundDevicePaths[normalized] {
-					continue
-				}
-				if fileExists(normalized) {
-					bwrapArgs = append(bwrapArgs, "--dev-bind", normalized, normalized)
-					boundDevicePaths[normalized] = true
-				} else if opts.Debug {
-					fmt.Fprintf(os.Stderr, "[fence:linux] Skipping missing device passthrough: %s\n", normalized)
-				}
+				bwrapArgs = appendLinuxDevicePassthrough(bwrapArgs, path, boundDevicePaths, opts.Debug, "custom")
 			}
 		}
 	}
@@ -861,6 +896,11 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	}
 
 	// Make writable paths actually writable (override read-only root)
+	if writablePaths["/"] {
+		delete(writablePaths, "/")
+		bwrapArgs = insertLinuxArgsBeforeSpecialMounts(bwrapArgs, []string{"--bind", "/", "/"})
+	}
+
 	for p := range writablePaths {
 		if fileExists(p) {
 			bwrapArgs = append(bwrapArgs, "--bind", p, p)
@@ -1124,16 +1164,17 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 
 	// Build the final command
 	bwrapCmd := ShellQuote(bwrapArgs)
+	finalCmd := bwrapCmd
 
 	// If seccomp filter is enabled, wrap with fd redirection
 	// bwrap --seccomp expects the filter on the specified fd
 	if seccompFilterPath != "" {
 		// Open filter file on fd 3, then run bwrap
 		// The filter file will be cleaned up after the sandbox exits
-		return fmt.Sprintf("exec 3<%s; %s", ShellQuoteSingle(seccompFilterPath), bwrapCmd), nil
+		finalCmd = fmt.Sprintf("exec 3<%s; %s", ShellQuoteSingle(seccompFilterPath), bwrapCmd)
 	}
 
-	return bwrapCmd, nil
+	return finalCmd, nil
 }
 
 // StartLinuxMonitor starts violation monitoring for a Linux sandbox.

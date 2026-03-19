@@ -193,7 +193,7 @@ func TestWrapCommandLinuxWithOptions_UsesMinimalDevMode(t *testing.T) {
 	cfg := &config.Config{
 		Devices: config.DevicesConfig{
 			Mode:  config.DeviceModeMinimal,
-			Allow: []string{"/dev/null"},
+			Allow: []string{"/dev/null", "/dev/fd", "/dev/fd"},
 		},
 	}
 	cmd, err := WrapCommandLinuxWithOptions(cfg, "echo ok", nil, nil, LinuxSandboxOptions{
@@ -212,8 +212,25 @@ func TestWrapCommandLinuxWithOptions_UsesMinimalDevMode(t *testing.T) {
 	if strings.Contains(cmd, ShellQuote([]string{"--dev-bind", "/dev", "/dev"})) {
 		t.Fatalf("did not expect host /dev bind in minimal mode: %s", cmd)
 	}
-	if !strings.Contains(cmd, ShellQuote([]string{"--dev-bind", "/dev/null", "/dev/null"})) {
-		t.Fatalf("expected explicit device passthrough in minimal mode: %s", cmd)
+
+	for _, path := range linuxMinimalCoreDevicePaths {
+		if !fileExists(path) {
+			continue
+		}
+		fragment := ShellQuote([]string{"--dev-bind", path, path})
+		if !strings.Contains(cmd, fragment) {
+			t.Fatalf("expected core device passthrough for %s in minimal mode: %s", path, cmd)
+		}
+	}
+
+	nullFragment := ShellQuote([]string{"--dev-bind", "/dev/null", "/dev/null"})
+	if count := strings.Count(cmd, nullFragment); count != 1 {
+		t.Fatalf("expected /dev/null passthrough exactly once in minimal mode, got %d: %s", count, cmd)
+	}
+
+	fdFragment := ShellQuote([]string{"--dev-bind", "/dev/fd", "/dev/fd"})
+	if fileExists("/dev/fd") && strings.Count(cmd, fdFragment) != 1 {
+		t.Fatalf("expected custom /dev/fd passthrough exactly once in minimal mode: %s", cmd)
 	}
 }
 
@@ -246,5 +263,47 @@ func TestWrapCommandLinuxWithOptions_UsesHostDevMode(t *testing.T) {
 	}
 	if strings.Contains(cmd, ShellQuote([]string{"--dev-bind", "/dev/null", "/dev/null"})) {
 		t.Fatalf("did not expect per-device passthroughs in host mode: %s", cmd)
+	}
+}
+
+func TestWrapCommandLinuxWithOptions_RootBindPrecedesSpecialMounts(t *testing.T) {
+	if _, err := exec.LookPath("bwrap"); err != nil {
+		t.Skip("bwrap not available")
+	}
+
+	cfg := &config.Config{
+		Devices: config.DevicesConfig{
+			Mode: config.DeviceModeMinimal,
+		},
+		Filesystem: config.FilesystemConfig{
+			AllowWrite: []string{"/"},
+		},
+	}
+
+	cmd, err := WrapCommandLinuxWithOptions(cfg, "echo ok", nil, nil, LinuxSandboxOptions{
+		UseLandlock: false,
+		UseSeccomp:  false,
+		UseEBPF:     false,
+		ShellMode:   ShellModeDefault,
+	})
+	if err != nil {
+		t.Fatalf("WrapCommandLinuxWithOptions failed: %v", err)
+	}
+
+	rootBind := ShellQuote([]string{"--bind", "/", "/"})
+	devMount := ShellQuote([]string{"--dev", "/dev"})
+	nullBind := ShellQuote([]string{"--dev-bind", "/dev/null", "/dev/null"})
+
+	rootIdx := strings.Index(cmd, rootBind)
+	devIdx := strings.Index(cmd, devMount)
+	nullIdx := strings.Index(cmd, nullBind)
+	if rootIdx == -1 || devIdx == -1 || nullIdx == -1 {
+		t.Fatalf("expected root bind, minimal /dev mount, and device passthroughs in command: %s", cmd)
+	}
+	if rootIdx > devIdx {
+		t.Fatalf("expected root bind to appear before /dev mount: %s", cmd)
+	}
+	if rootIdx > nullIdx {
+		t.Fatalf("expected root bind to appear before device passthroughs: %s", cmd)
 	}
 }
