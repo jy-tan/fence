@@ -117,6 +117,22 @@ jobs:
       - name: Run smoke tests
         run: FENCE_TEST_NETWORK=1 ./scripts/smoke_test.sh ./fence
 
+  repro-minimal-devices:
+    name: Repro minimal /dev (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: true
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-24.04]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run nested Docker repro
+        run: bash ./scripts/repro_minimal_devices_ci.sh
+
   test-macos:
     name: Test (macOS)
     runs-on: macos-latest
