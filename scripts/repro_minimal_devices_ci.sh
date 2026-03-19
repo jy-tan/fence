@@ -28,7 +28,8 @@ docker run --rm \
     apt-get install -y bubblewrap socat python3 python3-venv
 
     go build -buildvcs=false -o /usr/local/bin/fence ./cmd/fence
-    VENV_DIR=/tmp/fence-repro-venv
+    VENV_DIR="$(mktemp -d /src/.fence-repro-venv.XXXXXX)"
+    trap "rm -rf \"${VENV_DIR}\"" EXIT
     python3 -m venv "${VENV_DIR}"
     "${VENV_DIR}/bin/python" -m pip install -q grpcio
     PYTHON_BIN="${VENV_DIR}/bin/python"
