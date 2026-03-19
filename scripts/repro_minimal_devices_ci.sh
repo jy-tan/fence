@@ -27,10 +27,23 @@ docker run --rm \
     apt-get update
     apt-get install -y bubblewrap socat
     if ! command -v python3 >/dev/null 2>&1; then
-      apt-get install -y python3 python3-venv
-    elif ! python3 -m venv --help >/dev/null 2>&1; then
-      apt-get install -y python3-venv
+      apt-get install -y python3
     fi
+
+    VENV_PROBE_DIR="$(mktemp -d /tmp/fence-venv-probe.XXXXXX)"
+    if ! python3 -m venv "${VENV_PROBE_DIR}" >/tmp/fence-venv-probe.log 2>&1; then
+      PYTHON_VENV_PACKAGE="$(python3 - <<'"'"'PY'"'"'
+import sys
+print(f"python{sys.version_info.major}.{sys.version_info.minor}-venv")
+PY
+)"
+      if ! apt-get install -y "${PYTHON_VENV_PACKAGE}" python3-venv; then
+        apt-get install -y "${PYTHON_VENV_PACKAGE}" || apt-get install -y python3-venv
+      fi
+      rm -rf "${VENV_PROBE_DIR}"
+      python3 -m venv "${VENV_PROBE_DIR}"
+    fi
+    rm -rf "${VENV_PROBE_DIR}" /tmp/fence-venv-probe.log
 
     if [ -x /src/fence-repro-bin ] && /src/fence-repro-bin --version >/dev/null 2>&1; then
       install -m 0755 /src/fence-repro-bin /usr/local/bin/fence
