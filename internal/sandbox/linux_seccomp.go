@@ -15,6 +15,12 @@ type SeccompFilter struct {
 	debug bool
 }
 
+const (
+	seccompDataSyscallOffset = 0
+	seccompDataArgsOffset    = 16
+	seccompArgSize           = 8
+)
+
 // NewSeccompFilter creates a new seccomp filter generator.
 func NewSeccompFilter(debug bool) *SeccompFilter {
 	return &SeccompFilter{debug: debug}
@@ -94,6 +100,28 @@ func (s *SeccompFilter) writeBPFProgram(path string) error {
 	// 2. For each dangerous syscall: if match, return ERRNO(EPERM) or LOG+ERRNO
 	// 3. Default: allow
 
+	program, err := s.buildBPFProgram()
+	if err != nil {
+		return err
+	}
+
+	// Write the program to file
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // path is controlled
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+
+	for _, inst := range program {
+		if err := inst.writeTo(f); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *SeccompFilter) buildBPFProgram() ([]bpfInstruction, error) {
 	// Get syscall numbers for the current architecture
 	syscallNums := make(map[string]int)
 	for _, name := range DangerousSyscalls {
@@ -104,7 +132,7 @@ func (s *SeccompFilter) writeBPFProgram(path string) error {
 
 	if len(syscallNums) == 0 {
 		// No syscalls to block (unknown architecture?)
-		return fmt.Errorf("no syscall numbers found for dangerous syscalls")
+		return nil, fmt.Errorf("no syscall numbers found for dangerous syscalls")
 	}
 
 	// Build BPF program
@@ -114,15 +142,47 @@ func (s *SeccompFilter) writeBPFProgram(path string) error {
 	// BPF_LD | BPF_W | BPF_ABS: load word from absolute offset
 	program = append(program, bpfInstruction{
 		code: BPF_LD | BPF_W | BPF_ABS,
-		k:    0, // offsetof(struct seccomp_data, nr)
+		k:    seccompDataSyscallOffset,
 	})
 
-	// For each dangerous syscall, add a comparison and block
 	// Note: SECCOMP_RET_ERRNO returns -1 with errno in the low 16 bits
 	// SECCOMP_RET_LOG means "log and allow" which is NOT what we want
 	// We use SECCOMP_RET_ERRNO to block with EPERM
 	action := SECCOMP_RET_ERRNO | (unix.EPERM & 0xFFFF)
 
+	// Allow interactive PTY sessions without bwrap --new-session, but block
+	// TIOCSTI specifically so sandboxed processes cannot inject keystrokes into
+	// the caller's terminal. Only the low 32 bits are relevant for ioctl cmds.
+	if ioctlNum, ok := getSyscallNumber("ioctl"); ok {
+		program = append(program,
+			bpfInstruction{
+				code: BPF_JMP | BPF_JEQ | BPF_K,
+				jt:   0,
+				jf:   4,
+				k:    uint32(ioctlNum), //nolint:gosec // syscall numbers fit in uint32
+			},
+			bpfInstruction{
+				code: BPF_LD | BPF_W | BPF_ABS,
+				k:    seccompArgLow32Offset(1),
+			},
+			bpfInstruction{
+				code: BPF_JMP | BPF_JEQ | BPF_K,
+				jt:   0,
+				jf:   1,
+				k:    uint32(unix.TIOCSTI),
+			},
+			bpfInstruction{
+				code: BPF_RET | BPF_K,
+				k:    uint32(action),
+			},
+			bpfInstruction{
+				code: BPF_RET | BPF_K,
+				k:    SECCOMP_RET_ALLOW,
+			},
+		)
+	}
+
+	// For each dangerous syscall, add a comparison and block
 	for _, name := range DangerousSyscalls {
 		num, ok := syscallNums[name]
 		if !ok {
@@ -150,20 +210,11 @@ func (s *SeccompFilter) writeBPFProgram(path string) error {
 		k:    SECCOMP_RET_ALLOW,
 	})
 
-	// Write the program to file
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // path is controlled
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
+	return program, nil
+}
 
-	for _, inst := range program {
-		if err := inst.writeTo(f); err != nil {
-			return err
-		}
-	}
-
-	return nil
+func seccompArgLow32Offset(argIndex int) uint32 {
+	return seccompDataArgsOffset + uint32(argIndex*seccompArgSize)
 }
 
 // CleanupFilter removes a generated filter file.
@@ -240,6 +291,7 @@ func getSyscallNumber(name string) (int, bool) {
 			"ptrace":            117,
 			"process_vm_readv":  270,
 			"process_vm_writev": 271,
+			"ioctl":             29,
 			"keyctl":            219,
 			"add_key":           217,
 			"request_key":       218,
@@ -270,6 +322,7 @@ func getSyscallNumber(name string) (int, bool) {
 			"ptrace":            101,
 			"process_vm_readv":  310,
 			"process_vm_writev": 311,
+			"ioctl":             16,
 			"keyctl":            250,
 			"add_key":           248,
 			"request_key":       249,

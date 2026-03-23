@@ -185,6 +185,32 @@ func TestResolveLinuxDeviceMode(t *testing.T) {
 	}
 }
 
+func TestEffectiveLinuxForceNewSession(t *testing.T) {
+	t.Run("defaults to strict outside interactive pty", func(t *testing.T) {
+		if !effectiveLinuxForceNewSession(&config.Config{}, false, false) {
+			t.Fatal("expected new-session to remain enabled outside interactive PTY sessions")
+		}
+	})
+
+	t.Run("defaults off for interactive pty sessions", func(t *testing.T) {
+		cfg := &config.Config{AllowPty: true}
+		if effectiveLinuxForceNewSession(cfg, true, true) {
+			t.Fatal("expected interactive PTY sessions to skip new-session by default")
+		}
+	})
+
+	t.Run("explicit override wins", func(t *testing.T) {
+		value := true
+		cfg := &config.Config{
+			AllowPty:        true,
+			ForceNewSession: &value,
+		}
+		if !effectiveLinuxForceNewSession(cfg, true, true) {
+			t.Fatal("expected explicit forceNewSession override to win")
+		}
+	})
+}
+
 func TestWrapCommandLinuxWithOptions_UsesMinimalDevMode(t *testing.T) {
 	if _, err := exec.LookPath("bwrap"); err != nil {
 		t.Skip("bwrap not available")
@@ -231,6 +257,31 @@ func TestWrapCommandLinuxWithOptions_UsesMinimalDevMode(t *testing.T) {
 	fdFragment := ShellQuote([]string{"--dev-bind", "/dev/fd", "/dev/fd"})
 	if fileExists("/dev/fd") && strings.Count(cmd, fdFragment) != 1 {
 		t.Fatalf("expected custom /dev/fd passthrough exactly once in minimal mode: %s", cmd)
+	}
+}
+
+func TestWrapCommandLinuxWithOptions_RespectsForceNewSessionOverride(t *testing.T) {
+	if _, err := exec.LookPath("bwrap"); err != nil {
+		t.Skip("bwrap not available")
+	}
+
+	forceNewSession := false
+	cfg := &config.Config{
+		ForceNewSession: &forceNewSession,
+	}
+
+	cmd, err := WrapCommandLinuxWithOptions(cfg, "echo ok", nil, nil, LinuxSandboxOptions{
+		UseLandlock: false,
+		UseSeccomp:  false,
+		UseEBPF:     false,
+		ShellMode:   ShellModeDefault,
+	})
+	if err != nil {
+		t.Fatalf("WrapCommandLinuxWithOptions failed: %v", err)
+	}
+
+	if strings.Contains(cmd, ShellQuote([]string{"--new-session"})) {
+		t.Fatalf("did not expect --new-session when explicitly disabled: %s", cmd)
 	}
 }
 

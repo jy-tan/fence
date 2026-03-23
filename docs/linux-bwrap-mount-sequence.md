@@ -50,17 +50,16 @@ The mount sequence is easiest to understand as a set of phases.
 
 ### 1. Base `bwrap` Flags
 
-Fence always starts with:
+Fence starts with:
 
 ```text
 bwrap
---new-session
 --die-with-parent
 ```
 
 These are not mounts, but they shape the rest of the runtime:
 
-- `--new-session` isolates the sandboxed process tree into a new session
+- `--new-session` is added in the normal Linux path, and also in interactive PTY sessions when `forceNewSession` is enabled
 - `--die-with-parent` ensures the sandbox dies when Fence dies
 
 ### 2. Namespace Isolation

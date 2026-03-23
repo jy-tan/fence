@@ -16,13 +16,14 @@ import (
 
 // Config is the main configuration for fence.
 type Config struct {
-	Extends    string           `json:"extends,omitempty"`
-	Network    NetworkConfig    `json:"network"`
-	Filesystem FilesystemConfig `json:"filesystem"`
-	Devices    DevicesConfig    `json:"devices,omitempty"`
-	Command    CommandConfig    `json:"command"`
-	SSH        SSHConfig        `json:"ssh"`
-	AllowPty   bool             `json:"allowPty,omitempty"`
+	Extends         string           `json:"extends,omitempty"`
+	Network         NetworkConfig    `json:"network"`
+	Filesystem      FilesystemConfig `json:"filesystem"`
+	Devices         DevicesConfig    `json:"devices,omitempty"`
+	Command         CommandConfig    `json:"command"`
+	SSH             SSHConfig        `json:"ssh"`
+	AllowPty        bool             `json:"allowPty,omitempty"`
+	ForceNewSession *bool            `json:"forceNewSession,omitempty"`
 }
 
 // NetworkConfig defines network restrictions.
@@ -520,6 +521,8 @@ func Merge(base, override *Config) *Config {
 	result := &Config{
 		// AllowPty: true if either config enables it
 		AllowPty: base.AllowPty || override.AllowPty,
+		// Pointer field: override wins if set, otherwise base
+		ForceNewSession: mergeOptionalBool(base.ForceNewSession, override.ForceNewSession),
 
 		Network: NetworkConfig{
 			// Append slices (base first, then override additions)

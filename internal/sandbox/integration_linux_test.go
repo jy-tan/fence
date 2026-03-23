@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/Use-Tusk/fence/internal/config"
 )
 
 // ============================================================================
@@ -52,6 +54,35 @@ func assertNetworkBlocked(t *testing.T, result *SandboxTestResult) {
 	}
 	t.Errorf("expected network request to be blocked, but it succeeded\nstdout: %s\nstderr: %s",
 		result.Stdout, result.Stderr)
+}
+
+func runUnderLinuxSandboxDirect(t *testing.T, cfg *config.Config, command string, workDir string) *SandboxTestResult {
+	t.Helper()
+	skipIfAlreadySandboxed(t)
+
+	if workDir == "" {
+		var err error
+		workDir, err = os.Getwd()
+		if err != nil {
+			return &SandboxTestResult{Error: err}
+		}
+	}
+
+	wrappedCmd, err := WrapCommandLinuxWithOptions(cfg, command, nil, nil, LinuxSandboxOptions{
+		UseLandlock: false,
+		UseSeccomp:  false,
+		UseEBPF:     false,
+		ShellMode:   ShellModeDefault,
+	})
+	if err != nil {
+		return &SandboxTestResult{
+			ExitCode: 1,
+			Stderr:   err.Error(),
+			Error:    err,
+		}
+	}
+
+	return executeShellCommand(t, wrappedCmd, workDir)
 }
 
 // TestLinux_LandlockBlocksWriteOutsideWorkspace verifies that Landlock prevents
@@ -673,6 +704,51 @@ func TestLinux_PythonGetpwuidWorks(t *testing.T) {
 	if result.Stdout == "" {
 		t.Errorf("expected username output")
 	}
+}
+
+func TestLinux_XDGRuntimeDirFallsBackWhenInheritedPathIsUnavailable(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+
+	workspace := createTempWorkspace(t)
+	cfg := testConfigWithWorkspace(workspace)
+
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/fence-test-missing")
+	t.Setenv("TMPDIR", "/run/user/fence-test-missing/tmp")
+
+	result := runUnderLinuxSandboxDirect(t, cfg, `printf 'XDG=%s\nTMP=%s\n' "$XDG_RUNTIME_DIR" "$TMPDIR" && test -n "$XDG_RUNTIME_DIR" && test -d "$XDG_RUNTIME_DIR" && test -w "$XDG_RUNTIME_DIR" && touch "$XDG_RUNTIME_DIR/fence-runtime-probe" && stat -c 'MODE=%a' "$XDG_RUNTIME_DIR" && test -d "$TMPDIR" && test -w "$TMPDIR" && touch "$TMPDIR/fence-tmp-probe" && echo OK`, workspace)
+
+	assertAllowed(t, result)
+	assertContains(t, result.Stdout, "XDG=/tmp/fence-runtime-")
+	assertContains(t, result.Stdout, "TMP=/tmp")
+	assertContains(t, result.Stdout, "MODE=700")
+	assertContains(t, result.Stdout, "OK")
+}
+
+func TestLinux_XDGRuntimeDirPreservedWhenWritable(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+
+	workspace := createTempWorkspace(t)
+	runtimeDir := filepath.Join(workspace, "runtime")
+	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
+		t.Fatalf("failed to create runtime dir: %v", err)
+	}
+	tmpDir := filepath.Join(workspace, "tmp")
+	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
+		t.Fatalf("failed to create tmp dir: %v", err)
+	}
+
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+	t.Setenv("TMPDIR", tmpDir)
+
+	cfg := testConfigWithWorkspace(workspace)
+	result := runUnderLinuxSandboxDirect(t, cfg, `printf 'XDG=%s\nTMP=%s\n' "$XDG_RUNTIME_DIR" "$TMPDIR" && touch "$XDG_RUNTIME_DIR/fence-runtime-probe" && touch "$TMPDIR/fence-tmp-probe" && echo OK`, workspace)
+
+	assertAllowed(t, result)
+	assertContains(t, result.Stdout, "XDG="+runtimeDir)
+	assertContains(t, result.Stdout, "TMP="+tmpDir)
+	assertContains(t, result.Stdout, "OK")
+	assertFileExists(t, filepath.Join(runtimeDir, "fence-runtime-probe"))
+	assertFileExists(t, filepath.Join(tmpDir, "fence-tmp-probe"))
 }
 
 // ============================================================================
