@@ -16,9 +16,9 @@ type SeccompFilter struct {
 }
 
 const (
-	seccompDataSyscallOffset = 0
-	seccompDataArgsOffset    = 16
-	seccompArgSize           = 8
+	seccompDataSyscallOffset uint32 = 0
+	seccompDataArgsOffset    uint32 = 16
+	seccompArgSize           uint32 = 8
 )
 
 // NewSeccompFilter creates a new seccomp filter generator.
@@ -123,7 +123,7 @@ func (s *SeccompFilter) writeBPFProgram(path string) error {
 
 func (s *SeccompFilter) buildBPFProgram() ([]bpfInstruction, error) {
 	// Get syscall numbers for the current architecture
-	syscallNums := make(map[string]int)
+	syscallNums := make(map[string]uint32)
 	for _, name := range DangerousSyscalls {
 		if num, ok := getSyscallNumber(name); ok {
 			syscallNums[name] = num
@@ -159,7 +159,7 @@ func (s *SeccompFilter) buildBPFProgram() ([]bpfInstruction, error) {
 				code: BPF_JMP | BPF_JEQ | BPF_K,
 				jt:   0,
 				jf:   4,
-				k:    uint32(ioctlNum), //nolint:gosec // syscall numbers fit in uint32
+				k:    ioctlNum,
 			},
 			bpfInstruction{
 				code: BPF_LD | BPF_W | BPF_ABS,
@@ -192,9 +192,9 @@ func (s *SeccompFilter) buildBPFProgram() ([]bpfInstruction, error) {
 		// BPF_JMP | BPF_JEQ | BPF_K: if A == K, jump jt else jump jf
 		program = append(program, bpfInstruction{
 			code: BPF_JMP | BPF_JEQ | BPF_K,
-			jt:   0,           // if match, go to next instruction (block)
-			jf:   1,           // if not match, skip the block instruction
-			k:    uint32(num), //nolint:gosec // syscall numbers fit in uint32
+			jt:   0, // if match, go to next instruction (block)
+			jf:   1, // if not match, skip the block instruction
+			k:    num,
 		})
 
 		// Return action (block with EPERM)
@@ -213,8 +213,8 @@ func (s *SeccompFilter) buildBPFProgram() ([]bpfInstruction, error) {
 	return program, nil
 }
 
-func seccompArgLow32Offset(argIndex int) uint32 {
-	return seccompDataArgsOffset + uint32(argIndex*seccompArgSize)
+func seccompArgLow32Offset(argIndex uint32) uint32 {
+	return seccompDataArgsOffset + argIndex*seccompArgSize
 }
 
 // CleanupFilter removes a generated filter file.
@@ -266,7 +266,7 @@ func (i *bpfInstruction) writeTo(f *os.File) error {
 }
 
 // getSyscallNumber returns the syscall number for the current architecture.
-func getSyscallNumber(name string) (int, bool) {
+func getSyscallNumber(name string) (uint32, bool) {
 	// Detect architecture using uname
 	var utsname unix.Utsname
 	if err := unix.Uname(&utsname); err != nil {
@@ -283,11 +283,11 @@ func getSyscallNumber(name string) (int, bool) {
 		}
 	}
 
-	var syscallMap map[string]int
+	var syscallMap map[string]uint32
 
 	if machine == "aarch64" || machine == "arm64" {
 		// ARM64 syscall numbers (from asm-generic/unistd.h)
-		syscallMap = map[string]int{
+		syscallMap = map[string]uint32{
 			"ptrace":            117,
 			"process_vm_readv":  270,
 			"process_vm_writev": 271,
@@ -318,7 +318,7 @@ func getSyscallNumber(name string) (int, bool) {
 		}
 	} else {
 		// x86_64 syscall numbers
-		syscallMap = map[string]int{
+		syscallMap = map[string]uint32{
 			"ptrace":            101,
 			"process_vm_readv":  310,
 			"process_vm_writev": 311,

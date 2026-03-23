@@ -724,6 +724,37 @@ func TestLinux_XDGRuntimeDirFallsBackWhenInheritedPathIsUnavailable(t *testing.T
 	assertContains(t, result.Stdout, "OK")
 }
 
+func TestLinux_XDGRuntimeDirFallbackIsCleanedUpOnExit(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+
+	workspace := createTempWorkspace(t)
+	cfg := testConfigWithWorkspace(workspace)
+	cfg.Filesystem.AllowWrite = append(cfg.Filesystem.AllowWrite, "/tmp")
+
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/fence-test-missing")
+	t.Setenv("TMPDIR", "/run/user/fence-test-missing/tmp")
+
+	result := runUnderLinuxSandboxDirect(t, cfg, `printf 'XDG=%s\n' "$XDG_RUNTIME_DIR" && touch "$XDG_RUNTIME_DIR/fence-runtime-probe" && echo OK`, workspace)
+
+	assertAllowed(t, result)
+	assertContains(t, result.Stdout, "XDG=/tmp/fence-runtime-")
+	assertContains(t, result.Stdout, "OK")
+
+	var runtimeDir string
+	for _, line := range strings.Split(result.Stdout, "\n") {
+		if strings.HasPrefix(line, "XDG=") {
+			runtimeDir = strings.TrimPrefix(line, "XDG=")
+			break
+		}
+	}
+	if runtimeDir == "" {
+		t.Fatal("expected sandbox output to include XDG runtime dir")
+	}
+	if _, err := os.Stat(runtimeDir); !os.IsNotExist(err) {
+		t.Fatalf("expected fallback runtime dir %q to be cleaned up, stat err=%v", runtimeDir, err)
+	}
+}
+
 func TestLinux_XDGRuntimeDirPreservedWhenWritable(t *testing.T) {
 	skipIfAlreadySandboxed(t)
 

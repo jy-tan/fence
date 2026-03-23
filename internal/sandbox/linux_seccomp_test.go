@@ -30,7 +30,7 @@ func TestBuildBPFProgram_BlocksTIOCSTI(t *testing.T) {
 	found := false
 
 	for i := 0; i+4 < len(program); i++ {
-		if program[i].code != BPF_JMP|BPF_JEQ|BPF_K || program[i].k != uint32(ioctlNum) {
+		if program[i].code != BPF_JMP|BPF_JEQ|BPF_K || program[i].k != ioctlNum {
 			continue
 		}
 		if program[i+1].code != BPF_LD|BPF_W|BPF_ABS || program[i+1].k != seccompArgLow32Offset(1) {

@@ -418,16 +418,27 @@ func WrapCommandLinuxWithShell(cfg *config.Config, command string, bridge *Linux
 
 func linuxRuntimeEnvScript() string {
 	return `
+fence_runtime_dir_cleanup=
+
 fence_dir_is_usable() {
     dir=$1
-    [ -n "$dir" ] && [ -d "$dir" ] && [ -w "$dir" ]
+    probe=
+    [ -n "$dir" ] && [ -d "$dir" ] || return 1
+    probe="$dir/.fence-write-test-$$"
+    (umask 077 && : > "$probe") 2>/dev/null || return 1
+    rm -f "$probe" 2>/dev/null || true
+    return 0
 }
 
 fence_prepare_private_runtime_dir() {
-    dir=$1
-    mkdir -p "$dir" 2>/dev/null || return 1
+    dir=
+    dir=$(mktemp -d "/tmp/fence-runtime-$(id -u)-XXXXXX" 2>/dev/null) || return 1
     chmod 700 "$dir" 2>/dev/null || true
-    fence_dir_is_usable "$dir"
+    if ! fence_dir_is_usable "$dir"; then
+        rm -rf -- "$dir" 2>/dev/null || true
+        return 1
+    fi
+    printf '%s\n' "$dir"
 }
 
 if ! fence_dir_is_usable "${TMPDIR:-}"; then
@@ -436,9 +447,11 @@ fi
 
 fence_runtime_dir=${XDG_RUNTIME_DIR:-}
 if ! fence_dir_is_usable "$fence_runtime_dir"; then
-    fence_runtime_dir="/tmp/fence-runtime-$(id -u)-$$"
-    if ! fence_prepare_private_runtime_dir "$fence_runtime_dir"; then
+    fence_runtime_dir=$(fence_prepare_private_runtime_dir 2>/dev/null || true)
+    if [ -z "$fence_runtime_dir" ]; then
         fence_runtime_dir=
+    else
+        fence_runtime_dir_cleanup="$fence_runtime_dir"
     fi
 fi
 
@@ -508,6 +521,11 @@ fence_wait_for_helpers() {
 # Cleanup function
 cleanup() {
     jobs -p | xargs -r kill >>"$fence_bootstrap_log" 2>&1 || true
+    case "${fence_runtime_dir_cleanup:-}" in
+        /tmp/fence-runtime-*)
+            rm -rf -- "$fence_runtime_dir_cleanup" >>"$fence_bootstrap_log" 2>&1 || true
+            ;;
+    esac
 }
 trap cleanup EXIT
 `)

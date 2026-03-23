@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/spf13/cobra"
 )
 
 func TestBuildInitConfig_DefaultTemplate(t *testing.T) {
@@ -209,5 +210,21 @@ func TestConfigureHostTTYChildProcessGroup_PTYRelay(t *testing.T) {
 
 	if execCmd.SysProcAttr != nil {
 		t.Fatal("expected PTY relay sessions to leave SysProcAttr unset")
+	}
+}
+
+func TestApplyCLIConfigOverrides_NilConfigWithForceNewSessionFlag(t *testing.T) {
+	cmd := &cobra.Command{Use: "test"}
+	cmd.Flags().Bool("force-new-session", false, "")
+	if err := cmd.Flags().Set("force-new-session", "true"); err != nil {
+		t.Fatalf("failed to set force-new-session flag: %v", err)
+	}
+
+	cfg := applyCLIConfigOverrides(cmd, nil, true)
+	if cfg == nil {
+		t.Fatal("expected config to be initialized when nil")
+	}
+	if cfg.ForceNewSession == nil || !*cfg.ForceNewSession {
+		t.Fatal("expected ForceNewSession override to be applied")
 	}
 }

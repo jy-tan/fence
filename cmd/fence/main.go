@@ -217,10 +217,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if cmd.Flags().Changed("force-new-session") {
-		value := forceNewSession
-		cfg.ForceNewSession = &value
-	}
+	cfg = applyCLIConfigOverrides(cmd, cfg, forceNewSession)
 
 	manager := sandbox.NewManager(cfg, debug, monitor)
 	manager.SetExposedPorts(ports)
@@ -356,6 +353,17 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func applyCLIConfigOverrides(cmd *cobra.Command, cfg *config.Config, forceNewSessionValue bool) *config.Config {
+	if cfg == nil {
+		cfg = config.Default()
+	}
+	if cmd.Flags().Changed("force-new-session") {
+		value := forceNewSessionValue
+		cfg.ForceNewSession = &value
+	}
+	return cfg
 }
 
 func startCommand(execCmd *exec.Cmd, usePTY bool) (func(), error) {
