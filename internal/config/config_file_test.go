@@ -56,7 +56,10 @@ func TestWriteConfigFile(t *testing.T) {
 
 func TestMarshalConfigJSON_IncludesExtendedFilesystemAndSSH(t *testing.T) {
 	wslInterop := false
+	forceNewSession := true
 	cfg := &Config{}
+	cfg.AllowPty = true
+	cfg.ForceNewSession = &forceNewSession
 	cfg.Filesystem.DefaultDenyRead = true
 	cfg.Filesystem.WSLInterop = &wslInterop
 	cfg.Filesystem.AllowRead = []string{"/workspace"}
@@ -69,6 +72,8 @@ func TestMarshalConfigJSON_IncludesExtendedFilesystemAndSSH(t *testing.T) {
 	require.NoError(t, err)
 
 	output := string(data)
+	assert.Contains(t, output, `"allowPty": true`)
+	assert.Contains(t, output, `"forceNewSession": true`)
 	assert.Contains(t, output, `"defaultDenyRead": true`)
 	assert.Contains(t, output, `"wslInterop": false`)
 	assert.Contains(t, output, `"allowRead": [`)

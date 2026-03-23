@@ -15,6 +15,12 @@ type SeccompFilter struct {
 	debug bool
 }
 
+const (
+	seccompDataSyscallOffset uint32 = 0
+	seccompDataArgsOffset    uint32 = 16
+	seccompArgSize           uint32 = 8
+)
+
 // NewSeccompFilter creates a new seccomp filter generator.
 func NewSeccompFilter(debug bool) *SeccompFilter {
 	return &SeccompFilter{debug: debug}
@@ -94,61 +100,10 @@ func (s *SeccompFilter) writeBPFProgram(path string) error {
 	// 2. For each dangerous syscall: if match, return ERRNO(EPERM) or LOG+ERRNO
 	// 3. Default: allow
 
-	// Get syscall numbers for the current architecture
-	syscallNums := make(map[string]int)
-	for _, name := range DangerousSyscalls {
-		if num, ok := getSyscallNumber(name); ok {
-			syscallNums[name] = num
-		}
+	program, err := s.buildBPFProgram()
+	if err != nil {
+		return err
 	}
-
-	if len(syscallNums) == 0 {
-		// No syscalls to block (unknown architecture?)
-		return fmt.Errorf("no syscall numbers found for dangerous syscalls")
-	}
-
-	// Build BPF program
-	var program []bpfInstruction
-
-	// Load syscall number from seccomp_data
-	// BPF_LD | BPF_W | BPF_ABS: load word from absolute offset
-	program = append(program, bpfInstruction{
-		code: BPF_LD | BPF_W | BPF_ABS,
-		k:    0, // offsetof(struct seccomp_data, nr)
-	})
-
-	// For each dangerous syscall, add a comparison and block
-	// Note: SECCOMP_RET_ERRNO returns -1 with errno in the low 16 bits
-	// SECCOMP_RET_LOG means "log and allow" which is NOT what we want
-	// We use SECCOMP_RET_ERRNO to block with EPERM
-	action := SECCOMP_RET_ERRNO | (unix.EPERM & 0xFFFF)
-
-	for _, name := range DangerousSyscalls {
-		num, ok := syscallNums[name]
-		if !ok {
-			continue
-		}
-
-		// BPF_JMP | BPF_JEQ | BPF_K: if A == K, jump jt else jump jf
-		program = append(program, bpfInstruction{
-			code: BPF_JMP | BPF_JEQ | BPF_K,
-			jt:   0,           // if match, go to next instruction (block)
-			jf:   1,           // if not match, skip the block instruction
-			k:    uint32(num), //nolint:gosec // syscall numbers fit in uint32
-		})
-
-		// Return action (block with EPERM)
-		program = append(program, bpfInstruction{
-			code: BPF_RET | BPF_K,
-			k:    uint32(action),
-		})
-	}
-
-	// Default: allow
-	program = append(program, bpfInstruction{
-		code: BPF_RET | BPF_K,
-		k:    SECCOMP_RET_ALLOW,
-	})
 
 	// Write the program to file
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // path is controlled
@@ -164,6 +119,102 @@ func (s *SeccompFilter) writeBPFProgram(path string) error {
 	}
 
 	return nil
+}
+
+func (s *SeccompFilter) buildBPFProgram() ([]bpfInstruction, error) {
+	// Get syscall numbers for the current architecture
+	syscallNums := make(map[string]uint32)
+	for _, name := range DangerousSyscalls {
+		if num, ok := getSyscallNumber(name); ok {
+			syscallNums[name] = num
+		}
+	}
+
+	if len(syscallNums) == 0 {
+		// No syscalls to block (unknown architecture?)
+		return nil, fmt.Errorf("no syscall numbers found for dangerous syscalls")
+	}
+
+	// Build BPF program
+	var program []bpfInstruction
+
+	// Load syscall number from seccomp_data
+	// BPF_LD | BPF_W | BPF_ABS: load word from absolute offset
+	program = append(program, bpfInstruction{
+		code: BPF_LD | BPF_W | BPF_ABS,
+		k:    seccompDataSyscallOffset,
+	})
+
+	// Note: SECCOMP_RET_ERRNO returns -1 with errno in the low 16 bits
+	// SECCOMP_RET_LOG means "log and allow" which is NOT what we want
+	// We use SECCOMP_RET_ERRNO to block with EPERM
+	action := SECCOMP_RET_ERRNO | (unix.EPERM & 0xFFFF)
+
+	// Allow interactive PTY sessions without bwrap --new-session, but block
+	// TIOCSTI specifically so sandboxed processes cannot inject keystrokes into
+	// the caller's terminal. Only the low 32 bits are relevant for ioctl cmds.
+	if ioctlNum, ok := getSyscallNumber("ioctl"); ok {
+		program = append(program,
+			bpfInstruction{
+				code: BPF_JMP | BPF_JEQ | BPF_K,
+				jt:   0,
+				jf:   4,
+				k:    ioctlNum,
+			},
+			bpfInstruction{
+				code: BPF_LD | BPF_W | BPF_ABS,
+				k:    seccompArgLow32Offset(1),
+			},
+			bpfInstruction{
+				code: BPF_JMP | BPF_JEQ | BPF_K,
+				jt:   0,
+				jf:   1,
+				k:    uint32(unix.TIOCSTI),
+			},
+			bpfInstruction{
+				code: BPF_RET | BPF_K,
+				k:    uint32(action),
+			},
+			bpfInstruction{
+				code: BPF_RET | BPF_K,
+				k:    SECCOMP_RET_ALLOW,
+			},
+		)
+	}
+
+	// For each dangerous syscall, add a comparison and block
+	for _, name := range DangerousSyscalls {
+		num, ok := syscallNums[name]
+		if !ok {
+			continue
+		}
+
+		// BPF_JMP | BPF_JEQ | BPF_K: if A == K, jump jt else jump jf
+		program = append(program, bpfInstruction{
+			code: BPF_JMP | BPF_JEQ | BPF_K,
+			jt:   0, // if match, go to next instruction (block)
+			jf:   1, // if not match, skip the block instruction
+			k:    num,
+		})
+
+		// Return action (block with EPERM)
+		program = append(program, bpfInstruction{
+			code: BPF_RET | BPF_K,
+			k:    uint32(action),
+		})
+	}
+
+	// Default: allow
+	program = append(program, bpfInstruction{
+		code: BPF_RET | BPF_K,
+		k:    SECCOMP_RET_ALLOW,
+	})
+
+	return program, nil
+}
+
+func seccompArgLow32Offset(argIndex uint32) uint32 {
+	return seccompDataArgsOffset + argIndex*seccompArgSize
 }
 
 // CleanupFilter removes a generated filter file.
@@ -215,7 +266,7 @@ func (i *bpfInstruction) writeTo(f *os.File) error {
 }
 
 // getSyscallNumber returns the syscall number for the current architecture.
-func getSyscallNumber(name string) (int, bool) {
+func getSyscallNumber(name string) (uint32, bool) {
 	// Detect architecture using uname
 	var utsname unix.Utsname
 	if err := unix.Uname(&utsname); err != nil {
@@ -232,14 +283,15 @@ func getSyscallNumber(name string) (int, bool) {
 		}
 	}
 
-	var syscallMap map[string]int
+	var syscallMap map[string]uint32
 
 	if machine == "aarch64" || machine == "arm64" {
 		// ARM64 syscall numbers (from asm-generic/unistd.h)
-		syscallMap = map[string]int{
+		syscallMap = map[string]uint32{
 			"ptrace":            117,
 			"process_vm_readv":  270,
 			"process_vm_writev": 271,
+			"ioctl":             29,
 			"keyctl":            219,
 			"add_key":           217,
 			"request_key":       218,
@@ -266,10 +318,11 @@ func getSyscallNumber(name string) (int, bool) {
 		}
 	} else {
 		// x86_64 syscall numbers
-		syscallMap = map[string]int{
+		syscallMap = map[string]uint32{
 			"ptrace":            101,
 			"process_vm_readv":  310,
 			"process_vm_writev": 311,
+			"ioctl":             16,
 			"keyctl":            250,
 			"add_key":           248,
 			"request_key":       249,

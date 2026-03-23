@@ -57,20 +57,22 @@ type cleanSSHConfig struct {
 
 // cleanConfig is used for JSON output with fields in desired order and omitempty.
 type cleanConfig struct {
-	Extends    string                 `json:"extends,omitempty"`
-	AllowPty   bool                   `json:"allowPty,omitempty"`
-	Network    *cleanNetworkConfig    `json:"network,omitempty"`
-	Filesystem *cleanFilesystemConfig `json:"filesystem,omitempty"`
-	Command    *cleanCommandConfig    `json:"command,omitempty"`
-	SSH        *cleanSSHConfig        `json:"ssh,omitempty"`
+	Extends         string                 `json:"extends,omitempty"`
+	AllowPty        bool                   `json:"allowPty,omitempty"`
+	ForceNewSession *bool                  `json:"forceNewSession,omitempty"`
+	Network         *cleanNetworkConfig    `json:"network,omitempty"`
+	Filesystem      *cleanFilesystemConfig `json:"filesystem,omitempty"`
+	Command         *cleanCommandConfig    `json:"command,omitempty"`
+	SSH             *cleanSSHConfig        `json:"ssh,omitempty"`
 }
 
 // MarshalConfigJSON marshals a fence config to clean JSON, omitting empty arrays
 // and with fields in a logical order (extends first).
 func MarshalConfigJSON(cfg *Config) ([]byte, error) {
 	clean := cleanConfig{
-		Extends:  cfg.Extends,
-		AllowPty: cfg.AllowPty,
+		Extends:         cfg.Extends,
+		AllowPty:        cfg.AllowPty,
+		ForceNewSession: cfg.ForceNewSession,
 	}
 
 	// Network config - only include if non-empty

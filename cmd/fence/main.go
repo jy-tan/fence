@@ -32,18 +32,19 @@ var (
 )
 
 var (
-	debug         bool
-	monitor       bool
-	settingsPath  string
-	templateName  string
-	listTemplates bool
-	cmdString     string
-	exposePorts   []string
-	shellMode     string
-	shellLogin    bool
-	exitCode      int
-	showVersion   bool
-	linuxFeatures bool
+	debug           bool
+	monitor         bool
+	settingsPath    string
+	templateName    string
+	listTemplates   bool
+	cmdString       string
+	exposePorts     []string
+	shellMode       string
+	shellLogin      bool
+	forceNewSession bool
+	exitCode        int
+	showVersion     bool
+	linuxFeatures   bool
 )
 
 func main() {
@@ -106,6 +107,7 @@ Configuration file format:
 	rootCmd.Flags().StringArrayVarP(&exposePorts, "port", "p", nil, "Expose port for inbound connections (can be used multiple times)")
 	rootCmd.Flags().StringVar(&shellMode, "shell", sandbox.ShellModeDefault, "Shell mode for command execution: default (bash) or user ($SHELL)")
 	rootCmd.Flags().BoolVar(&shellLogin, "shell-login", false, "Run shell as login shell (-lc). Use with --shell user for shell init compatibility")
+	rootCmd.Flags().BoolVar(&forceNewSession, "force-new-session", false, "Linux only: force bubblewrap --new-session even for interactive PTY sessions")
 	rootCmd.Flags().BoolVarP(&showVersion, "version", "v", false, "Show version information")
 	rootCmd.Flags().BoolVar(&linuxFeatures, "linux-features", false, "Show available Linux security features and exit")
 
@@ -215,6 +217,8 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	cfg = applyCLIConfigOverrides(cmd, cfg, forceNewSession)
+
 	manager := sandbox.NewManager(cfg, debug, monitor)
 	manager.SetExposedPorts(ports)
 	manager.SetShellOptions(shellMode, shellLogin)
@@ -255,11 +259,10 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	execCmd := exec.Command("sh", "-c", sandboxedCommand) //nolint:gosec // sandboxedCommand is constructed from user input - intentional
 	execCmd.Env = hardenedEnv
 
-	// On Linux, bubblewrap runs with --new-session. That breaks the normal TTY
-	// SIGWINCH delivery behavior for interactive TUIs unless we relay it.
-	//
-	// PTY relay is only enabled for interactive sessions to avoid surprising
-	// behavior changes (e.g., piping output through fence).
+	// On Linux, PTY relay is only enabled for interactive sessions to avoid
+	// surprising behavior changes (e.g., piping output through fence). When PTY
+	// relay is active, the Linux wrapper can keep bwrap in the current session
+	// so the inner shell retains normal job control.
 	usePTY := cfg != nil &&
 		cfg.AllowPty &&
 		platform.Detect() == platform.Linux &&
@@ -273,12 +276,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	//   "cannot set terminal process group: Operation not permitted"
 	//   "no job control in this shell"
 	isTTY := term.IsTerminal(int(os.Stdin.Fd()))
-	if isTTY {
-		execCmd.SysProcAttr = &syscall.SysProcAttr{
-			Setpgid: true,
-			Pgid:    0, // child gets its own process group (pgid = child pid)
-		}
-	}
+	configureHostTTYChildProcessGroup(execCmd, isTTY, usePTY)
 
 	if !usePTY {
 		execCmd.Stdin = os.Stdin
@@ -297,7 +295,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	// call tcsetpgrp. We ignore SIGTTOU so we don't get stopped when we
 	// later reclaim the foreground (at that point we'll be in the background
 	// process group).
-	if isTTY && execCmd.Process != nil {
+	if shouldManageHostTTYForeground(isTTY, usePTY) && execCmd.Process != nil {
 		stdinFd := int(os.Stdin.Fd())
 
 		savedFgPgrp, err := unix.IoctlGetInt(stdinFd, unix.TIOCGPGRP)
@@ -357,11 +355,36 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func applyCLIConfigOverrides(cmd *cobra.Command, cfg *config.Config, forceNewSessionValue bool) *config.Config {
+	if cfg == nil {
+		cfg = config.Default()
+	}
+	if cmd.Flags().Changed("force-new-session") {
+		value := forceNewSessionValue
+		cfg.ForceNewSession = &value
+	}
+	return cfg
+}
+
 func startCommand(execCmd *exec.Cmd, usePTY bool) (func(), error) {
 	if usePTY {
 		return startCommandWithPTY(execCmd)
 	}
 	return startCommandWithSignalProxy(execCmd)
+}
+
+func configureHostTTYChildProcessGroup(execCmd *exec.Cmd, isTTY bool, usePTY bool) {
+	if !shouldManageHostTTYForeground(isTTY, usePTY) {
+		return
+	}
+	execCmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+		Pgid:    0, // child gets its own process group (pgid = child pid)
+	}
+}
+
+func shouldManageHostTTYForeground(isTTY bool, usePTY bool) bool {
+	return isTTY && !usePTY
 }
 
 func startCommandWithSignalProxy(execCmd *exec.Cmd) (func(), error) {

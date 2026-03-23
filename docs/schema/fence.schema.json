@@ -106,6 +106,12 @@
       },
       "type": "object"
     },
+    "forceNewSession": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "network": {
       "additionalProperties": false,
       "properties": {

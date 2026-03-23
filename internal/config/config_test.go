@@ -757,6 +757,23 @@ func TestMerge(t *testing.T) {
 		}
 	})
 
+	t.Run("merge forceNewSession override wins", func(t *testing.T) {
+		base := &Config{
+			ForceNewSession: boolPtr(true),
+		}
+		override := &Config{
+			ForceNewSession: boolPtr(false),
+		}
+		result := Merge(base, override)
+
+		if result.ForceNewSession == nil {
+			t.Fatal("expected ForceNewSession to be non-nil")
+		}
+		if *result.ForceNewSession {
+			t.Error("expected ForceNewSession to be false (override wins)")
+		}
+	})
+
 	t.Run("merge command config", func(t *testing.T) {
 		base := &Config{
 			Command: CommandConfig{

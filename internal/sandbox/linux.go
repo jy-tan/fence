@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Use-Tusk/fence/internal/config"
+	"golang.org/x/term"
 )
 
 // LinuxBridge holds the socat bridge processes for Linux sandboxing (outbound).
@@ -415,6 +416,54 @@ func WrapCommandLinuxWithShell(cfg *config.Config, command string, bridge *Linux
 	})
 }
 
+func linuxRuntimeEnvScript() string {
+	return `
+fence_runtime_dir_cleanup=
+
+fence_dir_is_usable() {
+    dir=$1
+    probe=
+    [ -n "$dir" ] && [ -d "$dir" ] || return 1
+    probe="$dir/.fence-write-test-$$"
+    (umask 077 && : > "$probe") 2>/dev/null || return 1
+    rm -f "$probe" 2>/dev/null || true
+    return 0
+}
+
+fence_prepare_private_runtime_dir() {
+    dir=
+    dir=$(mktemp -d "/tmp/fence-runtime-$(id -u)-XXXXXX" 2>/dev/null) || return 1
+    chmod 700 "$dir" 2>/dev/null || true
+    if ! fence_dir_is_usable "$dir"; then
+        rm -rf -- "$dir" 2>/dev/null || true
+        return 1
+    fi
+    printf '%s\n' "$dir"
+}
+
+if ! fence_dir_is_usable "${TMPDIR:-}"; then
+    export TMPDIR=/tmp
+fi
+
+fence_runtime_dir=${XDG_RUNTIME_DIR:-}
+if ! fence_dir_is_usable "$fence_runtime_dir"; then
+    fence_runtime_dir=$(fence_prepare_private_runtime_dir 2>/dev/null || true)
+    if [ -z "$fence_runtime_dir" ]; then
+        fence_runtime_dir=
+    else
+        fence_runtime_dir_cleanup="$fence_runtime_dir"
+    fi
+fi
+
+if [ -n "$fence_runtime_dir" ]; then
+    export XDG_RUNTIME_DIR="$fence_runtime_dir"
+else
+    unset XDG_RUNTIME_DIR
+fi
+
+`
+}
+
 func buildLinuxBootstrapScript(
 	cfg *config.Config,
 	command string,
@@ -472,9 +521,15 @@ fence_wait_for_helpers() {
 # Cleanup function
 cleanup() {
     jobs -p | xargs -r kill >>"$fence_bootstrap_log" 2>&1 || true
+    case "${fence_runtime_dir_cleanup:-}" in
+        /tmp/fence-runtime-*)
+            rm -rf -- "$fence_runtime_dir_cleanup" >>"$fence_bootstrap_log" 2>&1 || true
+            ;;
+    esac
 }
 trap cleanup EXIT
 `)
+	script.WriteString(linuxRuntimeEnvScript())
 
 	if bridge != nil {
 		_, _ = fmt.Fprintf(&script, `
@@ -573,6 +628,17 @@ func bootstrapSocketPaths(reverseBridge *ReverseBridge) []string {
 	return reverseBridge.SocketPaths
 }
 
+func useLinuxInteractivePTYSession(cfg *config.Config, stdinIsTTY bool, stdoutIsTTY bool) bool {
+	return cfg != nil && cfg.AllowPty && stdinIsTTY && stdoutIsTTY
+}
+
+func effectiveLinuxForceNewSession(cfg *config.Config, stdinIsTTY bool, stdoutIsTTY bool) bool {
+	if cfg != nil && cfg.ForceNewSession != nil {
+		return *cfg.ForceNewSession
+	}
+	return !useLinuxInteractivePTYSession(cfg, stdinIsTTY, stdoutIsTTY)
+}
+
 func effectiveLinuxDeviceMode(cfg *config.Config, bwrapPath string) config.DeviceMode {
 	requested := config.DeviceModeAuto
 	if cfg != nil && cfg.Devices.Mode != "" {
@@ -662,6 +728,10 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		fmt.Fprintf(os.Stderr, "[fence:linux] Available features: %s\n", features.Summary())
 	}
 
+	stdinIsTTY := term.IsTerminal(int(os.Stdin.Fd()))
+	stdoutIsTTY := term.IsTerminal(int(os.Stdout.Fd()))
+	forceNewSession := effectiveLinuxForceNewSession(cfg, stdinIsTTY, stdoutIsTTY)
+
 	deviceMode := effectiveLinuxDeviceMode(cfg, bwrapPath)
 	if opts.Debug {
 		fmt.Fprintf(os.Stderr, "[fence:linux] Device mode: %s\n", deviceMode)
@@ -679,8 +749,12 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	// Build bwrap args with filesystem restrictions
 	bwrapArgs := []string{
 		"bwrap",
-		"--new-session",
 		"--die-with-parent",
+	}
+	if forceNewSession {
+		bwrapArgs = append(bwrapArgs, "--new-session")
+	} else if opts.Debug {
+		fmt.Fprintf(os.Stderr, "[fence:linux] Interactive PTY session detected - skipping --new-session and relying on seccomp TIOCSTI filtering\n")
 	}
 
 	// Only use --unshare-net if:
@@ -707,7 +781,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		} else {
 			seccompFilterPath = filterPath
 			if opts.Debug {
-				fmt.Fprintf(os.Stderr, "[fence:linux] Seccomp filter enabled (blocking %d dangerous syscalls)\n", len(DangerousSyscalls))
+				fmt.Fprintf(os.Stderr, "[fence:linux] Seccomp filter enabled (blocking dangerous syscalls and ioctl(TIOCSTI))\n")
 			}
 			// Add seccomp filter via fd 3 (will be set up via shell redirection)
 			bwrapArgs = append(bwrapArgs, "--seccomp", "3")
