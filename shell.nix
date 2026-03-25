@@ -7,6 +7,8 @@ pkgs.mkShell {
     with pkgs;
     [
       go
+      gopls
+      gotestsum
       golangci-lint
       gofumpt
       python3
