@@ -13,25 +13,19 @@
     "command": {
       "additionalProperties": false,
       "properties": {
+        "acceptSharedBinaryCannotRuntimeDeny": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "allow": {
           "items": {
             "type": "string"
           },
           "type": "array"
         },
-        "allowBlockingCritical": {
-          "type": [
-            "boolean",
-            "null"
-          ]
-        },
         "deny": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "silenceSharedBinaryWarning": {
           "items": {
             "type": "string"
           },

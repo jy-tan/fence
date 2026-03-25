@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -1190,35 +1191,32 @@ func TestSSHConfigValidation(t *testing.T) {
 	}
 }
 
-func TestMergeAllowBlockingCritical(t *testing.T) {
-	t.Run("override false wins over base true (last-writer-wins)", func(t *testing.T) {
-		base := &Config{Command: CommandConfig{AllowBlockingCritical: boolPtr(true)}}
-		override := &Config{Command: CommandConfig{AllowBlockingCritical: boolPtr(false)}}
+func TestMergeAcceptSharedBinaryCannotRuntimeDeny(t *testing.T) {
+	t.Run("base and override are appended", func(t *testing.T) {
+		base := &Config{Command: CommandConfig{AcceptSharedBinaryCannotRuntimeDeny: []string{"dd"}}}
+		override := &Config{Command: CommandConfig{AcceptSharedBinaryCannotRuntimeDeny: []string{"curl"}}}
 		result := Merge(base, override)
-		if result.Command.AllowBlockingCritical == nil {
-			t.Fatal("expected non-nil AllowBlockingCritical")
+		if !slices.Contains(result.Command.AcceptSharedBinaryCannotRuntimeDeny, "dd") {
+			t.Error("expected base entry 'dd' to be present after merge")
 		}
-		if *result.Command.AllowBlockingCritical {
-			t.Error("expected AllowBlockingCritical=false when override explicitly sets it false")
+		if !slices.Contains(result.Command.AcceptSharedBinaryCannotRuntimeDeny, "curl") {
+			t.Error("expected override entry 'curl' to be present after merge")
 		}
 	})
 
-	t.Run("base true is inherited when override is unset", func(t *testing.T) {
-		base := &Config{Command: CommandConfig{AllowBlockingCritical: boolPtr(true)}}
+	t.Run("base entries inherited when override is unset", func(t *testing.T) {
+		base := &Config{Command: CommandConfig{AcceptSharedBinaryCannotRuntimeDeny: []string{"dd"}}}
 		override := &Config{}
 		result := Merge(base, override)
-		if result.Command.AllowBlockingCritical == nil {
-			t.Fatal("expected non-nil AllowBlockingCritical")
-		}
-		if !*result.Command.AllowBlockingCritical {
-			t.Error("expected AllowBlockingCritical=true when base is true and override is nil")
+		if !slices.Contains(result.Command.AcceptSharedBinaryCannotRuntimeDeny, "dd") {
+			t.Error("expected base entry 'dd' to be inherited when override is nil")
 		}
 	})
 
-	t.Run("nil result when both unset", func(t *testing.T) {
+	t.Run("nil when both unset", func(t *testing.T) {
 		result := Merge(&Config{}, &Config{})
-		if result.Command.AllowBlockingCritical != nil {
-			t.Errorf("expected nil AllowBlockingCritical when both unset, got %v", *result.Command.AllowBlockingCritical)
+		if len(result.Command.AcceptSharedBinaryCannotRuntimeDeny) != 0 {
+			t.Errorf("expected empty AcceptSharedBinaryCannotRuntimeDeny when both unset, got %v", result.Command.AcceptSharedBinaryCannotRuntimeDeny)
 		}
 	})
 }

@@ -67,11 +67,10 @@ type FilesystemConfig struct {
 
 // CommandConfig defines command restrictions.
 type CommandConfig struct {
-	Deny                    []string `json:"deny"`
-	Allow                   []string `json:"allow"`
-	UseDefaults             *bool    `json:"useDefaults,omitempty"`
-	AllowBlockingCritical   *bool    `json:"allowBlockingCritical,omitempty"`
-	SilenceSharedBinaryWarning []string `json:"silenceSharedBinaryWarning,omitempty"`
+	Deny                                []string `json:"deny"`
+	Allow                               []string `json:"allow"`
+	UseDefaults                         *bool    `json:"useDefaults,omitempty"`
+	AcceptSharedBinaryCannotRuntimeDeny []string `json:"acceptSharedBinaryCannotRuntimeDeny,omitempty"`
 }
 
 // SSHConfig defines SSH command restrictions.
@@ -572,15 +571,12 @@ func Merge(base, override *Config) *Config {
 
 		Command: CommandConfig{
 			// Append slices
-			Deny:                    mergeStrings(base.Command.Deny, override.Command.Deny),
-			Allow:                   mergeStrings(base.Command.Allow, override.Command.Allow),
-			SilenceSharedBinaryWarning: mergeStrings(base.Command.SilenceSharedBinaryWarning, override.Command.SilenceSharedBinaryWarning),
+			Deny:                                mergeStrings(base.Command.Deny, override.Command.Deny),
+			Allow:                               mergeStrings(base.Command.Allow, override.Command.Allow),
+			AcceptSharedBinaryCannotRuntimeDeny: mergeStrings(base.Command.AcceptSharedBinaryCannotRuntimeDeny, override.Command.AcceptSharedBinaryCannotRuntimeDeny),
 
 			// Pointer field: override wins if set
 			UseDefaults: mergeOptionalBool(base.Command.UseDefaults, override.Command.UseDefaults),
-
-			// Boolean fields: true if either enables it
-			AllowBlockingCritical: mergeOptionalBool(base.Command.AllowBlockingCritical, override.Command.AllowBlockingCritical),
 		},
 
 		SSH: SSHConfig{

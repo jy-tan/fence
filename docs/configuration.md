@@ -93,7 +93,7 @@ The `extends` value is treated as a file path if it contains `/` or `\`, or star
 
 - Slice fields (domains, paths, commands) are appended and deduplicated
 - Boolean fields use OR logic (true if either base or override enables it)
-- Optional boolean fields (`useDefaults`, `allowBlockingCritical`) use override-wins semantics: the child value wins when set, otherwise the parent value is inherited
+- Optional boolean fields (`useDefaults`) use override-wins semantics: the child value wins when set, otherwise the parent value is inherited
 - Enum/string fields use override-wins semantics when the override is non-empty (for example, `devices.mode`)
 - Integer fields (ports) use override-wins semantics (0 keeps base value)
 
@@ -260,8 +260,7 @@ Block specific commands from being executed, even within command chains.
 | `deny` | List of command prefixes to block (e.g., `["git push", "rm -rf"]`) |
 | `allow` | List of command prefixes to allow, overriding `deny` |
 | `useDefaults` | Enable default deny list of dangerous system commands (default: `true`) |
-| `allowBlockingCritical` | Force runtime exec deny even when the target binary is shared with critical shell commands (see below) |
-| `silenceSharedBinaryWarning` | List of command names whose shared-binary skip warning should be suppressed (see below) |
+| `acceptSharedBinaryCannotRuntimeDeny` | List of command names that cannot be isolated at runtime on this system (see below) |
 
 Example:
 
@@ -304,18 +303,29 @@ Fence also enforces runtime executable deny for child processes:
 
 Some systems use multicall binaries: a single executable file that implements many commands via hardlinks or symlinks. Examples include busybox (`ls`, `cat`, `head`, `tail`, and hundreds more sharing one binary) and some coreutils builds.
 
-When fence tries to block a single-token rule at runtime, it resolves the path and denies it. If the target binary also implements critical shell commands (`ls`, `cat`, `head`, `tail`, `env`, `echo`, and similar), masking it would break the shell environment entirely. Fence detects this automatically using inode/device identity and skips the block with a warning:
+When fence tries to block a single-token rule at runtime, it resolves the path and denies it. If the target binary also implements critical shell commands (`ls`, `cat`, `head`, `tail`, `env`, `echo`, and similar), masking it will also block those commands as collateral damage. Fence detects this automatically using inode/device identity, blocks the binary anyway (the sandbox is never silently weaker than configured), and emits an actionable warning:
 
 ```
-runtime exec deny skipped for /usr/bin/busybox (requested: dd): shared binary also implements
-critical commands [cat head tail ls ...]. To force blocking add "allowBlockingCritical": true to
-your command config. To silence this warning add "dd" to "silenceSharedBinaryWarning".
+runtime exec deny warning for /usr/bin/busybox (requested: dd): shared binary also implements
+critical commands [cat head tail +103 more, use --debug for full list], which will be
+collaterally blocked. To skip runtime blocking of "dd" and silence this warning, add it to
+"acceptSharedBinaryCannotRuntimeDeny" in your command config.
 ```
 
-The two escape hatches:
+Use `--debug` to expand the truncated list: critical commands appear first, followed by all other commands sharing the same binary.
 
-- `allowBlockingCritical: true` — force the block anyway. Use this for maximum security. You accept that many shell commands the agent generates that would be fine with your blocklist are also going to fail.
-- `silenceSharedBinaryWarning: ["dd"]` — accept that the command cannot be blocked in this environment and suppress the warning.
+If the command genuinely cannot be isolated on this system and you accept that it will only be blocked at preflight, add it to `acceptSharedBinaryCannotRuntimeDeny`:
+
+```json
+{
+  "command": {
+    "deny": ["dd"],
+    "acceptSharedBinaryCannotRuntimeDeny": ["dd"]
+  }
+}
+```
+
+This skips the runtime block silently and records the explicit decision in the config for future auditors.
 
 Blocking a shared binary is **not** skipped when the collateral names are themselves plausible block targets (e.g., blocking both `python` and `python3` when they share a binary is fine — they are all variants of the same thing).
 

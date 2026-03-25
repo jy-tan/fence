@@ -133,69 +133,59 @@ func TestGetRuntimeDeniedExecutablePaths_IncludesChrootFromDefaults(t *testing.T
 			UseDefaults: nil,
 		},
 	}
-	got, diagnostics := GetRuntimeDeniedExecutablePathsWithDiagnostics(cfg, false)
+	got, _ := GetRuntimeDeniedExecutablePathsWithDiagnostics(cfg, false)
 
-	// On most systems chroot is a standalone binary and lands directly in the
-	// deny list. On Nix, however, chroot resolves to the coreutils multicall
-	// binary (which also implements ls, cat, etc.), so it will be skipped with
-	// a diagnostic instead. Both outcomes are correct behaviour — accept either.
+	// With the new security model fence always blocks even when the binary
+	// shares an inode with critical commands — blocking is the default and the
+	// user must explicitly opt out via acceptSharedBinaryCannotRuntimeDeny. chroot must
+	// therefore always appear in the blocked paths list regardless of whether
+	// it is a standalone binary (most distros) or part of a coreutils multicall
+	// binary (Nix/nix-darwin).
 	for _, want := range chrootPaths {
-		if slices.Contains(got, want) {
-			continue
-		}
-		matched := false
-		for _, msg := range diagnostics {
-			if strings.Contains(msg, want) {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			t.Fatalf("expected chroot path %q in runtime denied paths or diagnostics, got paths=%v diagnostics=%v", want, got, diagnostics)
+		if !slices.Contains(got, want) {
+			t.Fatalf("expected chroot path %q in runtime denied paths, got: %v", want, got)
 		}
 	}
 }
 
 func TestFindSharedExecutableNames_DetectsSharedBinary(t *testing.T) {
 	tmpDir := t.TempDir()
-	target := filepath.Join(tmpDir, "tool-a")
-	alias := filepath.Join(tmpDir, "tool-b")
+	aPath := filepath.Join(tmpDir, "aaa")
+	bPath := filepath.Join(tmpDir, "bbb")
 
 	// #nosec G306 -- test fixture requires executable permissions
-	if err := os.WriteFile(target, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+	if err := os.WriteFile(aPath, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatalf("failed to create executable: %v", err)
 	}
-	if err := os.Link(target, alias); err != nil {
-		t.Fatalf("failed to create hardlink alias: %v", err)
+	if err := os.Link(aPath, bPath); err != nil {
+		t.Fatalf("failed to create hard link: %v", err)
 	}
 
-	shared, names := findSharedExecutableNames(target)
+	shared, names := findSharedExecutableNames(aPath)
 	if !shared {
-		t.Fatalf("expected shared executable to be detected, got names=%v", names)
+		t.Fatalf("expected file sharing an inode to be detected as shared, got names=%v", names)
 	}
-	if !slices.Contains(names, "tool-a") || !slices.Contains(names, "tool-b") {
-		t.Fatalf("expected both aliases in result, got: %v", names)
+	if !slices.Contains(names, "aaa") || !slices.Contains(names, "bbb") {
+		t.Fatalf("expected both names in shared list, got %v", names)
 	}
 }
 
 func TestFindSharedExecutableNames_UniqueBinary(t *testing.T) {
 	tmpDir := t.TempDir()
-	target := filepath.Join(tmpDir, "tool-single")
+	aPath := filepath.Join(tmpDir, "unique-binary")
 
 	// #nosec G306 -- test fixture requires executable permissions
-	if err := os.WriteFile(target, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+	if err := os.WriteFile(aPath, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatalf("failed to create executable: %v", err)
 	}
 
-	shared, names := findSharedExecutableNames(target)
+	shared, names := findSharedExecutableNames(aPath)
 	if shared {
-		t.Fatalf("expected unique executable to not be shared, got names=%v", names)
-	}
-	if len(names) != 1 || names[0] != "tool-single" {
-		t.Fatalf("expected only tool-single in result, got: %v", names)
+		t.Fatalf("expected unique file to not be detected as shared, got names=%v", names)
 	}
 }
 
+// Unique binary: no shared-inode detection fires → block with no diagnostic.
 func TestShouldSkipRuntimeExecDenyPath_UniqueDoesNotSkip(t *testing.T) {
 	path := "/usr/bin/true"
 	sharedCache := map[string]sharedExecutableInfo{
@@ -206,7 +196,7 @@ func TestShouldSkipRuntimeExecDenyPath_UniqueDoesNotSkip(t *testing.T) {
 		},
 	}
 
-	skip, reason := shouldSkipRuntimeExecDenyPath(path, "true", false, nil, map[string]bool{"true": true}, sharedCache, false)
+	skip, reason := shouldSkipRuntimeExecDenyPath(path, "true", nil, map[string]bool{"true": true}, sharedCache, false)
 	if skip {
 		t.Fatalf("expected unique executable target to not be skipped, reason=%q", reason)
 	}
@@ -215,7 +205,10 @@ func TestShouldSkipRuntimeExecDenyPath_UniqueDoesNotSkip(t *testing.T) {
 	}
 }
 
-func TestShouldSkipRuntimeExecDenyPath_SharedSkipsWithReason(t *testing.T) {
+// Shared binary with critical collision: the new default is to BLOCK, but emit
+// a diagnostic warning naming the collateral critical commands and telling the
+// user how to opt out via acceptSharedBinaryCannotRuntimeDeny.
+func TestShouldSkipRuntimeExecDenyPath_SharedBlocksWithWarning(t *testing.T) {
 	path := "/shared/bin/dd"
 	sharedCache := map[string]sharedExecutableInfo{
 		path: {
@@ -225,9 +218,12 @@ func TestShouldSkipRuntimeExecDenyPath_SharedSkipsWithReason(t *testing.T) {
 		},
 	}
 
-	skip, reason := shouldSkipRuntimeExecDenyPath(path, "dd", false, nil, map[string]bool{"dd": true}, sharedCache, true)
-	if !skip {
-		t.Fatalf("expected shared binary with critical collision to be skipped")
+	skip, reason := shouldSkipRuntimeExecDenyPath(path, "dd", nil, map[string]bool{"dd": true}, sharedCache, true)
+	if skip {
+		t.Fatalf("expected shared binary with critical collision to be blocked (not skipped) by default")
+	}
+	if reason == "" {
+		t.Fatalf("expected a diagnostic warning reason when critical collision is detected")
 	}
 	if !strings.Contains(reason, "critical commands") {
 		t.Fatalf("expected reason to mention critical commands, got %q", reason)
@@ -235,17 +231,18 @@ func TestShouldSkipRuntimeExecDenyPath_SharedSkipsWithReason(t *testing.T) {
 	if !strings.Contains(reason, "cat") || !strings.Contains(reason, "ls") {
 		t.Fatalf("expected reason to name the colliding critical commands, got %q", reason)
 	}
-	if !strings.Contains(reason, "allowBlockingCritical") {
-		t.Fatalf("expected reason to mention allowBlockingCritical, got %q", reason)
+	if !strings.Contains(reason, "acceptSharedBinaryCannotRuntimeDeny") {
+		t.Fatalf("expected reason to mention acceptSharedBinaryCannotRuntimeDeny, got %q", reason)
 	}
-	if !strings.Contains(reason, "silenceSharedBinaryWarning") {
-		t.Fatalf("expected reason to mention silenceSharedBinaryWarning, got %q", reason)
+	// The removed option must never appear in any diagnostic.
+	if strings.Contains(reason, "allowBlockingCritical") {
+		t.Fatalf("removed option allowBlockingCritical must not appear in diagnostic, got %q", reason)
 	}
 }
 
+// Shared binary where all shared names are non-critical (python variants):
+// blocking proceeds with no diagnostic — no collateral damage to critical commands.
 func TestShouldSkipRuntimeExecDenyPath_SharedNonCriticalDoesNotSkip(t *testing.T) {
-	// python3, python3.11, python3-config are all non-critical — blocking any
-	// one of them should be allowed even though they share a binary.
 	path := "/usr/bin/python3.11"
 	sharedCache := map[string]sharedExecutableInfo{
 		path: {
@@ -255,16 +252,18 @@ func TestShouldSkipRuntimeExecDenyPath_SharedNonCriticalDoesNotSkip(t *testing.T
 		},
 	}
 
-	skip, reason := shouldSkipRuntimeExecDenyPath(path, "python3", false, nil, map[string]bool{"python3": true}, sharedCache, false)
+	skip, reason := shouldSkipRuntimeExecDenyPath(path, "python3", nil, map[string]bool{"python3": true}, sharedCache, false)
 	if skip {
 		t.Fatalf("expected shared binary with only non-critical names to not be skipped, reason=%q", reason)
 	}
 	if reason != "" {
-		t.Fatalf("expected empty reason for non-skip, got %q", reason)
+		t.Fatalf("expected empty reason for non-critical shared binary, got %q", reason)
 	}
 }
 
-func TestShouldSkipRuntimeExecDenyPath_AllowBlockingCriticalForcesBlock(t *testing.T) {
+// acceptSharedBinaryCannotRuntimeDeny: when the token is in the list the path is skipped
+// silently — no diagnostic is emitted.
+func TestShouldSkipRuntimeExecDenyPath_AcceptSharedBinaryCannotRuntimeDenySkipsSilently(t *testing.T) {
 	path := "/shared/bin/dd"
 	sharedCache := map[string]sharedExecutableInfo{
 		path: {
@@ -274,38 +273,18 @@ func TestShouldSkipRuntimeExecDenyPath_AllowBlockingCriticalForcesBlock(t *testi
 		},
 	}
 
-	skip, reason := shouldSkipRuntimeExecDenyPath(path, "dd", true, nil, map[string]bool{"dd": true}, sharedCache, false)
-	if skip {
-		t.Fatalf("expected allowBlockingCritical to force block despite critical collision, reason=%q", reason)
-	}
-	if reason != "" {
-		t.Fatalf("expected empty reason when allowBlockingCritical is set, got %q", reason)
-	}
-}
-
-func TestShouldSkipRuntimeExecDenyPath_silenceSharedBinaryWarningSilencesWarning(t *testing.T) {
-	path := "/shared/bin/dd"
-	sharedCache := map[string]sharedExecutableInfo{
-		path: {
-			checked: true,
-			shared:  true,
-			names:   []string{"cat", "dd", "ls"},
-		},
-	}
-
-	skip, reason := shouldSkipRuntimeExecDenyPath(path, "dd", false, []string{"dd"}, map[string]bool{"dd": true}, sharedCache, false)
+	skip, reason := shouldSkipRuntimeExecDenyPath(path, "dd", []string{"dd"}, map[string]bool{"dd": true}, sharedCache, false)
 	if !skip {
-		t.Fatalf("expected shared binary to be skipped when token is in silenceSharedBinaryWarning")
+		t.Fatalf("expected shared binary to be skipped when token is in acceptSharedBinaryCannotRuntimeDeny")
 	}
 	if reason != "" {
-		t.Fatalf("expected empty reason (silenced) when token is in silenceSharedBinaryWarning, got %q", reason)
+		t.Fatalf("expected empty reason (silenced) when token is in acceptSharedBinaryCannotRuntimeDeny, got %q", reason)
 	}
 }
 
-func TestShouldSkipRuntimeExecDenyPath_silenceSharedBinaryWarningMatchesAcrossForms(t *testing.T) {
-	// The user denies "/shared/bin/dd" (absolute path token) but writes "dd"
-	// (bare name) in silenceSharedBinaryWarning, or vice versa.  Both forms
-	// must silence the warning — mismatched forms must not silently fail.
+// acceptSharedBinaryCannotRuntimeDeny matches regardless of whether the entry uses a bare
+// name or an absolute path, so the user does not have to guess which form to write.
+func TestShouldSkipRuntimeExecDenyPath_AcceptSharedBinaryCannotRuntimeDenyMatchesAcrossForms(t *testing.T) {
 	path := "/shared/bin/dd"
 	sharedCache := map[string]sharedExecutableInfo{
 		path: {
@@ -316,31 +295,31 @@ func TestShouldSkipRuntimeExecDenyPath_silenceSharedBinaryWarningMatchesAcrossFo
 	}
 
 	cases := []struct {
-		token   string
-		silence string
+		token  string
+		accept string
 	}{
-		// absolute-path deny rule, bare-name silence entry
-		{token: "/shared/bin/dd", silence: "dd"},
-		// bare-name deny rule, absolute-path silence entry
-		{token: "dd", silence: "/shared/bin/dd"},
+		// absolute-path deny rule, bare-name accept entry
+		{token: "/shared/bin/dd", accept: "dd"},
+		// bare-name deny rule, absolute-path accept entry
+		{token: "dd", accept: "/shared/bin/dd"},
 	}
 
 	for _, c := range cases {
 		denyTokens := map[string]bool{c.token: true, filepath.Base(c.token): true}
-		skip, reason := shouldSkipRuntimeExecDenyPath(path, c.token, false, []string{c.silence}, denyTokens, sharedCache, false)
+		skip, reason := shouldSkipRuntimeExecDenyPath(path, c.token, []string{c.accept}, denyTokens, sharedCache, false)
 		if !skip {
-			t.Errorf("token=%q silence=%q: expected skip (silenced), but was not skipped", c.token, c.silence)
+			t.Errorf("token=%q accept=%q: expected skip (accepted), but was not skipped", c.token, c.accept)
 		}
 		if reason != "" {
-			t.Errorf("token=%q silence=%q: expected empty reason (silenced), got %q", c.token, c.silence, reason)
+			t.Errorf("token=%q accept=%q: expected empty reason (silenced), got %q", c.token, c.accept, reason)
 		}
 	}
 }
 
+// User explicitly blocks a critical command (ls). The shared binary only
+// co-inhabits with non-critical commands (dd, rm) — no collateral damage to
+// other critical commands → block proceeds with no diagnostic.
 func TestShouldSkipRuntimeExecDenyPath_CriticalTokenWithNoCriticalCollateral(t *testing.T) {
-	// User explicitly blocks "ls" (a critical command). The shared binary also
-	// implements "dd" and "rm" — neither of which is critical. There is no
-	// collateral damage to other critical commands, so the block should proceed.
 	path := "/shared/bin/coreutils"
 	sharedCache := map[string]sharedExecutableInfo{
 		path: {
@@ -350,7 +329,7 @@ func TestShouldSkipRuntimeExecDenyPath_CriticalTokenWithNoCriticalCollateral(t *
 		},
 	}
 
-	skip, reason := shouldSkipRuntimeExecDenyPath(path, "ls", false, nil, map[string]bool{"ls": true}, sharedCache, false)
+	skip, reason := shouldSkipRuntimeExecDenyPath(path, "ls", nil, map[string]bool{"ls": true}, sharedCache, false)
 	if skip {
 		t.Fatalf("expected explicit block of critical token with no critical collateral to proceed, reason=%q", reason)
 	}
@@ -359,10 +338,11 @@ func TestShouldSkipRuntimeExecDenyPath_CriticalTokenWithNoCriticalCollateral(t *
 	}
 }
 
+// User explicitly blocks "ls". The shared binary also implements cat and head
+// (both critical). Block proceeds with a diagnostic warning, but "ls" itself
+// must NOT appear in the collision list — it was the intentional target, not
+// collateral damage.
 func TestShouldSkipRuntimeExecDenyPath_CriticalTokenNotListedInOwnCollision(t *testing.T) {
-	// User explicitly blocks "ls" (a critical command). The shared binary also
-	// implements "cat" and "head" — both critical. The block should be skipped,
-	// but the diagnostic must not list "ls" itself as a colliding command.
 	path := "/shared/bin/coreutils"
 	sharedCache := map[string]sharedExecutableInfo{
 		path: {
@@ -372,14 +352,14 @@ func TestShouldSkipRuntimeExecDenyPath_CriticalTokenNotListedInOwnCollision(t *t
 		},
 	}
 
-	skip, reason := shouldSkipRuntimeExecDenyPath(path, "ls", false, nil, map[string]bool{"ls": true}, sharedCache, true)
-	if !skip {
-		t.Fatalf("expected block to be skipped due to critical collateral (cat, head)")
+	skip, reason := shouldSkipRuntimeExecDenyPath(path, "ls", nil, map[string]bool{"ls": true}, sharedCache, true)
+	if skip {
+		t.Fatalf("expected block to proceed (not skip) despite critical collateral (cat, head)")
 	}
-	// The bracketed collision list is part of the verbose diagnostic. "ls" will
-	// appear elsewhere in the verbose message (e.g. in the silenceSharedBinaryWarning
-	// suggestion), so check specifically that it is absent from the bracketed
-	// collision list rather than the full message string.
+	if reason == "" {
+		t.Fatalf("expected a diagnostic warning when critical collateral would be blocked")
+	}
+	// The bracketed collision list must include cat and head but not ls.
 	start := strings.Index(reason, "[")
 	end := strings.Index(reason, "]")
 	if start == -1 || end == -1 || end <= start {
@@ -394,14 +374,9 @@ func TestShouldSkipRuntimeExecDenyPath_CriticalTokenNotListedInOwnCollision(t *t
 	}
 }
 
+// All shared names are in the deny list — every co-inhabitant is an
+// intentional target. No collateral damage → binary blocked with no diagnostic.
 func TestGetRuntimeDeniedExecutablePaths_AllSharedNamesDeniedShouldBlock(t *testing.T) {
-	// Shared binary (one inode) implements three commands: dd, ls, cat.
-	// The user denies all three by full path.
-	//
-	// ls and cat are critical commands, so the current collision check would
-	// normally skip the block with a warning. But since ls and cat are
-	// themselves in the deny list they are intentional targets — not collateral
-	// damage — and the binary must be blocked.
 	tmpDir := t.TempDir()
 	ddPath := filepath.Join(tmpDir, "dd")
 	lsPath := filepath.Join(tmpDir, "ls")
@@ -412,10 +387,10 @@ func TestGetRuntimeDeniedExecutablePaths_AllSharedNamesDeniedShouldBlock(t *test
 		t.Fatalf("failed to create executable: %v", err)
 	}
 	if err := os.Link(ddPath, lsPath); err != nil {
-		t.Fatalf("failed to hardlink ls: %v", err)
+		t.Fatalf("failed to create hard link ls: %v", err)
 	}
 	if err := os.Link(ddPath, catPath); err != nil {
-		t.Fatalf("failed to hardlink cat: %v", err)
+		t.Fatalf("failed to create hard link cat: %v", err)
 	}
 
 	useDefaults := false
@@ -430,11 +405,7 @@ func TestGetRuntimeDeniedExecutablePaths_AllSharedNamesDeniedShouldBlock(t *test
 
 	// All three tokens resolve to the same inode and deduplicate to one path.
 	// Because every critical co-inhabitant is also explicitly denied, the
-	// binary must appear in the blocked list — not be silently dropped.
-	//
-	// resolveExecutablePaths calls filepath.EvalSymlinks, which on macOS
-	// expands /var/folders/... → /private/var/folders/..., so compare against
-	// the canonical form of the path.
+	// binary must appear in the blocked list with no diagnostic warning.
 	wantPath := ddPath
 	if resolved, err := filepath.EvalSymlinks(ddPath); err == nil {
 		wantPath = resolved
@@ -442,16 +413,18 @@ func TestGetRuntimeDeniedExecutablePaths_AllSharedNamesDeniedShouldBlock(t *test
 	if !slices.Contains(got, wantPath) {
 		t.Fatalf("expected shared binary to be blocked when all shared names are denied, got paths=%v diagnostics=%v", got, diagnostics)
 	}
+	if len(diagnostics) != 0 {
+		t.Fatalf("expected no diagnostics when all shared names are explicitly denied, got %v", diagnostics)
+	}
 }
 
-func TestGetRuntimeDeniedExecutablePaths_PartialDenyStillSkipsForUninstructedCritical(t *testing.T) {
-	// Shared binary (one inode) implements four commands: dd, ls, cat, head.
-	// The user denies dd and ls — but NOT cat or head.
-	//
-	// ls is excluded from the collision check because it is also being denied
-	// (intentional target, not collateral damage). But cat and head are critical
-	// commands that the user never asked to block, so they ARE collateral damage.
-	// The binary must still be skipped with a warning even though ls is denied.
+// Shared binary implements dd, ls, cat, head. User denies dd and ls but NOT
+// cat or head. ls is excluded from the collision check (intentional target),
+// but cat and head are uninstructed critical co-inhabitants.
+//
+// New default: the binary is still BLOCKED, but a diagnostic warning is emitted
+// naming cat and head. ls must not appear in the collision list.
+func TestGetRuntimeDeniedExecutablePaths_PartialDenyBlocksWithWarningForUninstructedCritical(t *testing.T) {
 	tmpDir := t.TempDir()
 	ddPath := filepath.Join(tmpDir, "dd")
 	lsPath := filepath.Join(tmpDir, "ls")
@@ -464,7 +437,7 @@ func TestGetRuntimeDeniedExecutablePaths_PartialDenyStillSkipsForUninstructedCri
 	}
 	for _, p := range []string{lsPath, catPath, headPath} {
 		if err := os.Link(ddPath, p); err != nil {
-			t.Fatalf("failed to hardlink %s: %v", p, err)
+			t.Fatalf("failed to create hard link %s: %v", p, err)
 		}
 	}
 
@@ -478,23 +451,22 @@ func TestGetRuntimeDeniedExecutablePaths_PartialDenyStillSkipsForUninstructedCri
 
 	got, diagnostics := GetRuntimeDeniedExecutablePathsWithDiagnostics(cfg, true)
 
-	// The binary must NOT appear in the blocked list: cat and head are
-	// uninstructed critical co-inhabitants and would be collaterally blocked.
+	// The binary MUST appear in the blocked list: the new security model blocks
+	// by default even when uninstructed critical co-inhabitants are present.
 	wantPath := ddPath
 	if resolved, err := filepath.EvalSymlinks(ddPath); err == nil {
 		wantPath = resolved
 	}
-	if slices.Contains(got, wantPath) {
-		t.Fatalf("expected shared binary to be skipped when uninstructed critical co-inhabitants remain, got paths=%v", got)
+	if !slices.Contains(got, wantPath) {
+		t.Fatalf("expected shared binary to be blocked (new default) even with uninstructed critical co-inhabitants, got paths=%v", got)
 	}
 
-	// There must be at least one diagnostic explaining the collision.
+	// There must be at least one diagnostic warning about the collision.
 	if len(diagnostics) == 0 {
-		t.Fatalf("expected diagnostics for skipped shared binary, got none")
+		t.Fatalf("expected diagnostics warning about uninstructed critical co-inhabitants, got none")
 	}
 
-	// The diagnostic must mention the uninstructed critical collaterals (cat,
-	// head) and must NOT mention ls (which is itself being denied).
+	// The diagnostic must mention cat and head but NOT ls (ls is also being denied).
 	combined := strings.Join(diagnostics, "\n")
 	start := strings.Index(combined, "[")
 	end := strings.Index(combined, "]")
@@ -510,7 +482,7 @@ func TestGetRuntimeDeniedExecutablePaths_PartialDenyStillSkipsForUninstructedCri
 	}
 }
 
-// 3a: when the token is an absolute path, the token's own basename must be
+// When the token is an absolute path, the token's own basename must be
 // excluded from the critical-collision list even when denyTokens only contains
 // the absolute form (not the bare name).
 func TestShouldSkipRuntimeExecDenyPath_AbsolutePathTokenExcludedFromOwnCollision(t *testing.T) {
@@ -526,9 +498,12 @@ func TestShouldSkipRuntimeExecDenyPath_AbsolutePathTokenExcludedFromOwnCollision
 	// directly without the basename pre-population that the outer loop does.
 	denyTokens := map[string]bool{"/shared/bin/ls": true}
 
-	skip, reason := shouldSkipRuntimeExecDenyPath(path, "/shared/bin/ls", false, nil, denyTokens, sharedCache, true)
-	if !skip {
-		t.Fatal("expected block to be skipped due to critical collateral (cat, head)")
+	skip, reason := shouldSkipRuntimeExecDenyPath(path, "/shared/bin/ls", nil, denyTokens, sharedCache, true)
+	if skip {
+		t.Fatal("expected block to proceed (not skip) despite critical collateral (cat, head)")
+	}
+	if reason == "" {
+		t.Fatal("expected a diagnostic warning when critical collateral would be blocked")
 	}
 	start := strings.Index(reason, "[")
 	end := strings.Index(reason, "]")
@@ -544,8 +519,8 @@ func TestShouldSkipRuntimeExecDenyPath_AbsolutePathTokenExcludedFromOwnCollision
 	}
 }
 
-// 3b: two deny rules that resolve to the same canonical path should produce
-// exactly one diagnostic, not one per token.
+// Two deny rules resolving to the same canonical path must produce exactly one
+// diagnostic warning, not one per token.
 func TestGetRuntimeDeniedExecutablePathsWithDiagnostics_NoDuplicateDiagnostics(t *testing.T) {
 	tmpDir := t.TempDir()
 	ddPath := filepath.Join(tmpDir, "dd")
@@ -559,7 +534,7 @@ func TestGetRuntimeDeniedExecutablePathsWithDiagnostics_NoDuplicateDiagnostics(t
 	}
 	for _, p := range []string{catPath, lsPath} {
 		if err := os.Link(ddPath, p); err != nil {
-			t.Fatalf("failed to hardlink %s: %v", p, err)
+			t.Fatalf("failed to create hard link %s: %v", p, err)
 		}
 	}
 	if err := os.Symlink(ddPath, symlinkPath); err != nil {
@@ -575,16 +550,27 @@ func TestGetRuntimeDeniedExecutablePathsWithDiagnostics_NoDuplicateDiagnostics(t
 		},
 	}
 
-	_, diagnostics := GetRuntimeDeniedExecutablePathsWithDiagnostics(cfg, false)
+	got, diagnostics := GetRuntimeDeniedExecutablePathsWithDiagnostics(cfg, false)
 
+	// The binary is blocked (new default). The two tokens resolve to the same
+	// canonical path, so there must be exactly one entry in the blocked list
+	// and at most one diagnostic warning.
+	wantPath := ddPath
+	if resolved, err := filepath.EvalSymlinks(ddPath); err == nil {
+		wantPath = resolved
+	}
+	if !slices.Contains(got, wantPath) {
+		t.Fatalf("expected shared binary to appear in blocked paths, got %v", got)
+	}
 	if len(diagnostics) > 1 {
-		t.Fatalf("expected at most 1 diagnostic for two tokens resolving to the same skipped path, got %d: %v", len(diagnostics), diagnostics)
+		t.Fatalf("expected at most 1 diagnostic for two tokens resolving to the same path, got %d: %v", len(diagnostics), diagnostics)
 	}
 }
 
-// 3f: when the token is an absolute path, the silenceSharedBinaryWarning hint
-// in the diagnostic must name the bare basename, not the full path.
-func TestShouldSkipRuntimeExecDenyPath_DiagnosticSuggestsBasenameInSilenceHint(t *testing.T) {
+// When the token is an absolute path, the acceptSharedBinaryCannotRuntimeDeny hint in the
+// diagnostic must name the bare basename, not the full path — so the user
+// writes a short, obvious entry in their config.
+func TestShouldSkipRuntimeExecDenyPath_DiagnosticSuggestsBasenameInAcceptHint(t *testing.T) {
 	path := "/shared/bin/dd"
 	sharedCache := map[string]sharedExecutableInfo{
 		path: {
@@ -595,7 +581,10 @@ func TestShouldSkipRuntimeExecDenyPath_DiagnosticSuggestsBasenameInSilenceHint(t
 	}
 	denyTokens := map[string]bool{"/shared/bin/dd": true, "dd": true}
 
-	_, reason := shouldSkipRuntimeExecDenyPath(path, "/shared/bin/dd", false, nil, denyTokens, sharedCache, true)
+	skip, reason := shouldSkipRuntimeExecDenyPath(path, "/shared/bin/dd", nil, denyTokens, sharedCache, true)
+	if skip {
+		t.Fatal("expected block to proceed (not skip) despite critical collision")
+	}
 	if reason == "" {
 		t.Fatal("expected a diagnostic reason")
 	}

@@ -36,7 +36,7 @@ This inherits all settings from the `code` template and adds your private regist
 
 - Slice fields (domains, paths, commands): Appended and deduplicated
 - Boolean fields: OR logic (true if either enables it)
-- Optional boolean fields (`useDefaults`, `allowBlockingCritical`): Override wins (child value takes precedence when set)
+- Optional boolean fields (`useDefaults`): Override wins (child value takes precedence when set)
 - Integer fields (ports): Override wins (0 keeps base value)
 
 ### Extending files

@@ -136,21 +136,20 @@ func GetRuntimeDeniedExecutablePathsWithDiagnostics(cfg *config.Config, debug bo
 			if seen[resolved] {
 				continue
 			}
-			if skip, reason := shouldSkipRuntimeExecDenyPath(
+			skip, reason := shouldSkipRuntimeExecDenyPath(
 				resolved, token,
-				cfg.Command.AllowBlockingCritical != nil && *cfg.Command.AllowBlockingCritical,
-				cfg.Command.SilenceSharedBinaryWarning,
+				cfg.Command.AcceptSharedBinaryCannotRuntimeDeny,
 				denyTokens,
 				sharedCache,
 				debug,
-			); skip {
-				seen[resolved] = true
-				if reason != "" {
-					diagnostics = append(diagnostics, reason)
-				}
+			)
+			seen[resolved] = true
+			if reason != "" {
+				diagnostics = append(diagnostics, reason)
+			}
+			if skip {
 				continue
 			}
-			seen[resolved] = true
 			paths = append(paths, resolved)
 		}
 	}
@@ -252,8 +251,7 @@ type sharedExecutableInfo struct {
 func shouldSkipRuntimeExecDenyPath(
 	path string,
 	token string,
-	allowBlockingCritical bool,
-	silenceSharedBinaryWarning []string,
+	acceptSharedBinaryCannotRuntimeDeny []string,
 	denyTokens map[string]bool,
 	sharedCache map[string]sharedExecutableInfo,
 	debug bool,
@@ -287,37 +285,61 @@ func shouldSkipRuntimeExecDenyPath(
 		return false, ""
 	}
 
-	// User has opted into forcing the block even with critical collisions.
-	if allowBlockingCritical {
-		return false, ""
-	}
-
-	// User has acknowledged this specific command cannot be blocked and wants
-	// the warning silenced. Normalize both sides to basename so that
-	// "dd" and "/usr/bin/dd" are treated as equivalent — the user should
-	// not have to guess which form to use.
+	// User has explicitly accepted that this command cannot be runtime-blocked.
+	// Skip silently — no diagnostic. Normalize both sides to basename so that
+	// "dd" and "/usr/bin/dd" are treated as equivalent.
 	tokenBase := filepath.Base(token)
-	for _, silenced := range silenceSharedBinaryWarning {
-		if silenced == token || filepath.Base(silenced) == tokenBase {
+	for _, accepted := range acceptSharedBinaryCannotRuntimeDeny {
+		if accepted == token || filepath.Base(accepted) == tokenBase {
 			return true, ""
 		}
 	}
 
-	// Format the collision list: in non-debug mode truncate to the first 3
-	// items and hint at --debug for the full list; debug shows all of them.
+	// Format the collision list.
+	// Non-debug: show the first maxShort critical names (highest priority first);
+	// the "+N more" count covers all remaining inode-sharers — not just critical
+	// ones — so the user sees the true blast radius.
+	// Debug: critical names first (priority order), then all other shared names
+	// appended alphabetically, with no repetitions.
 	const maxShort = 3
-	collisionSummary := strings.Join(criticalCollisions, " ")
-	if !debug && len(criticalCollisions) > maxShort {
-		collisionSummary = fmt.Sprintf("%s +%d more, use --debug for full list",
-			strings.Join(criticalCollisions[:maxShort], " "),
-			len(criticalCollisions)-maxShort,
-		)
+	var collisionSummary string
+	if debug {
+		criticalSet := make(map[string]bool, len(criticalCollisions))
+		for _, name := range criticalCollisions {
+			criticalSet[name] = true
+		}
+		var nonCritical []string
+		for _, name := range info.names {
+			if name == tokenBase || denyTokens[name] || criticalSet[name] {
+				continue
+			}
+			nonCritical = append(nonCritical, name)
+		}
+		slices.Sort(nonCritical)
+		all := make([]string, 0, len(criticalCollisions)+len(nonCritical))
+		all = append(all, criticalCollisions...)
+		all = append(all, nonCritical...)
+		collisionSummary = strings.Join(all, " ")
+	} else {
+		shown := criticalCollisions
+		if len(shown) > maxShort {
+			shown = shown[:maxShort]
+		}
+		// remaining covers all other names sharing the inode minus the token
+		// itself and the names already shown in the excerpt.
+		remaining := len(info.names) - 1 - len(shown)
+		collisionSummary = strings.Join(shown, " ")
+		if remaining > 0 {
+			collisionSummary = fmt.Sprintf("%s +%d more, use --debug for full list",
+				collisionSummary, remaining)
+		}
 	}
 
-	return true, fmt.Sprintf(
-		"runtime exec deny skipped for %s (requested: %s): shared binary also implements "+
-			"critical commands [%s]. To force blocking add \"allowBlockingCritical\": true to "+
-			"your command config. To silence this warning add %q to \"silenceSharedBinaryWarning\".",
+	return false, fmt.Sprintf(
+		"runtime exec deny warning for %s (requested: %s): shared binary also implements "+
+			"critical commands [%s], which will be collaterally blocked. To skip runtime "+
+			"blocking of %q and silence this warning, add it to \"acceptSharedBinaryCannotRuntimeDeny\" "+
+			"in your command config.",
 		path,
 		token,
 		collisionSummary,
