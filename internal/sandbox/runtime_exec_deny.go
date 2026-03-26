@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 
 	"github.com/Use-Tusk/fence/internal/config"
 )
@@ -358,19 +357,6 @@ func getSharedExecutableInfo(path string, sharedCache map[string]sharedExecutabl
 	return info
 }
 
-type fileIdentity struct {
-	dev uint64
-	ino uint64
-}
-
-func statFileIdentity(path string) (fileIdentity, bool) {
-	var st syscall.Stat_t
-	if err := syscall.Stat(path, &st); err != nil {
-		return fileIdentity{}, false
-	}
-	return fileIdentity{dev: uint64(st.Dev), ino: uint64(st.Ino)}, true
-}
-
 func executableSearchDirs(path string) []string {
 	var dirs []string
 	seen := make(map[string]bool)
@@ -400,8 +386,8 @@ func executableSearchDirs(path string) []string {
 }
 
 func findSharedExecutableNames(path string) (bool, []string) {
-	targetIdentity, ok := statFileIdentity(path)
-	if !ok {
+	targetInfo, err := os.Stat(path)
+	if err != nil {
 		return false, nil
 	}
 
@@ -416,11 +402,11 @@ func findSharedExecutableNames(path string) (bool, []string) {
 				continue
 			}
 			candidate := filepath.Join(dir, entry.Name())
-			candidateIdentity, ok := statFileIdentity(candidate)
-			if !ok {
+			candidateInfo, err := os.Stat(candidate)
+			if err != nil {
 				continue
 			}
-			if candidateIdentity != targetIdentity {
+			if !os.SameFile(targetInfo, candidateInfo) {
 				continue
 			}
 			nameSet[entry.Name()] = true
