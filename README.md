@@ -19,7 +19,7 @@ fence -t code npm install  # → uses 'code' template with npm/pypi/etc allowed
 fence -c "rm -rf /"  # → blocked by command deny rules
 ```
 
-You can also think of Fence as a permission manager for your CLI agents. **Fence works with popular coding agents like Claude Code, Codex, Gemini CLI, Cursor Agent, OpenCode, Factory (Droid) CLI, etc.** See [agents.md](./docs/agents.md) for more details.
+You can also think of Fence as a permission manager for your CLI agents. **Fence works with popular coding agents like Claude Code, Codex, Amp, Gemini CLI, Cursor Agent, OpenCode, Factory (Droid) CLI, etc.** See [agents.md](./docs/agents.md) for more details.
 
 ## Install
 

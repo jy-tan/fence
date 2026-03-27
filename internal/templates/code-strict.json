@@ -11,6 +11,8 @@
       "~/Library/Preferences",
 
       // AI coding tool configs (need to read their own settings)
+      "~/.amp",
+      "~/.local/share/amp",
       "~/.claude",
       "~/.claude.json",
       "~/.codex",

@@ -38,7 +38,7 @@ fence --settings ./fence.json <agent-command>
 
 ## Popular CLI coding agents
 
-We provide these template for guardrailing CLI coding agents:
+We provide these templates for guardrailing CLI coding agents:
 
 - [`code`](/internal/templates/code.json) - Strict deny-by-default network filtering via proxy. Works with agents that respect `HTTP_PROXY`. Blocks cloud metadata APIs, protects secrets, restricts dangerous commands.
 - [`code-relaxed`](/internal/templates/code-relaxed.json) - Allows direct network connections for agents that ignore `HTTP_PROXY`. Same filesystem/command protections as `code`, but `deniedDomains` only enforced for proxy-respecting apps.
@@ -51,6 +51,7 @@ You can use it like `fence -t code -- claude`.
 | Codex | `code` | - |
 | Gemini CLI | `code` | - |
 | OpenCode | `code` | - |
+| Amp | `code` | - |
 | Droid | `code` | - |
 | Pi | `code` | - |
 | Cursor Agent | `code-relaxed` | Node.js/undici doesn't respect HTTP_PROXY |

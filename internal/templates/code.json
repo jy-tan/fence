@@ -19,6 +19,10 @@
       "opencode.ai",
       "api.opencode.ai",
 
+      // Amp
+      "ampcode.com",
+      "*.ampcode.com",
+
       // Factory CLI (droid)
       "*.factory.ai",
       "api.workos.com",
@@ -76,6 +80,9 @@
       // Claude Code
       "~/.claude*",
       "~/.claude/**",
+
+      // Amp
+      "~/.amp",
 
       // Codex
       "~/.codex/**",
