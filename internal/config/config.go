@@ -172,7 +172,7 @@ func ResolveDefaultConfigPath() string {
 	home, _ := os.UserHomeDir()
 	configDir, _ := os.UserConfigDir()
 
-	return resolveDefaultConfigPathFor(runtime.GOOS, home, configDir, pathExists)
+	return resolveDefaultConfigPathFor(runtime.GOOS, home, configDir, configFileExists)
 }
 
 // ResolveConfigPath returns the config path fence should load when --settings is
@@ -190,7 +190,7 @@ func ResolveConfigPath(startDir string) (string, error) {
 	home, _ := os.UserHomeDir()
 	configDir, _ := os.UserConfigDir()
 
-	return resolveConfigPathFor(runtime.GOOS, home, configDir, startDir, pathExists)
+	return resolveConfigPathFor(runtime.GOOS, home, configDir, startDir, configFileExists)
 }
 
 func defaultConfigPathFor(goos, home, userConfigDir string) string {
@@ -255,9 +255,9 @@ func legacyConfigPaths(goos, home string) []string {
 	return append(paths, filepath.Join(home, ".fence.json"))
 }
 
-func pathExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+func configFileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func findNearestProjectConfigPath(startDir string, exists func(string) bool) (string, error) {

@@ -645,6 +645,25 @@ func TestResolveDefaultConfigPathFor(t *testing.T) {
 	}
 }
 
+func TestResolveDefaultConfigPathFor_IgnoresCanonicalDirectory(t *testing.T) {
+	homeDir := t.TempDir()
+	configDir := filepath.Join(homeDir, ".config")
+	canonicalPath := filepath.Join(configDir, "fence", "fence.json")
+	legacyPath := filepath.Join(homeDir, ".fence.json")
+
+	if err := os.MkdirAll(canonicalPath, 0o750); err != nil {
+		t.Fatalf("failed to create canonical config directory: %v", err)
+	}
+	if err := os.WriteFile(legacyPath, []byte(`{}`), 0o600); err != nil {
+		t.Fatalf("failed to write legacy config file: %v", err)
+	}
+
+	got := resolveDefaultConfigPathFor("linux", homeDir, configDir, configFileExists)
+	if got != legacyPath {
+		t.Fatalf("resolveDefaultConfigPathFor() = %q, want %q", got, legacyPath)
+	}
+}
+
 func TestResolveConfigPathFor(t *testing.T) {
 	linuxHome := filepath.Join(string(os.PathSeparator), "home", "alice")
 	linuxConfigDir := filepath.Join(linuxHome, ".config")
@@ -719,6 +738,31 @@ func TestResolveConfigPathFor(t *testing.T) {
 				t.Fatalf("resolveConfigPathFor() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFindNearestProjectConfigPath_IgnoresFenceJSONDirectories(t *testing.T) {
+	rootDir := t.TempDir()
+	rootConfig := filepath.Join(rootDir, "fence.json")
+	projectDir := filepath.Join(rootDir, "project")
+	nestedDir := filepath.Join(projectDir, "pkg")
+
+	if err := os.WriteFile(rootConfig, []byte(`{}`), 0o600); err != nil {
+		t.Fatalf("failed to write root config: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectDir, "fence.json"), 0o750); err != nil {
+		t.Fatalf("failed to create directory named fence.json: %v", err)
+	}
+	if err := os.MkdirAll(nestedDir, 0o750); err != nil {
+		t.Fatalf("failed to create nested directory: %v", err)
+	}
+
+	got, err := findNearestProjectConfigPath(nestedDir, configFileExists)
+	if err != nil {
+		t.Fatalf("findNearestProjectConfigPath() error = %v", err)
+	}
+	if got != rootConfig {
+		t.Fatalf("findNearestProjectConfigPath() = %q, want %q", got, rootConfig)
 	}
 }
 
