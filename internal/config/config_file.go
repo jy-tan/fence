@@ -38,11 +38,18 @@ type cleanFilesystemConfig struct {
 	AllowGitConfig  bool     `json:"allowGitConfig,omitempty"`
 }
 
+// cleanDevicesConfig is used for JSON output with omitempty to skip empty fields.
+type cleanDevicesConfig struct {
+	Mode  DeviceMode `json:"mode,omitempty"`
+	Allow []string   `json:"allow,omitempty"`
+}
+
 // cleanCommandConfig is used for JSON output with omitempty to skip empty fields.
 type cleanCommandConfig struct {
-	Deny        []string `json:"deny,omitempty"`
-	Allow       []string `json:"allow,omitempty"`
-	UseDefaults *bool    `json:"useDefaults,omitempty"`
+	Deny                                []string `json:"deny,omitempty"`
+	Allow                               []string `json:"allow,omitempty"`
+	UseDefaults                         *bool    `json:"useDefaults,omitempty"`
+	AcceptSharedBinaryCannotRuntimeDeny []string `json:"acceptSharedBinaryCannotRuntimeDeny,omitempty"`
 }
 
 // cleanSSHConfig is used for JSON output with omitempty to skip empty fields.
@@ -62,6 +69,7 @@ type cleanConfig struct {
 	ForceNewSession *bool                  `json:"forceNewSession,omitempty"`
 	Network         *cleanNetworkConfig    `json:"network,omitempty"`
 	Filesystem      *cleanFilesystemConfig `json:"filesystem,omitempty"`
+	Devices         *cleanDevicesConfig    `json:"devices,omitempty"`
 	Command         *cleanCommandConfig    `json:"command,omitempty"`
 	SSH             *cleanSSHConfig        `json:"ssh,omitempty"`
 }
@@ -105,11 +113,21 @@ func MarshalConfigJSON(cfg *Config) ([]byte, error) {
 		clean.Filesystem = &filesystem
 	}
 
+	// Devices config - only include if non-empty
+	devices := cleanDevicesConfig{
+		Mode:  cfg.Devices.Mode,
+		Allow: cfg.Devices.Allow,
+	}
+	if !isDevicesEmpty(devices) {
+		clean.Devices = &devices
+	}
+
 	// Command config - only include if non-empty
 	command := cleanCommandConfig{
-		Deny:        cfg.Command.Deny,
-		Allow:       cfg.Command.Allow,
-		UseDefaults: cfg.Command.UseDefaults,
+		Deny:                                cfg.Command.Deny,
+		Allow:                               cfg.Command.Allow,
+		UseDefaults:                         cfg.Command.UseDefaults,
+		AcceptSharedBinaryCannotRuntimeDeny: cfg.Command.AcceptSharedBinaryCannotRuntimeDeny,
 	}
 	if !isCommandEmpty(command) {
 		clean.Command = &command
@@ -153,10 +171,15 @@ func isFilesystemEmpty(f cleanFilesystemConfig) bool {
 		!f.AllowGitConfig
 }
 
+func isDevicesEmpty(d cleanDevicesConfig) bool {
+	return d.Mode == "" && len(d.Allow) == 0
+}
+
 func isCommandEmpty(c cleanCommandConfig) bool {
 	return len(c.Deny) == 0 &&
 		len(c.Allow) == 0 &&
-		c.UseDefaults == nil
+		c.UseDefaults == nil &&
+		len(c.AcceptSharedBinaryCannotRuntimeDeny) == 0
 }
 
 func isSSHEmpty(s cleanSSHConfig) bool {

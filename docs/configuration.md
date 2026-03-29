@@ -126,6 +126,22 @@ Relative paths are resolved relative to the config file's directory. The extende
 
 Extends chains are supported—a file can extend `@base`, a template, or another file, and another file can extend that result. Circular extends are detected and rejected. Maximum chain depth is 10.
 
+### Inspecting the active config
+
+Use `--show` to inspect the exact config Fence would apply without running a command:
+
+```bash
+fence --show
+fence -t code --show
+fence --settings ./custom.json --show
+```
+
+`--show` prints the config resolution chain to `stderr` and the fully resolved config to `stdout` as plain JSON. That means you can pipe the JSON to tools like `jq` without losing the human-readable chain:
+
+```bash
+fence --show | jq '.network'
+```
+
 See [templates.md](templates.md) for available templates.
 
 ## Network Configuration

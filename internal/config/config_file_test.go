@@ -54,7 +54,7 @@ func TestWriteConfigFile(t *testing.T) {
 	assert.Contains(t, string(data), `"curl"`)
 }
 
-func TestMarshalConfigJSON_IncludesExtendedFilesystemAndSSH(t *testing.T) {
+func TestMarshalConfigJSON_IncludesExtendedSections(t *testing.T) {
 	wslInterop := false
 	forceNewSession := true
 	cfg := &Config{}
@@ -64,6 +64,9 @@ func TestMarshalConfigJSON_IncludesExtendedFilesystemAndSSH(t *testing.T) {
 	cfg.Filesystem.WSLInterop = &wslInterop
 	cfg.Filesystem.AllowRead = []string{"/workspace"}
 	cfg.Filesystem.AllowExecute = []string{"/usr/bin/bash"}
+	cfg.Devices.Mode = DeviceModeMinimal
+	cfg.Devices.Allow = []string{"/dev/null"}
+	cfg.Command.AcceptSharedBinaryCannotRuntimeDeny = []string{"python"}
 	cfg.SSH.AllowedHosts = []string{"*.example.com"}
 	cfg.SSH.AllowedCommands = []string{"ls"}
 	cfg.SSH.InheritDeny = true
@@ -80,6 +83,11 @@ func TestMarshalConfigJSON_IncludesExtendedFilesystemAndSSH(t *testing.T) {
 	assert.Contains(t, output, `"/workspace"`)
 	assert.Contains(t, output, `"allowExecute": [`)
 	assert.Contains(t, output, `"/usr/bin/bash"`)
+	assert.Contains(t, output, `"devices": {`)
+	assert.Contains(t, output, `"mode": "minimal"`)
+	assert.Contains(t, output, `"/dev/null"`)
+	assert.Contains(t, output, `"acceptSharedBinaryCannotRuntimeDeny": [`)
+	assert.Contains(t, output, `"python"`)
 	assert.Contains(t, output, `"ssh": {`)
 	assert.Contains(t, output, `"allowedHosts": [`)
 	assert.Contains(t, output, `"*.example.com"`)

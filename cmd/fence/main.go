@@ -44,6 +44,7 @@ var (
 	forceNewSession bool
 	exitCode        int
 	showVersion     bool
+	showConfig      bool
 	linuxFeatures   bool
 )
 
@@ -75,6 +76,8 @@ Examples:
   fence --settings config.json npm install
   fence -t npm-install npm install        # Use built-in npm-install template
   fence -t ai-coding-agents -- agent-cmd  # Use AI coding agents template
+  fence --show | jq '.network'            # Print the active config as JSON
+  fence -t code --show                    # Inspect a template without running a command
   fence -p 3000 -c "npm run dev"          # Expose port 3000 for inbound connections
   fence --shell user -c "nvim"            # Use validated $SHELL for command execution
   fence --list-templates                  # Show available built-in templates
@@ -111,9 +114,13 @@ Configuration file format:
 	rootCmd.Flags().BoolVar(&shellLogin, "shell-login", false, "Run shell as login shell (-lc). Use with --shell user for shell init compatibility")
 	rootCmd.Flags().BoolVar(&forceNewSession, "force-new-session", false, "Linux only: force bubblewrap --new-session even for interactive PTY sessions")
 	rootCmd.Flags().BoolVarP(&showVersion, "version", "v", false, "Show version information")
+	rootCmd.Flags().BoolVar(&showConfig, "show", false, "Show the active config chain and resolved JSON, then exit")
 	rootCmd.Flags().BoolVar(&linuxFeatures, "linux-features", false, "Show available Linux security features and exit")
 
 	rootCmd.Flags().SetInterspersed(true)
+	rootCmd.MarkFlagsMutuallyExclusive("show", "list-templates")
+	rootCmd.MarkFlagsMutuallyExclusive("show", "version")
+	rootCmd.MarkFlagsMutuallyExclusive("show", "linux-features")
 
 	rootCmd.AddCommand(newImportCmd())
 	rootCmd.AddCommand(newConfigCmd())
@@ -143,6 +150,16 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	if listTemplates {
 		printTemplates()
 		return nil
+	}
+
+	activeConfig, err := loadActiveConfigAudit("", settingsPath, templateName)
+	if err != nil {
+		return err
+	}
+	activeConfig.Config = applyCLIConfigOverrides(cmd, activeConfig.Config, forceNewSession)
+
+	if showConfig {
+		return writeShowOutput(os.Stdout, os.Stderr, activeConfig)
 	}
 
 	var command string
@@ -177,52 +194,18 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid shell options: %w", err)
 	}
 
-	// Load config: template > settings file > default path
-	var cfg *config.Config
-	var err error
+	cfg := activeConfig.Config
 
-	switch {
-	case templateName != "":
-		cfg, err = templates.Load(templateName)
-		if err != nil {
-			return fmt.Errorf("failed to load template: %w\nUse --list-templates to see available templates", err)
-		}
-		if debug {
-			fmt.Fprintf(os.Stderr, "[fence] Using template: %s\n", templateName)
-		}
-	case settingsPath != "":
-		cfg, err = config.Load(settingsPath)
-		if err != nil {
-			return fmt.Errorf("failed to load config: %w", err)
-		}
-		absPath, _ := filepath.Abs(settingsPath)
-		cfg, err = templates.ResolveExtendsFromPath(cfg, absPath)
-		if err != nil {
-			return fmt.Errorf("failed to resolve extends: %w", err)
-		}
-	default:
-		configPath, err := config.ResolveConfigPath("")
-		if err != nil {
-			return fmt.Errorf("failed to resolve config path: %w", err)
-		}
-		cfg, err = config.Load(configPath)
-		if err != nil {
-			return fmt.Errorf("failed to load config: %w", err)
-		}
-		if cfg == nil {
-			if debug {
-				fmt.Fprintf(os.Stderr, "[fence] No config found at %s, using default (block all network)\n", configPath)
-			}
-			cfg = config.Default()
-		} else {
-			cfg, err = templates.ResolveExtendsFromPath(cfg, configPath)
-			if err != nil {
-				return fmt.Errorf("failed to resolve extends: %w", err)
-			}
+	if debug {
+		switch activeConfig.Root.Kind {
+		case config.ResolutionStepKindTemplate:
+			fmt.Fprintf(os.Stderr, "[fence] Using template: %s\n", activeConfig.Root.Name)
+		case config.ResolutionStepKindFile:
+			fmt.Fprintf(os.Stderr, "[fence] Using config file: %s\n", activeConfig.Root.Path)
+		case config.ResolutionStepKindDefault:
+			fmt.Fprintf(os.Stderr, "[fence] No config found at %s, using default (block all network)\n", activeConfig.Root.Path)
 		}
 	}
-
-	cfg = applyCLIConfigOverrides(cmd, cfg, forceNewSession)
 
 	manager := sandbox.NewManager(cfg, debug, monitor)
 	manager.SetExposedPorts(ports)

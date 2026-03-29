@@ -17,18 +17,60 @@ const (
 	baseExtendsToken = "@base"
 )
 
+// ResolutionStepKind describes one item in an extends resolution chain.
+type ResolutionStepKind string
+
+const (
+	ResolutionStepKindTemplate ResolutionStepKind = "template"
+	ResolutionStepKindFile     ResolutionStepKind = "file"
+	ResolutionStepKindSpecial  ResolutionStepKind = "special"
+	ResolutionStepKindDefault  ResolutionStepKind = "default"
+)
+
+// ResolutionStep describes one resolved extends target in the order it was applied.
+type ResolutionStep struct {
+	Kind ResolutionStepKind
+	Name string
+	Path string
+}
+
+// ResolutionTrace contains the resolved config plus the extends steps used to build it.
+type ResolutionTrace struct {
+	Config *Config
+	Steps  []ResolutionStep
+}
+
 // TemplateLoader loads a template config without resolving its extends chain.
 type TemplateLoader func(name string) (*Config, error)
 
 // ResolveExtends resolves the extends chain for a config.
 func ResolveExtends(cfg *Config, loadTemplate TemplateLoader) (*Config, error) {
-	return resolveExtends(cfg, resolveOptions{loadTemplate: loadTemplate})
+	trace, err := ResolveExtendsTrace(cfg, loadTemplate)
+	if err != nil {
+		return nil, err
+	}
+	return trace.Config, nil
 }
 
 // ResolveExtendsWithBaseDir resolves the extends chain for a config, using
 // baseDir to resolve relative file paths.
 func ResolveExtendsWithBaseDir(cfg *Config, baseDir string, loadTemplate TemplateLoader) (*Config, error) {
-	return resolveExtends(cfg, resolveOptions{
+	trace, err := ResolveExtendsWithBaseDirTrace(cfg, baseDir, loadTemplate)
+	if err != nil {
+		return nil, err
+	}
+	return trace.Config, nil
+}
+
+// ResolveExtendsTrace resolves the extends chain for a config and records each step.
+func ResolveExtendsTrace(cfg *Config, loadTemplate TemplateLoader) (*ResolutionTrace, error) {
+	return resolveExtendsTrace(cfg, resolveOptions{loadTemplate: loadTemplate})
+}
+
+// ResolveExtendsWithBaseDirTrace resolves the extends chain for a config, using
+// baseDir to resolve relative file paths, and records each step.
+func ResolveExtendsWithBaseDirTrace(cfg *Config, baseDir string, loadTemplate TemplateLoader) (*ResolutionTrace, error) {
+	return resolveExtendsTrace(cfg, resolveOptions{
 		baseDir:      baseDir,
 		loadTemplate: loadTemplate,
 	})
@@ -38,7 +80,17 @@ func ResolveExtendsWithBaseDir(cfg *Config, baseDir string, loadTemplate Templat
 // sourcePath. The source path is recorded in cycle detection so symlink aliases
 // and direct references back to the original file are caught reliably.
 func ResolveExtendsFromPath(cfg *Config, sourcePath string, loadTemplate TemplateLoader) (*Config, error) {
-	return resolveExtends(cfg, resolveOptions{
+	trace, err := ResolveExtendsFromPathTrace(cfg, sourcePath, loadTemplate)
+	if err != nil {
+		return nil, err
+	}
+	return trace.Config, nil
+}
+
+// ResolveExtendsFromPathTrace resolves the extends chain for a config loaded
+// from sourcePath and records each step.
+func ResolveExtendsFromPathTrace(cfg *Config, sourcePath string, loadTemplate TemplateLoader) (*ResolutionTrace, error) {
+	return resolveExtendsTrace(cfg, resolveOptions{
 		sourcePath:   sourcePath,
 		loadTemplate: loadTemplate,
 	})
@@ -54,11 +106,12 @@ type resolvedExtendsTarget struct {
 	cfg     *Config
 	baseDir string
 	ids     []string
+	steps   []ResolutionStep
 }
 
-func resolveExtends(cfg *Config, opts resolveOptions) (*Config, error) {
+func resolveExtendsTrace(cfg *Config, opts resolveOptions) (*ResolutionTrace, error) {
 	if cfg == nil || cfg.Extends == "" {
-		return cfg, nil
+		return &ResolutionTrace{Config: cfg}, nil
 	}
 
 	currentBaseDir := opts.baseDir
@@ -76,6 +129,7 @@ func resolveExtends(cfg *Config, opts resolveOptions) (*Config, error) {
 	}
 
 	chain := []*Config{cfg}
+	var steps []ResolutionStep
 	current := cfg
 	for depth := 0; current.Extends != ""; depth++ {
 		if depth >= maxExtendsDepth {
@@ -91,6 +145,7 @@ func resolveExtends(cfg *Config, opts resolveOptions) (*Config, error) {
 		}
 
 		chain = append(chain, target.cfg)
+		steps = append(steps, target.steps...)
 		current = target.cfg
 		currentBaseDir = target.baseDir
 	}
@@ -99,7 +154,10 @@ func resolveExtends(cfg *Config, opts resolveOptions) (*Config, error) {
 	for i := len(chain) - 2; i >= 0; i-- {
 		result = Merge(result, chain[i])
 	}
-	return result, nil
+	return &ResolutionTrace{
+		Config: result,
+		Steps:  steps,
+	}, nil
 }
 
 func resolveExtendsTarget(extends, baseDir string, loadTemplate TemplateLoader) (*resolvedExtendsTarget, error) {
@@ -121,6 +179,10 @@ func resolveExtendsTarget(extends, baseDir string, loadTemplate TemplateLoader) 
 		return &resolvedExtendsTarget{
 			cfg: cfg,
 			ids: []string{templateTargetID(extends)},
+			steps: []ResolutionStep{{
+				Kind: ResolutionStepKindTemplate,
+				Name: normalizeTemplateName(extends),
+			}},
 		}, nil
 	}
 }
@@ -135,8 +197,18 @@ func loadBaseExtendsTarget() (*resolvedExtendsTarget, error) {
 	target := &resolvedExtendsTarget{
 		cfg: Default(),
 		ids: []string{specialTargetID(baseExtendsToken)},
+		steps: []ResolutionStep{
+			{
+				Kind: ResolutionStepKindSpecial,
+				Name: baseExtendsToken,
+			},
+		},
 	}
 	if cfg == nil {
+		target.steps = append(target.steps, ResolutionStep{
+			Kind: ResolutionStepKindDefault,
+			Path: defaultConfigPath,
+		})
 		return target, nil
 	}
 
@@ -148,6 +220,10 @@ func loadBaseExtendsTarget() (*resolvedExtendsTarget, error) {
 	target.cfg = cfg
 	target.baseDir = filepath.Dir(defaultConfigPath)
 	target.ids = append(target.ids, fileID)
+	target.steps = append(target.steps, ResolutionStep{
+		Kind: ResolutionStepKindFile,
+		Path: defaultConfigPath,
+	})
 	return target, nil
 }
 
@@ -187,6 +263,10 @@ func loadFileExtendsTarget(path, baseDir string) (*resolvedExtendsTarget, error)
 		cfg:     &cfg,
 		baseDir: filepath.Dir(resolvedPath),
 		ids:     []string{fileID},
+		steps: []ResolutionStep{{
+			Kind: ResolutionStepKindFile,
+			Path: resolvedPath,
+		}},
 	}, nil
 }
 

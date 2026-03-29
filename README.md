@@ -91,9 +91,19 @@ fence -t code -- claude  # Runs Claude Code using `code` template config
 # Monitor mode (shows violations)
 fence -m npm install
 
+# Inspect the active config without running a command
+fence --show
+
 # Show all commands and options
 fence --help
 ```
+
+> [!TIP]
+> Need to pass flags to the command you are running? Use `--` to separate Fence flags from command flags, for example:
+>
+> ```bash
+> fence -- claude --dangerously-skip-permissions
+> ```
 
 ### Configuration
 

@@ -66,11 +66,21 @@ func List() []Template {
 // Load loads a template by name and returns the parsed config.
 // If the template uses "extends", the inheritance chain is resolved.
 func Load(name string) (*config.Config, error) {
+	trace, err := LoadTrace(name)
+	if err != nil {
+		return nil, err
+	}
+	return trace.Config, nil
+}
+
+// LoadTrace loads a template by name, resolves its extends chain, and records
+// each inheritance step.
+func LoadTrace(name string) (*config.ResolutionTrace, error) {
 	cfg, err := loadRaw(name)
 	if err != nil {
 		return nil, err
 	}
-	return config.ResolveExtends(cfg, loadRaw)
+	return config.ResolveExtendsTrace(cfg, loadRaw)
 }
 
 func loadRaw(name string) (*config.Config, error) {
@@ -121,5 +131,15 @@ func ResolveExtendsWithBaseDir(cfg *config.Config, baseDir string) (*config.Conf
 // ResolveExtendsFromPath resolves the extends field in a config loaded from
 // sourcePath, using the path itself in cycle detection.
 func ResolveExtendsFromPath(cfg *config.Config, sourcePath string) (*config.Config, error) {
-	return config.ResolveExtendsFromPath(cfg, sourcePath, loadRaw)
+	trace, err := ResolveExtendsFromPathTrace(cfg, sourcePath)
+	if err != nil {
+		return nil, err
+	}
+	return trace.Config, nil
+}
+
+// ResolveExtendsFromPathTrace resolves the extends field in a config loaded
+// from sourcePath and records each inheritance step.
+func ResolveExtendsFromPathTrace(cfg *config.Config, sourcePath string) (*config.ResolutionTrace, error) {
+	return config.ResolveExtendsFromPathTrace(cfg, sourcePath, loadRaw)
 }
