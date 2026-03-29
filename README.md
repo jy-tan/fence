@@ -95,7 +95,7 @@ fence --help
 
 ### Configuration
 
-Fence reads from (`~/.config/fence/fence.json`) by default. See [configuration reference](./docs/configuration.md) for more details.
+When `--settings` is not provided, Fence first looks for `fence.json` in the current directory and parent directories. If none is found, it falls back to `~/.config/fence/fence.json`. See [configuration reference](./docs/configuration.md) for more details.
 
 ```json
 {
@@ -104,6 +104,15 @@ Fence reads from (`~/.config/fence/fence.json`) by default. See [configuration r
   "network": { "allowedDomains": ["private.company.com"] },
   "filesystem": { "allowWrite": ["."] },
   "command": { "deny": ["git push", "npm publish"] }
+}
+```
+
+For repo-local overrides on top of each user's normal Fence config, use:
+
+```json
+{
+  "extends": "@base",
+  "filesystem": { "allowWrite": ["."] }
 }
 ```
 

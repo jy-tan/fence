@@ -326,40 +326,6 @@ func TestExtendsChainDepth(t *testing.T) {
 	}
 }
 
-func TestIsPath(t *testing.T) {
-	tests := []struct {
-		input string
-		want  bool
-	}{
-		// Template names (not paths)
-		{"code", false},
-		{"npm-install", false},
-		{"my-template", false},
-
-		// Absolute paths
-		{"/path/to/config.json", true},
-		{"/etc/fence/base.json", true},
-
-		// Relative paths
-		{"./base.json", true},
-		{"../shared/base.json", true},
-		{"configs/base.json", true},
-
-		// Windows-style paths
-		{"C:\\path\\to\\config.json", true},
-		{".\\base.json", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := isPath(tt.input)
-			if got != tt.want {
-				t.Errorf("isPath(%q) = %v, want %v", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestExtendsFilePath(t *testing.T) {
 	// Create temp directory for test files
 	tmpDir := t.TempDir()

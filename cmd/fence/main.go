@@ -61,10 +61,12 @@ func main() {
 		Long: `fence is a command-line tool that runs commands in a sandboxed environment
 with network and filesystem restrictions.
 
-By default, all network access is blocked. Configure allowed domains in
-$XDG_CONFIG_HOME/fence/fence.json on Linux (typically
-~/.config/fence/fence.json) or ~/.config/fence/fence.json on macOS, or pass
-a settings file with --settings, or use a built-in template with --template.
+By default, all network access is blocked. Fence first looks for a
+fence.json file in the current directory or any parent directory. If none is
+found, it falls back to $XDG_CONFIG_HOME/fence/fence.json on Linux (typically
+~/.config/fence/fence.json) or ~/.config/fence/fence.json on macOS. You can
+also pass a settings file with --settings or use a built-in template with
+--template.
 
 Examples:
   fence curl https://example.com          # Will be blocked (no domains allowed)
@@ -100,7 +102,7 @@ Configuration file format:
 
 	rootCmd.Flags().BoolVarP(&debug, "debug", "d", false, "Enable debug logging")
 	rootCmd.Flags().BoolVarP(&monitor, "monitor", "m", false, "Monitor and log sandbox violations (macOS: log stream, all: proxy denials)")
-	rootCmd.Flags().StringVarP(&settingsPath, "settings", "s", "", "Path to settings file (default: OS config directory)")
+	rootCmd.Flags().StringVarP(&settingsPath, "settings", "s", "", "Path to settings file (default: nearest project fence.json or OS config path)")
 	rootCmd.Flags().StringVarP(&templateName, "template", "t", "", "Use built-in template (e.g., ai-coding-agents, npm-install)")
 	rootCmd.Flags().BoolVar(&listTemplates, "list-templates", false, "List available templates")
 	rootCmd.Flags().StringVarP(&cmdString, "c", "c", "", "Run command string directly (like sh -c)")
@@ -194,12 +196,15 @@ func runCommand(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
 		absPath, _ := filepath.Abs(settingsPath)
-		cfg, err = templates.ResolveExtendsWithBaseDir(cfg, filepath.Dir(absPath))
+		cfg, err = templates.ResolveExtendsFromPath(cfg, absPath)
 		if err != nil {
 			return fmt.Errorf("failed to resolve extends: %w", err)
 		}
 	default:
-		configPath := config.ResolveDefaultConfigPath()
+		configPath, err := config.ResolveConfigPath("")
+		if err != nil {
+			return fmt.Errorf("failed to resolve config path: %w", err)
+		}
 		cfg, err = config.Load(configPath)
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
@@ -210,7 +215,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 			}
 			cfg = config.Default()
 		} else {
-			cfg, err = templates.ResolveExtendsWithBaseDir(cfg, filepath.Dir(configPath))
+			cfg, err = templates.ResolveExtendsFromPath(cfg, configPath)
 			if err != nil {
 				return fmt.Errorf("failed to resolve extends: %w", err)
 			}

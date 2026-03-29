@@ -2,8 +2,9 @@
 
 Fence reads settings from:
 
-- Linux: `$XDG_CONFIG_HOME/fence/fence.json` (typically `~/.config/fence/fence.json`)
-- macOS: `~/.config/fence/fence.json`
+- The nearest `fence.json` in the current directory or any parent directory
+- Otherwise, Linux: `$XDG_CONFIG_HOME/fence/fence.json` (typically `~/.config/fence/fence.json`)
+- Otherwise, macOS: `~/.config/fence/fence.json`
 - Legacy paths still supported: macOS `~/Library/Application Support/fence/fence.json` and `~/.fence.json`
 - Custom path: pass `--settings ./fence.json`
 
@@ -61,6 +62,28 @@ This config:
 - Inherits all settings from the `code` template (LLM providers, package registries, filesystem protections, command restrictions)
 - Adds `private-registry.company.com` to the allowed domains list
 
+### Extending your default user config
+
+Use the reserved `@base` keyword to layer project-specific overrides on top of the same user config file that Fence would normally load by default:
+
+```json
+{
+  "extends": "@base",
+  "network": {
+    "allowedDomains": ["private-registry.company.com"]
+  },
+  "filesystem": {
+    "allowWrite": ["."]
+  }
+}
+```
+
+This is useful for checked-in repo configs that should inherit each developer's normal Fence setup and then add project-specific rules.
+
+If the user does not have a default Fence config file yet, `@base` falls back to Fence's built-in default config before applying the override file.
+
+When Fence auto-discovers a project `fence.json`, `@base` is the recommended way to keep inheriting the user's normal config while adding project-specific overrides.
+
 ### Extending a file
 
 You can also extend other config files using absolute or relative paths:
@@ -87,7 +110,9 @@ Relative paths are resolved relative to the config file's directory. The extende
 
 ### Detection
 
-The `extends` value is treated as a file path if it contains `/` or `\`, or starts with `.`. Otherwise it's treated as a template name.
+- `@base` is a reserved keyword for the user's default Fence config
+- A value containing `/` or `\`, or starting with `.`, is treated as a file path
+- Any other value is treated as a template name
 
 ### Merge behavior
 
@@ -99,7 +124,7 @@ The `extends` value is treated as a file path if it contains `/` or `\`, or star
 
 ### Chaining
 
-Extends chains are supported—a file can extend a template, and another file can extend that file. Circular extends are detected and rejected. Maximum chain depth is 10.
+Extends chains are supported—a file can extend `@base`, a template, or another file, and another file can extend that result. Circular extends are detected and rejected. Maximum chain depth is 10.
 
 See [templates.md](templates.md) for available templates.
 
@@ -305,7 +330,7 @@ Some systems use multicall binaries: a single executable file that implements ma
 
 When fence tries to block a single-token rule at runtime, it resolves the path and denies it. If the target binary also implements critical shell commands (`ls`, `cat`, `head`, `tail`, `env`, `echo`, and similar), masking it will also block those commands as collateral damage. Fence detects this automatically using inode/device identity, blocks the binary anyway (the sandbox is never silently weaker than configured), and emits an actionable warning:
 
-```
+```text
 runtime exec deny warning for /usr/bin/busybox (requested: dd): shared binary also implements
 critical commands [cat head tail +103 more, use --debug for full list], which will be
 collaterally blocked. To skip runtime blocking of "dd" and silence this warning, add it to

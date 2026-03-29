@@ -2,8 +2,6 @@
 package fence
 
 import (
-	"path/filepath"
-
 	"github.com/Use-Tusk/fence/internal/config"
 	"github.com/Use-Tusk/fence/internal/platform"
 	"github.com/Use-Tusk/fence/internal/sandbox"
@@ -63,7 +61,7 @@ func LoadConfigResolved(path string) (*Config, error) {
 	if err != nil || cfg == nil {
 		return cfg, err
 	}
-	return templates.ResolveExtendsWithBaseDir(cfg, filepath.Dir(path))
+	return templates.ResolveExtendsFromPath(cfg, path)
 }
 
 // MergeConfigs combines a base config with an override config.
@@ -79,4 +77,11 @@ func DefaultConfigPath() string {
 // ResolveDefaultConfigPath returns the config path fence should load by default.
 func ResolveDefaultConfigPath() string {
 	return config.ResolveDefaultConfigPath()
+}
+
+// ResolveConfigPath returns the config path fence would load when --settings is
+// not provided, preferring the nearest project fence.json before the user
+// default config path.
+func ResolveConfigPath(startDir string) (string, error) {
+	return config.ResolveConfigPath(startDir)
 }
