@@ -46,14 +46,14 @@
         <li><a href="https://github.com/Use-Tusk/fence">GitHub Repository</a></li>
         <li><a href="latest.txt">Latest version (txt)</a></li>
         <li><a href="latest.json">Latest version (json)</a></li>
-        <li><a href="https://raw.githubusercontent.com/Use-Tusk/fence/main/install.sh" download>Download install.sh</a></li>
+        <li><a href="install.sh" download>Download install.sh</a></li>
     </ul>
 
     <script>
-        fetch('https://raw.githubusercontent.com/Use-Tusk/fence/main/install.sh')
-            .then(r => r.text())
-            .then(t => document.getElementById('script').textContent = t)
-            .catch(() => document.getElementById('script').textContent = 'Failed to load script');
+      fetch('install.sh')
+        .then(r => r.text())
+        .then(t => document.getElementById('script').textContent = t)
+        .catch(() => document.getElementById('script').textContent = 'Failed to load script');
     </script>
 </body>
 </html>
