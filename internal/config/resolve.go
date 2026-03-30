@@ -197,12 +197,10 @@ func loadBaseExtendsTarget() (*resolvedExtendsTarget, error) {
 	target := &resolvedExtendsTarget{
 		cfg: Default(),
 		ids: []string{specialTargetID(baseExtendsToken)},
-		steps: []ResolutionStep{
-			{
-				Kind: ResolutionStepKindSpecial,
-				Name: baseExtendsToken,
-			},
-		},
+		steps: []ResolutionStep{{
+			Kind: ResolutionStepKindSpecial,
+			Name: baseExtendsToken,
+		}},
 	}
 	if cfg == nil {
 		target.steps = append(target.steps, ResolutionStep{

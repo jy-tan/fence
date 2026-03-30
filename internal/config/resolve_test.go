@@ -150,6 +150,54 @@ func TestResolveExtends_RequiresTemplateLoader(t *testing.T) {
 	}
 }
 
+func TestResolveExtendsTrace_RecordsChainSteps(t *testing.T) {
+	basePath := configureDefaultConfigHome(t)
+	writeResolveTestFile(t, basePath, `{
+		"extends": "company",
+		"network": {
+			"allowedDomains": ["base.example.com"]
+		}
+	}`)
+
+	loadTemplate := func(name string) (*Config, error) {
+		if name != "company" {
+			return nil, fmt.Errorf("template %q not found", name)
+		}
+		return &Config{
+			Network: NetworkConfig{
+				AllowedDomains: []string{"template.example.com"},
+			},
+		}, nil
+	}
+
+	trace, err := ResolveExtendsTrace(&Config{
+		Extends: "@base",
+		Network: NetworkConfig{
+			AllowedDomains: []string{"child.example.com"},
+		},
+	}, loadTemplate)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if trace.Config == nil {
+		t.Fatal("expected resolved config")
+	}
+	if len(trace.Steps) != 3 {
+		t.Fatalf("expected 3 steps, got %d", len(trace.Steps))
+	}
+
+	if trace.Steps[0].Kind != ResolutionStepKindSpecial || trace.Steps[0].Name != "@base" {
+		t.Fatalf("expected first step to be @base, got %+v", trace.Steps[0])
+	}
+	if trace.Steps[1].Kind != ResolutionStepKindFile || trace.Steps[1].Path != basePath {
+		t.Fatalf("expected second step to be %q, got %+v", basePath, trace.Steps[1])
+	}
+	if trace.Steps[2].Kind != ResolutionStepKindTemplate || trace.Steps[2].Name != "company" {
+		t.Fatalf("expected third step to be template company, got %+v", trace.Steps[2])
+	}
+}
+
 func TestResolveExtendsFromPath_DetectsSymlinkCycles(t *testing.T) {
 	tmpDir := t.TempDir()
 	childPath := filepath.Join(tmpDir, "child.json")

@@ -8,12 +8,48 @@ import (
 
 	"github.com/Use-Tusk/fence/internal/config"
 	"github.com/Use-Tusk/fence/internal/templates"
+	"github.com/spf13/cobra"
 )
 
 type activeConfigAudit struct {
 	Root   config.ResolutionStep
 	Steps  []config.ResolutionStep
 	Config *config.Config
+}
+
+func newConfigShowCmd() *cobra.Command {
+	var (
+		settingsPath string
+		templateName string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "show",
+		Short: "Show the active fence config",
+		Long: `Show the active Fence config chain and fully resolved JSON.
+
+This command does not run a sandboxed command. By default it auto-discovers
+the nearest fence.json in the current directory tree and resolves inheritance.
+
+Examples:
+  fence config show
+  fence config show --settings ./custom.json
+  fence config show --template code`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			audit, err := loadActiveConfigAudit("", settingsPath, templateName)
+			if err != nil {
+				return err
+			}
+			return writeConfigShowOutput(cmd.OutOrStdout(), cmd.ErrOrStderr(), audit)
+		},
+	}
+
+	cmd.Flags().StringVarP(&settingsPath, "settings", "s", "", "Path to settings file (default: nearest project fence.json or OS config path)")
+	cmd.Flags().StringVarP(&templateName, "template", "t", "", "Show built-in template config (e.g., code)")
+	cmd.MarkFlagsMutuallyExclusive("settings", "template")
+
+	return cmd
 }
 
 func loadActiveConfigAudit(startDir, settingsPath, templateName string) (*activeConfigAudit, error) {
@@ -90,7 +126,7 @@ func resolveCLIPath(path, startDir string) (string, error) {
 	return filepath.Clean(absPath), nil
 }
 
-func writeShowOutput(stdout, stderr io.Writer, audit *activeConfigAudit) error {
+func writeConfigShowOutput(stdout, stderr io.Writer, audit *activeConfigAudit) error {
 	cfg := audit.Config
 	if cfg == nil {
 		cfg = config.Default()
@@ -104,6 +140,9 @@ func writeShowOutput(stdout, stderr io.Writer, audit *activeConfigAudit) error {
 	if _, err := io.WriteString(stderr, formatConfigChain(audit)); err != nil {
 		return err
 	}
+	if _, err := fmt.Fprintln(stderr); err != nil {
+		return err
+	}
 	_, err = fmt.Fprintln(stdout, string(data))
 	return err
 }
@@ -111,33 +150,58 @@ func writeShowOutput(stdout, stderr io.Writer, audit *activeConfigAudit) error {
 func formatConfigChain(audit *activeConfigAudit) string {
 	var output strings.Builder
 	output.WriteString("Active config chain:\n")
-	output.WriteString(describeResolutionStep(audit.Root))
+	output.WriteString(describeResolutionRoot(audit.Root))
 	output.WriteByte('\n')
 
-	for i, step := range audit.Steps {
-		output.WriteString(strings.Repeat("    ", i))
+	for i, depth := 0, 0; i < len(audit.Steps); depth++ {
+		label := describeResolutionStep(audit.Steps[i])
+		if audit.Steps[i].Kind == config.ResolutionStepKindSpecial && i+1 < len(audit.Steps) {
+			label = fmt.Sprintf("%s %s", audit.Steps[i].Name, describeResolutionStep(audit.Steps[i+1]))
+			i += 2
+		} else {
+			i++
+		}
+
+		output.WriteString(strings.Repeat("    ", depth))
 		output.WriteString("└── ")
-		output.WriteString(describeResolutionStep(step))
+		output.WriteString(label)
 		output.WriteByte('\n')
 	}
 
 	return output.String()
 }
 
+func describeResolutionRoot(step config.ResolutionStep) string {
+	switch step.Kind {
+	case config.ResolutionStepKindTemplate:
+		return fmt.Sprintf("builtin template: %s", step.Name)
+	case config.ResolutionStepKindFile:
+		return fmt.Sprintf("local file: %s", step.Path)
+	case config.ResolutionStepKindDefault:
+		return describeDefaultSource("builtin default", step.Path)
+	default:
+		return describeResolutionStep(step)
+	}
+}
+
 func describeResolutionStep(step config.ResolutionStep) string {
 	switch step.Kind {
 	case config.ResolutionStepKindTemplate:
-		return fmt.Sprintf("template: %s", step.Name)
+		return fmt.Sprintf("builtin template: %s", step.Name)
 	case config.ResolutionStepKindFile:
 		return fmt.Sprintf("file: %s", step.Path)
 	case config.ResolutionStepKindSpecial:
 		return step.Name
 	case config.ResolutionStepKindDefault:
-		if step.Path == "" {
-			return "built-in default"
-		}
-		return fmt.Sprintf("built-in default (no config loaded from %s)", step.Path)
+		return describeDefaultSource("builtin default", step.Path)
 	default:
 		return "unknown"
 	}
+}
+
+func describeDefaultSource(prefix, path string) string {
+	if path == "" {
+		return prefix
+	}
+	return fmt.Sprintf("%s (no config loaded from %s)", prefix, path)
 }

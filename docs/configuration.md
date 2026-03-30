@@ -128,18 +128,18 @@ Extends chains are supported—a file can extend `@base`, a template, or another
 
 ### Inspecting the active config
 
-Use `--show` to inspect the exact config Fence would apply without running a command:
+Use `fence config show` to inspect the exact config Fence would apply without running a command:
 
 ```bash
-fence --show
-fence -t code --show
-fence --settings ./custom.json --show
+fence config show
+fence config show --settings ./custom.json
+fence config show --template code
 ```
 
-`--show` prints the config resolution chain to `stderr` and the fully resolved config to `stdout` as plain JSON. That means you can pipe the JSON to tools like `jq` without losing the human-readable chain:
+`fence config show` prints the config resolution chain to `stderr` and the fully resolved config to `stdout` as plain JSON. That means you can pipe the JSON to tools like `jq` without losing the human-readable chain:
 
 ```bash
-fence --show | jq '.network'
+fence config show | jq '.network'
 ```
 
 See [templates.md](templates.md) for available templates.

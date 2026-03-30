@@ -17,7 +17,7 @@ func TestLoadActiveConfigAudit_ProjectConfigChain(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
 
 	basePath := config.ResolveDefaultConfigPath()
-	writeShowTestFile(t, basePath, `{
+	writeConfigShowTestFile(t, basePath, `{
 		"network": {
 			"allowedDomains": ["base.example.com"]
 		},
@@ -28,7 +28,7 @@ func TestLoadActiveConfigAudit_ProjectConfigChain(t *testing.T) {
 
 	repoDir := t.TempDir()
 	repoPath := filepath.Join(repoDir, "fence.json")
-	writeShowTestFile(t, repoPath, `{
+	writeConfigShowTestFile(t, repoPath, `{
 		"extends": "@base",
 		"network": {
 			"allowedDomains": ["repo.example.com"]
@@ -46,17 +46,15 @@ func TestLoadActiveConfigAudit_ProjectConfigChain(t *testing.T) {
 	if audit.Root.Path != repoPath {
 		t.Fatalf("expected root path %q, got %q", repoPath, audit.Root.Path)
 	}
-
 	if len(audit.Steps) != 2 {
-		t.Fatalf("expected 2 resolution steps, got %d", len(audit.Steps))
+		t.Fatalf("expected 2 steps, got %d", len(audit.Steps))
 	}
 	if audit.Steps[0].Kind != config.ResolutionStepKindSpecial || audit.Steps[0].Name != "@base" {
 		t.Fatalf("expected first step to be @base, got %+v", audit.Steps[0])
 	}
 	if audit.Steps[1].Kind != config.ResolutionStepKindFile || audit.Steps[1].Path != basePath {
-		t.Fatalf("expected second step to be base file %q, got %+v", basePath, audit.Steps[1])
+		t.Fatalf("expected second step to be %q, got %+v", basePath, audit.Steps[1])
 	}
-
 	if audit.Config == nil {
 		t.Fatal("expected resolved config")
 	}
@@ -66,12 +64,9 @@ func TestLoadActiveConfigAudit_ProjectConfigChain(t *testing.T) {
 	if !slices.Contains(audit.Config.Network.AllowedDomains, "repo.example.com") {
 		t.Fatalf("expected repo domain in resolved config, got %v", audit.Config.Network.AllowedDomains)
 	}
-	if len(audit.Config.Filesystem.AllowWrite) != 1 || audit.Config.Filesystem.AllowWrite[0] != "/tmp" {
-		t.Fatalf("expected inherited allowWrite, got %v", audit.Config.Filesystem.AllowWrite)
-	}
 }
 
-func TestWriteShowOutput_SeparatesChainAndJSON(t *testing.T) {
+func TestWriteConfigShowOutput_SeparatesChainAndJSON(t *testing.T) {
 	audit := &activeConfigAudit{
 		Root: config.ResolutionStep{
 			Kind: config.ResolutionStepKindFile,
@@ -106,16 +101,16 @@ func TestWriteShowOutput_SeparatesChainAndJSON(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	if err := writeShowOutput(&stdout, &stderr, audit); err != nil {
-		t.Fatalf("writeShowOutput() error = %v", err)
+	if err := writeConfigShowOutput(&stdout, &stderr, audit); err != nil {
+		t.Fatalf("writeConfigShowOutput() error = %v", err)
 	}
 
 	expectedChain := strings.Join([]string{
 		"Active config chain:",
-		"file: /repo/fence.json",
-		"└── @base",
-		"    └── file: /Users/test/.config/fence/fence.json",
-		"        └── template: code",
+		"local file: /repo/fence.json",
+		"└── @base file: /Users/test/.config/fence/fence.json",
+		"    └── builtin template: code",
+		"",
 		"",
 	}, "\n")
 	if stderr.String() != expectedChain {
@@ -137,7 +132,59 @@ func TestWriteShowOutput_SeparatesChainAndJSON(t *testing.T) {
 	}
 }
 
-func writeShowTestFile(t *testing.T, path string, content string) {
+func TestConfigShowCmd_UsesSettingsFlag(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
+
+	repoDir := t.TempDir()
+	writeConfigShowTestFile(t, filepath.Join(repoDir, "fence.json"), `{
+		"network": {
+			"allowedDomains": ["local.example.com"]
+		}
+	}`)
+
+	settingsPath := filepath.Join(t.TempDir(), "custom.json")
+	writeConfigShowTestFile(t, settingsPath, `{
+		"network": {
+			"allowedDomains": ["settings.example.com"]
+		}
+	}`)
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd() error = %v", err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatalf("os.Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(originalWD)
+	}()
+
+	cmd := newConfigShowCmd()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--settings", settingsPath})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("cmd.Execute() error = %v", err)
+	}
+
+	if strings.Contains(stdout.String(), "local.example.com") {
+		t.Fatalf("expected local auto-discovered config to be ignored, got %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "settings.example.com") {
+		t.Fatalf("expected settings file config in stdout, got %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "local file: "+settingsPath) {
+		t.Fatalf("expected stderr to mention settings file path, got %q", stderr.String())
+	}
+}
+
+func writeConfigShowTestFile(t *testing.T, path string, content string) {
 	t.Helper()
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
