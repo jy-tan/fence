@@ -28,7 +28,7 @@ You can also think of Fence as a permission manager for your CLI agents. **Fence
 **macOS / Linux:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Use-Tusk/fence/main/install.sh | sh
+curl -fsSL https://cli.fencesandbox.com/install.sh | sh
 ```
 
 **Homebrew (macOS):**

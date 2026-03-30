@@ -64,27 +64,39 @@ jobs:
       contents: write
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout tagged commit for install.sh
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          path: tagged
+
       - name: Checkout gh-pages
         uses: actions/checkout@v4
         with:
           ref: gh-pages
+          path: gh-pages
 
-      - name: Update latest version
+      - name: Update latest version and install script
         run: |
+          cd gh-pages
+
           echo "${{ github.ref_name }}" > latest.txt
 
           cat > latest.json << EOF
           {
             "version": "${{ github.ref_name }}",
             "published_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "url": "https://github.com/Use-Tusk/fence/releases/tag/${{ github.ref_name }}"
+            "url": "https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
           }
           EOF
 
+          cp ../tagged/install.sh ./install.sh
+
       - name: Commit and push to gh-pages
         run: |
+          cd gh-pages
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add latest.txt latest.json
+          git add latest.txt latest.json install.sh
           git commit -m "Update latest version to ${{ github.ref_name }}" || echo "No changes to commit"
           git push origin gh-pages
