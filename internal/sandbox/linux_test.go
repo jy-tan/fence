@@ -96,6 +96,80 @@ func TestResolvePathForMount_NonexistentPath(t *testing.T) {
 	}
 }
 
+func TestExpandGlobPatterns_DoubleStarMatchesCurrentDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	nestedDir := filepath.Join(tmpDir, "nested", "deeper")
+
+	if err := os.MkdirAll(nestedDir, 0o700); err != nil {
+		t.Fatalf("failed to create nested directories: %v", err)
+	}
+
+	tests := []struct {
+		pattern string
+		matches []string
+	}{
+		{
+			pattern: "**/*.key",
+			matches: []string{
+				filepath.Join(tmpDir, "secret.key"),
+				filepath.Join(tmpDir, "nested", "deeper", "secret.key"),
+			},
+		},
+		{
+			pattern: "**/.env",
+			matches: []string{
+				filepath.Join(tmpDir, ".env"),
+				filepath.Join(tmpDir, "nested", "deeper", ".env"),
+			},
+		},
+		{
+			pattern: "**/.env.*",
+			matches: []string{
+				filepath.Join(tmpDir, ".env.local"),
+				filepath.Join(tmpDir, "nested", "deeper", ".env.production"),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		for _, path := range tt.matches {
+			if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+				t.Fatalf("failed to create test file %q: %v", path, err)
+			}
+		}
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("failed to chdir to temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(originalWD)
+	}()
+
+	for _, tt := range tests {
+		t.Run(tt.pattern, func(t *testing.T) {
+			got := ExpandGlobPatterns([]string{tt.pattern})
+			gotSet := make(map[string]bool, len(got))
+			for _, path := range got {
+				gotSet[path] = true
+			}
+
+			if len(gotSet) != len(tt.matches) {
+				t.Fatalf("ExpandGlobPatterns(%s) returned %v, want exactly %v", tt.pattern, got, tt.matches)
+			}
+			for _, want := range tt.matches {
+				if !gotSet[want] {
+					t.Fatalf("ExpandGlobPatterns(%s) missing %q in %v", tt.pattern, want, got)
+				}
+			}
+		})
+	}
+}
+
 func TestWrapCommandLinuxWithOptions_DropsShellFromRuntimeDenyMounts(t *testing.T) {
 	if _, err := exec.LookPath("bwrap"); err != nil {
 		t.Skip("bwrap not available")

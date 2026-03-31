@@ -12,10 +12,19 @@ import (
 )
 
 type activeConfigAudit struct {
-	Root   config.ResolutionStep
-	Steps  []config.ResolutionStep
-	Config *config.Config
+	Root       config.ResolutionStep
+	RootSource activeConfigRootSource
+	Steps      []config.ResolutionStep
+	Config     *config.Config
 }
+
+type activeConfigRootSource string
+
+const (
+	activeConfigRootSourceProject  activeConfigRootSource = "project"
+	activeConfigRootSourceUser     activeConfigRootSource = "user"
+	activeConfigRootSourceSettings activeConfigRootSource = "settings"
+)
 
 func newConfigShowCmd() *cobra.Command {
 	var (
@@ -72,17 +81,21 @@ func loadActiveConfigAudit(startDir, settingsPath, templateName string) (*active
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve settings path: %w", err)
 		}
-		return loadFileConfigAudit(resolvedPath)
+		return loadFileConfigAudit(resolvedPath, activeConfigRootSourceSettings)
 	default:
 		configPath, err := config.ResolveConfigPath(startDir)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve config path: %w", err)
 		}
-		return loadFileConfigAudit(configPath)
+		rootSource := activeConfigRootSourceProject
+		if isUserConfigPath(configPath) {
+			rootSource = activeConfigRootSourceUser
+		}
+		return loadFileConfigAudit(configPath, rootSource)
 	}
 }
 
-func loadFileConfigAudit(path string) (*activeConfigAudit, error) {
+func loadFileConfigAudit(path string, rootSource activeConfigRootSource) (*activeConfigAudit, error) {
 	cfg, err := config.Load(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
@@ -93,7 +106,8 @@ func loadFileConfigAudit(path string) (*activeConfigAudit, error) {
 				Kind: config.ResolutionStepKindDefault,
 				Path: path,
 			},
-			Config: config.Default(),
+			RootSource: rootSource,
+			Config:     config.Default(),
 		}, nil
 	}
 
@@ -107,8 +121,9 @@ func loadFileConfigAudit(path string) (*activeConfigAudit, error) {
 			Kind: config.ResolutionStepKindFile,
 			Path: path,
 		},
-		Steps:  trace.Steps,
-		Config: trace.Config,
+		RootSource: rootSource,
+		Steps:      trace.Steps,
+		Config:     trace.Config,
 	}, nil
 }
 
@@ -150,7 +165,7 @@ func writeConfigShowOutput(stdout, stderr io.Writer, audit *activeConfigAudit) e
 func formatConfigChain(audit *activeConfigAudit) string {
 	var output strings.Builder
 	output.WriteString("Active config chain:\n")
-	output.WriteString(describeResolutionRoot(audit.Root))
+	output.WriteString(describeResolutionRoot(audit))
 	output.WriteByte('\n')
 
 	for i, depth := 0, 0; i < len(audit.Steps); depth++ {
@@ -171,12 +186,13 @@ func formatConfigChain(audit *activeConfigAudit) string {
 	return output.String()
 }
 
-func describeResolutionRoot(step config.ResolutionStep) string {
+func describeResolutionRoot(audit *activeConfigAudit) string {
+	step := audit.Root
 	switch step.Kind {
 	case config.ResolutionStepKindTemplate:
 		return fmt.Sprintf("builtin template: %s", step.Name)
 	case config.ResolutionStepKindFile:
-		return fmt.Sprintf("local file: %s", step.Path)
+		return fmt.Sprintf("%s: %s", describeRootFileLabel(audit.RootSource), step.Path)
 	case config.ResolutionStepKindDefault:
 		return describeDefaultSource("builtin default", step.Path)
 	default:
@@ -189,6 +205,9 @@ func describeResolutionStep(step config.ResolutionStep) string {
 	case config.ResolutionStepKindTemplate:
 		return fmt.Sprintf("builtin template: %s", step.Name)
 	case config.ResolutionStepKindFile:
+		if isUserConfigPath(step.Path) {
+			return fmt.Sprintf("user config: %s", step.Path)
+		}
 		return fmt.Sprintf("file: %s", step.Path)
 	case config.ResolutionStepKindSpecial:
 		return step.Name
@@ -199,9 +218,27 @@ func describeResolutionStep(step config.ResolutionStep) string {
 	}
 }
 
+func describeRootFileLabel(source activeConfigRootSource) string {
+	switch source {
+	case activeConfigRootSourceSettings:
+		return "settings file"
+	case activeConfigRootSourceUser:
+		return "user config"
+	default:
+		return "project config"
+	}
+}
+
 func describeDefaultSource(prefix, path string) string {
 	if path == "" {
 		return prefix
 	}
 	return fmt.Sprintf("%s (no config loaded from %s)", prefix, path)
+}
+
+func isUserConfigPath(path string) bool {
+	if path == "" {
+		return false
+	}
+	return filepath.Clean(path) == filepath.Clean(config.ResolveDefaultConfigPath())
 }

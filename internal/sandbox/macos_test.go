@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -256,6 +257,46 @@ func TestMacOS_DefaultDenyRead(t *testing.T) {
 				hasUserAllow := strings.Contains(profile, tt.allowRead[0])
 				if !hasUserAllow {
 					t.Errorf("user allowRead path %q not found in profile", tt.allowRead[0])
+				}
+			}
+		})
+	}
+}
+
+func TestGlobToRegex_DoubleStarMatchesCurrentDirectory(t *testing.T) {
+	tests := []struct {
+		pattern string
+		matches []string
+		rejects []string
+	}{
+		{
+			pattern: "**/*.key",
+			matches: []string{"secret.key", "nested/secret.key", "nested/deeper/secret.key"},
+			rejects: []string{"secret.pem"},
+		},
+		{
+			pattern: "**/.env",
+			matches: []string{".env", "nested/.env", "nested/deeper/.env"},
+			rejects: []string{".env.local"},
+		},
+		{
+			pattern: "**/.env.*",
+			matches: []string{".env.local", "nested/.env.production", "nested/deeper/.env.test"},
+			rejects: []string{".env"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.pattern, func(t *testing.T) {
+			regex := regexp.MustCompile(GlobToRegex(tt.pattern))
+			for _, path := range tt.matches {
+				if !regex.MatchString(path) {
+					t.Fatalf("GlobToRegex(%s) should match %q", tt.pattern, path)
+				}
+			}
+			for _, path := range tt.rejects {
+				if regex.MatchString(path) {
+					t.Fatalf("GlobToRegex(%s) should not match %q", tt.pattern, path)
 				}
 			}
 		})

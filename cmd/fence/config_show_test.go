@@ -46,6 +46,9 @@ func TestLoadActiveConfigAudit_ProjectConfigChain(t *testing.T) {
 	if audit.Root.Path != repoPath {
 		t.Fatalf("expected root path %q, got %q", repoPath, audit.Root.Path)
 	}
+	if audit.RootSource != activeConfigRootSourceProject {
+		t.Fatalf("expected root source %q, got %q", activeConfigRootSourceProject, audit.RootSource)
+	}
 	if len(audit.Steps) != 2 {
 		t.Fatalf("expected 2 steps, got %d", len(audit.Steps))
 	}
@@ -67,11 +70,17 @@ func TestLoadActiveConfigAudit_ProjectConfigChain(t *testing.T) {
 }
 
 func TestWriteConfigShowOutput_SeparatesChainAndJSON(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
+	basePath := config.ResolveDefaultConfigPath()
+
 	audit := &activeConfigAudit{
 		Root: config.ResolutionStep{
 			Kind: config.ResolutionStepKindFile,
 			Path: "/repo/fence.json",
 		},
+		RootSource: activeConfigRootSourceProject,
 		Steps: []config.ResolutionStep{
 			{
 				Kind: config.ResolutionStepKindSpecial,
@@ -79,7 +88,7 @@ func TestWriteConfigShowOutput_SeparatesChainAndJSON(t *testing.T) {
 			},
 			{
 				Kind: config.ResolutionStepKindFile,
-				Path: "/Users/test/.config/fence/fence.json",
+				Path: basePath,
 			},
 			{
 				Kind: config.ResolutionStepKindTemplate,
@@ -107,8 +116,8 @@ func TestWriteConfigShowOutput_SeparatesChainAndJSON(t *testing.T) {
 
 	expectedChain := strings.Join([]string{
 		"Active config chain:",
-		"local file: /repo/fence.json",
-		"└── @base file: /Users/test/.config/fence/fence.json",
+		"project config: /repo/fence.json",
+		"└── @base user config: " + basePath,
 		"    └── builtin template: code",
 		"",
 		"",
@@ -179,8 +188,41 @@ func TestConfigShowCmd_UsesSettingsFlag(t *testing.T) {
 	if !strings.Contains(stdout.String(), "settings.example.com") {
 		t.Fatalf("expected settings file config in stdout, got %q", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "local file: "+settingsPath) {
+	if !strings.Contains(stderr.String(), "settings file: "+settingsPath) {
 		t.Fatalf("expected stderr to mention settings file path, got %q", stderr.String())
+	}
+}
+
+func TestLoadActiveConfigAudit_FallsBackToUserConfig(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
+
+	basePath := config.ResolveDefaultConfigPath()
+	writeConfigShowTestFile(t, basePath, `{
+		"network": {
+			"allowedDomains": ["base.example.com"]
+		}
+	}`)
+
+	audit, err := loadActiveConfigAudit(t.TempDir(), "", "")
+	if err != nil {
+		t.Fatalf("loadActiveConfigAudit() error = %v", err)
+	}
+
+	if audit.Root.Kind != config.ResolutionStepKindFile {
+		t.Fatalf("expected root file config, got %q", audit.Root.Kind)
+	}
+	if audit.Root.Path != basePath {
+		t.Fatalf("expected root path %q, got %q", basePath, audit.Root.Path)
+	}
+	if audit.RootSource != activeConfigRootSourceUser {
+		t.Fatalf("expected root source %q, got %q", activeConfigRootSourceUser, audit.RootSource)
+	}
+
+	chain := formatConfigChain(audit)
+	if !strings.Contains(chain, "user config: "+basePath) {
+		t.Fatalf("expected chain to use user config label, got %q", chain)
 	}
 }
 
