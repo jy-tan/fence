@@ -15,6 +15,7 @@ type LinuxFeatures struct {
 	HasCapBPF       bool
 	HasCapRoot      bool
 	CanUnshareNet   bool
+	IsWSL           bool
 	KernelMajor     int
 	KernelMinor     int
 }

@@ -360,12 +360,24 @@ func getSharedExecutableInfo(path string, sharedCache map[string]sharedExecutabl
 func executableSearchDirs(path string) []string {
 	var dirs []string
 	seen := make(map[string]bool)
+
+	// On WSL, skip /mnt/* paths to avoid slow 9P filesystem scans.
+	// Windows directories in $PATH (e.g., /mnt/c/WINDOWS/system32) are mounted
+	// via 9P and have terrible I/O performance, causing multi-minute hangs
+	// when scanning thousands of files for shared executables.
+	features := DetectLinuxFeatures()
+	skipWSLMounts := features.IsWSL
+
 	add := func(dir string) {
 		dir = strings.TrimSpace(dir)
 		if dir == "" {
 			return
 		}
 		if seen[dir] {
+			return
+		}
+		// Skip /mnt/* paths on WSL to avoid 9P filesystem performance issues
+		if skipWSLMounts && strings.HasPrefix(dir, "/mnt/") {
 			return
 		}
 		if !directoryExists(dir) {

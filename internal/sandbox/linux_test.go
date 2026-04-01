@@ -432,3 +432,79 @@ func TestWrapCommandLinuxWithOptions_RootBindPrecedesSpecialMounts(t *testing.T)
 		t.Fatalf("expected root bind to appear before device passthroughs: %s", cmd)
 	}
 }
+
+// TestExecutableSearchDirs_SkipsWSLMountPaths verifies that on WSL, paths under /mnt/
+// are skipped to avoid slow 9P filesystem scans. This addresses issue #95 where
+// scanning /mnt/c/WINDOWS/system32 (4800+ files via 9P) causes 55+ second hangs.
+func TestExecutableSearchDirs_SkipsWSLMountPaths(t *testing.T) {
+	// Create a temp directory for the non-mnt binary
+	tmpDir := t.TempDir()
+	binDir := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("failed to create bin directory: %v", err)
+	}
+	binBinary := filepath.Join(binDir, "testbin")
+	if err := os.WriteFile(binBinary, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("failed to create bin binary: %v", err)
+	}
+
+	// Create actual /mnt/ paths to test the skip logic.
+	// We need real /mnt/ paths because the code checks HasPrefix(dir, "/mnt/").
+	mntDir := "/mnt/fence-test-wsl-skip"
+	if err := os.MkdirAll(mntDir, 0o755); err != nil {
+		t.Skipf("cannot create /mnt/ directory (requires root): %v", err)
+	}
+	defer os.RemoveAll(mntDir)
+
+	mntBinary := filepath.Join(mntDir, "test.exe")
+	if err := os.WriteFile(mntBinary, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("failed to create mock Windows binary: %v", err)
+	}
+
+	// Set PATH to include both directories
+	originalPath := os.Getenv("PATH")
+	defer os.Setenv("PATH", originalPath)
+	os.Setenv("PATH", mntDir+string(os.PathListSeparator)+binDir)
+
+	// Initialize the singleton and save original WSL state
+	_ = DetectLinuxFeatures()
+	originalIsWSL := detectedFeatures.IsWSL
+	defer func() { detectedFeatures.IsWSL = originalIsWSL }()
+
+	// Test with WSL mode enabled - should skip /mnt/ paths
+	detectedFeatures.IsWSL = true
+	dirs := executableSearchDirs(binBinary)
+
+	// The mntDir should NOT appear in the results when IsWSL=true
+	for _, dir := range dirs {
+		if dir == mntDir {
+			t.Errorf("expected /mnt/ paths to be skipped when IsWSL=true, but got dir: %s", dir)
+		}
+	}
+
+	// The binDir SHOULD appear in the results (it doesn't start with /mnt/)
+	foundBinDir := false
+	for _, dir := range dirs {
+		if dir == binDir {
+			foundBinDir = true
+			break
+		}
+	}
+	if !foundBinDir {
+		t.Errorf("expected binDir %q to be in results, got: %v", binDir, dirs)
+	}
+
+	// Test with WSL mode disabled - should include /mnt/ paths
+	detectedFeatures.IsWSL = false
+	dirsNoWSL := executableSearchDirs(binBinary)
+	foundMntDir := false
+	for _, dir := range dirsNoWSL {
+		if dir == mntDir {
+			foundMntDir = true
+			break
+		}
+	}
+	if !foundMntDir {
+		t.Errorf("expected mntDir %q to be in results when IsWSL=false, got: %v", mntDir, dirsNoWSL)
+	}
+}
