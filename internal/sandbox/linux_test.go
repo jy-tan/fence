@@ -440,10 +440,11 @@ func TestExecutableSearchDirs_SkipsWSLMountPaths(t *testing.T) {
 	// Create a temp directory for the non-mnt binary
 	tmpDir := t.TempDir()
 	binDir := filepath.Join(tmpDir, "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
+	if err := os.MkdirAll(binDir, 0o750); err != nil {
 		t.Fatalf("failed to create bin directory: %v", err)
 	}
 	binBinary := filepath.Join(binDir, "testbin")
+	// #nosec G306 -- test fixture requires executable permissions
 	if err := os.WriteFile(binBinary, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("failed to create bin binary: %v", err)
 	}
@@ -451,20 +452,23 @@ func TestExecutableSearchDirs_SkipsWSLMountPaths(t *testing.T) {
 	// Create actual /mnt/ paths to test the skip logic.
 	// We need real /mnt/ paths because the code checks HasPrefix(dir, "/mnt/").
 	mntDir := "/mnt/fence-test-wsl-skip"
-	if err := os.MkdirAll(mntDir, 0o755); err != nil {
+	if err := os.MkdirAll(mntDir, 0o750); err != nil {
 		t.Skipf("cannot create /mnt/ directory (requires root): %v", err)
 	}
-	defer os.RemoveAll(mntDir)
+	t.Cleanup(func() { _ = os.RemoveAll(mntDir) })
 
 	mntBinary := filepath.Join(mntDir, "test.exe")
+	// #nosec G306 -- test fixture requires executable permissions
 	if err := os.WriteFile(mntBinary, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("failed to create mock Windows binary: %v", err)
 	}
 
 	// Set PATH to include both directories
 	originalPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", originalPath)
-	os.Setenv("PATH", mntDir+string(os.PathListSeparator)+binDir)
+	t.Cleanup(func() { _ = os.Setenv("PATH", originalPath) })
+	if err := os.Setenv("PATH", mntDir+string(os.PathListSeparator)+binDir); err != nil {
+		t.Fatalf("failed to set PATH: %v", err)
+	}
 
 	// Initialize the singleton and save original WSL state
 	_ = DetectLinuxFeatures()
