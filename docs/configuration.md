@@ -344,16 +344,16 @@ Fence also enforces runtime executable deny for child processes:
 
 Some systems use multicall binaries: a single executable file that implements many commands via hardlinks or symlinks. Examples include busybox (`ls`, `cat`, `head`, `tail`, and hundreds more sharing one binary) and some coreutils builds.
 
-When fence tries to block a single-token rule at runtime, it resolves the path and denies it. If the target binary also implements critical shell commands (`ls`, `cat`, `head`, `tail`, `env`, `echo`, and similar), masking it will also block those commands as collateral damage. Fence detects this automatically using inode/device identity, blocks the binary anyway (the sandbox is never silently weaker than configured), and emits an actionable warning:
+When fence tries to block a single-token rule at runtime, it resolves the path and denies it. If the target binary also implements critical shell commands (`ls`, `cat`, `head`, `tail`, `env`, `echo`, and similar), masking it will also block those commands as collateral damage. Fence detects this automatically by probing the denied executable name, critical command names, and other relevant aliases across the search path using inode/device identity. It still blocks the binary anyway (the sandbox is never silently weaker than configured), and emits an actionable warning:
 
 ```text
 runtime exec deny warning for /usr/bin/busybox (requested: dd): shared binary also implements
-critical commands [cat head tail +103 more, use --debug for full list], which will be
+critical commands [cat head tail +3 more detected aliases, use --debug for expanded details], which will be
 collaterally blocked. To skip runtime blocking of "dd" and silence this warning, add it to
 "acceptSharedBinaryCannotRuntimeDeny" in your command config.
 ```
 
-Use `--debug` to expand the truncated list: critical commands appear first, followed by all other commands sharing the same binary.
+Use `--debug` to expand the truncated list: critical commands appear first, followed by other detected relevant aliases sharing the same binary.
 
 If the command genuinely cannot be isolated on this system and you accept that it will only be blocked at preflight, add it to `acceptSharedBinaryCannotRuntimeDeny`:
 

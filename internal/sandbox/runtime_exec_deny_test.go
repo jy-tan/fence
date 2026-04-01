@@ -161,12 +161,37 @@ func TestFindSharedExecutableNames_DetectsSharedBinary(t *testing.T) {
 		t.Fatalf("failed to create hard link: %v", err)
 	}
 
-	shared, names := findSharedExecutableNames(aPath)
+	shared, names := findSharedExecutableNames(aPath, "bbb")
 	if !shared {
 		t.Fatalf("expected file sharing an inode to be detected as shared, got names=%v", names)
 	}
 	if !slices.Contains(names, "aaa") || !slices.Contains(names, "bbb") {
 		t.Fatalf("expected both names in shared list, got %v", names)
+	}
+}
+
+func TestFindSharedExecutableNames_OnlyReportsProbedAliases(t *testing.T) {
+	tmpDir := t.TempDir()
+	aPath := filepath.Join(tmpDir, "aaa")
+	bPath := filepath.Join(tmpDir, "bbb")
+	cPath := filepath.Join(tmpDir, "ccc")
+
+	// #nosec G306 -- test fixture requires executable permissions
+	if err := os.WriteFile(aPath, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("failed to create executable: %v", err)
+	}
+	for _, path := range []string{bPath, cPath} {
+		if err := os.Link(aPath, path); err != nil {
+			t.Fatalf("failed to create hard link %s: %v", path, err)
+		}
+	}
+
+	shared, names := findSharedExecutableNames(aPath, "bbb")
+	if !shared {
+		t.Fatalf("expected file sharing an inode to be detected as shared, got names=%v", names)
+	}
+	if slices.Contains(names, "ccc") {
+		t.Fatalf("expected unprobed alias ccc to be omitted, got %v", names)
 	}
 }
 
@@ -179,7 +204,7 @@ func TestFindSharedExecutableNames_UniqueBinary(t *testing.T) {
 		t.Fatalf("failed to create executable: %v", err)
 	}
 
-	shared, names := findSharedExecutableNames(aPath)
+	shared, names := findSharedExecutableNames(aPath, "cat")
 	if shared {
 		t.Fatalf("expected unique file to not be detected as shared, got names=%v", names)
 	}

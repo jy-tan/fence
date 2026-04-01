@@ -329,16 +329,17 @@ Why this phase exists:
 
 Before masking an executable, Fence checks whether it is a multicall binary —
 a single file that implements many commands via hardlinks or symlinks (e.g.,
-busybox, some coreutils builds). It does this by comparing inode and device
-numbers across all directories in the search path.
+busybox, some coreutils builds). It does this by probing the denied executable
+name, critical command names, and other relevant aliases across the search path
+and comparing inode and device numbers for those candidates.
 
 If the target binary also implements critical shell commands (`ls`, `cat`,
 `head`, `tail`, `env`, `echo`, and similar), Fence still applies the mask —
 the sandbox is never silently weaker than what was configured — but emits a
 warning naming the collateral critical commands and the total number of
-additional commands that will be blocked. The warning is always emitted to
-stderr; `--debug` expands the truncated collision list to show every affected
-name (critical commands first, then the alphabetical remainder).
+additional detected aliases that will be blocked. The warning is always emitted
+to stderr; `--debug` expands the truncated collision list to show detected
+relevant aliases (critical commands first, then the alphabetical remainder).
 
 One `command` config field controls the opt-out:
 
