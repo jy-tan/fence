@@ -1,0 +1,34 @@
+version: 2
+
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+      timezone: "America/Los_Angeles"
+    cooldown:
+      semver-patch-days: 3
+      semver-minor-days: 7
+      semver-major-days: 21
+    open-pull-requests-limit: 3
+    groups:
+      go-deps:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:30"
+      timezone: "America/Los_Angeles"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    groups:
+      github-actions:
+        patterns:
+          - "*"
