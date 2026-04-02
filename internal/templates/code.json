@@ -35,6 +35,9 @@
       "data.charm.land",
       "catwalk.charm.sh",
 
+      // Copilot
+      "api.individual.githubcopilot.com",
+
       // Git hosting
       "github.com",
       "api.github.com",
@@ -107,6 +110,9 @@
 
       // Pi
       "~/.pi/**",
+
+      // Copilot
+      "~/.copilot/**",
 
       // Package manager caches
       "~/.npm/_cacache",
