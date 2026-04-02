@@ -369,3 +369,113 @@ func TestExpandMacOSTmpPaths(t *testing.T) {
 		})
 	}
 }
+
+func countRuleBlockOccurrences(rules []string, want ...string) int {
+	if len(want) == 0 || len(rules) < len(want) {
+		return 0
+	}
+
+	count := 0
+	for i := 0; i <= len(rules)-len(want); i++ {
+		matched := true
+		for j, line := range want {
+			if rules[i+j] != line {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			count++
+		}
+	}
+
+	return count
+}
+
+func TestGenerateWriteRules_DeduplicatesSharedAncestorMoveRules(t *testing.T) {
+	logTag := "test-log"
+	rules := generateWriteRules(nil, []string{
+		"/fence-issue-74-home/.pypirc",
+		"/fence-issue-74-home/.netrc",
+	}, false, logTag)
+
+	tests := []struct {
+		name  string
+		lines []string
+	}{
+		{
+			name: "shared ancestor literal",
+			lines: []string{
+				"(deny file-write-unlink",
+				`  (literal "/fence-issue-74-home")`,
+				`  (with message "test-log"))`,
+			},
+		},
+		{
+			name: "first denied file",
+			lines: []string{
+				"(deny file-write-unlink",
+				`  (subpath "/fence-issue-74-home/.pypirc")`,
+				`  (with message "test-log"))`,
+			},
+		},
+		{
+			name: "second denied file",
+			lines: []string{
+				"(deny file-write-unlink",
+				`  (subpath "/fence-issue-74-home/.netrc")`,
+				`  (with message "test-log"))`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		if got := countRuleBlockOccurrences(rules, tt.lines...); got != 1 {
+			t.Fatalf("%s count = %d, want 1\nRules:\n%s", tt.name, got, strings.Join(rules, "\n"))
+		}
+	}
+}
+
+func TestGenerateWriteRules_DeduplicatesExactDuplicateRules(t *testing.T) {
+	logTag := "test-log"
+	rules := generateWriteRules(nil, []string{
+		"/fence-issue-74-dup/.pypirc",
+		"/fence-issue-74-dup/.pypirc",
+	}, false, logTag)
+
+	tests := []struct {
+		name  string
+		lines []string
+	}{
+		{
+			name: "direct deny",
+			lines: []string{
+				"(deny file-write*",
+				`  (subpath "/fence-issue-74-dup/.pypirc")`,
+				`  (with message "test-log"))`,
+			},
+		},
+		{
+			name: "move deny",
+			lines: []string{
+				"(deny file-write-unlink",
+				`  (subpath "/fence-issue-74-dup/.pypirc")`,
+				`  (with message "test-log"))`,
+			},
+		},
+		{
+			name: "ancestor literal",
+			lines: []string{
+				"(deny file-write-unlink",
+				`  (literal "/fence-issue-74-dup")`,
+				`  (with message "test-log"))`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		if got := countRuleBlockOccurrences(rules, tt.lines...); got != 1 {
+			t.Fatalf("%s count = %d, want 1\nRules:\n%s", tt.name, got, strings.Join(rules, "\n"))
+		}
+	}
+}
