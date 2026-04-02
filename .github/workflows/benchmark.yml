@@ -30,21 +30,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
 
@@ -92,7 +92,7 @@ jobs:
           fi
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-results-linux
           path: benchmarks/
@@ -118,21 +118,21 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
 
@@ -166,7 +166,7 @@ jobs:
           fi
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-results-macos
           path: benchmarks/
@@ -193,10 +193,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
@@ -205,13 +205,13 @@ jobs:
         run: go install golang.org/x/perf/cmd/benchstat@latest
 
       - name: Download Linux results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: benchmark-results-linux
           path: linux-results/
 
       - name: Download macOS results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: benchmark-results-macos
           path: macos-results/
