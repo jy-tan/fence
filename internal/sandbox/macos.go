@@ -117,6 +117,32 @@ func expandMacOSTmpPaths(paths []string) []string {
 	return append(paths, additions...)
 }
 
+// seatbeltRuleBuilder preserves first-seen rule order while skipping duplicates.
+type seatbeltRuleBuilder struct {
+	rules []string
+	seen  map[string]struct{}
+}
+
+func newSeatbeltRuleBuilder() *seatbeltRuleBuilder {
+	return &seatbeltRuleBuilder{
+		seen: make(map[string]struct{}),
+	}
+}
+
+func (b *seatbeltRuleBuilder) add(lines ...string) {
+	if len(lines) == 0 {
+		return
+	}
+
+	key := strings.Join(lines, "\n")
+	if _, ok := b.seen[key]; ok {
+		return
+	}
+
+	b.seen[key] = struct{}{}
+	b.rules = append(b.rules, lines...)
+}
+
 // getTmpdirParent gets the TMPDIR parent if it matches macOS pattern.
 func getTmpdirParent() []string {
 	tmpdir := os.Getenv("TMPDIR")
@@ -145,7 +171,7 @@ func getTmpdirParent() []string {
 
 // generateReadRules generates filesystem read rules for the sandbox profile.
 func generateReadRules(defaultDenyRead bool, allowPaths, denyPaths []string, logTag string) []string {
-	var rules []string
+	builder := newSeatbeltRuleBuilder()
 
 	if defaultDenyRead {
 		// When defaultDenyRead is enabled:
@@ -154,12 +180,12 @@ func generateReadRules(defaultDenyRead bool, allowPaths, denyPaths []string, log
 		// This lets programs see what files exist but not read their contents.
 
 		// Allow metadata operations globally (stat, readdir, etc.) and root dir (for path resolution)
-		rules = append(rules, "(allow file-read-metadata)")
-		rules = append(rules, `(allow file-read-data (literal "/"))`)
+		builder.add("(allow file-read-metadata)")
+		builder.add(`(allow file-read-data (literal "/"))`)
 
 		// Allow reading data from essential system paths
 		for _, systemPath := range GetDefaultReadablePaths() {
-			rules = append(rules,
+			builder.add(
 				"(allow file-read-data",
 				fmt.Sprintf("  (subpath %s))", escapePath(systemPath)),
 			)
@@ -171,12 +197,12 @@ func generateReadRules(defaultDenyRead bool, allowPaths, denyPaths []string, log
 
 			if ContainsGlobChars(normalized) {
 				regex := GlobToRegex(normalized)
-				rules = append(rules,
+				builder.add(
 					"(allow file-read-data",
 					fmt.Sprintf("  (regex %s))", escapePath(regex)),
 				)
 			} else {
-				rules = append(rules,
+				builder.add(
 					"(allow file-read-data",
 					fmt.Sprintf("  (subpath %s))", escapePath(normalized)),
 				)
@@ -184,7 +210,7 @@ func generateReadRules(defaultDenyRead bool, allowPaths, denyPaths []string, log
 		}
 	} else {
 		// Allow all reads by default
-		rules = append(rules, "(allow file-read*)")
+		builder.add("(allow file-read*)")
 	}
 
 	// In both modes, deny specific paths (denyRead takes precedence).
@@ -197,13 +223,13 @@ func generateReadRules(defaultDenyRead bool, allowPaths, denyPaths []string, log
 
 		if ContainsGlobChars(normalized) {
 			regex := GlobToRegex(normalized)
-			rules = append(rules,
+			builder.add(
 				"(deny file-read*",
 				fmt.Sprintf("  (regex %s)", escapePath(regex)),
 				fmt.Sprintf("  (with message %q))", logTag),
 			)
 		} else {
-			rules = append(rules,
+			builder.add(
 				"(deny file-read*",
 				fmt.Sprintf("  (subpath %s)", escapePath(normalized)),
 				fmt.Sprintf("  (with message %q))", logTag),
@@ -212,19 +238,19 @@ func generateReadRules(defaultDenyRead bool, allowPaths, denyPaths []string, log
 	}
 
 	// Block file movement to prevent bypass
-	rules = append(rules, generateMoveBlockingRules(denyPaths, logTag)...)
+	generateMoveBlockingRules(builder, denyPaths, logTag)
 
-	return rules
+	return builder.rules
 }
 
 // generateWriteRules generates filesystem write rules for the sandbox profile.
 func generateWriteRules(allowPaths, denyPaths []string, allowGitConfig bool, logTag string) []string {
-	var rules []string
+	builder := newSeatbeltRuleBuilder()
 
 	// Allow TMPDIR parent on macOS
 	for _, tmpdirParent := range getTmpdirParent() {
 		normalized := NormalizePath(tmpdirParent)
-		rules = append(rules,
+		builder.add(
 			"(allow file-write*",
 			fmt.Sprintf("  (subpath %s)", escapePath(normalized)),
 			fmt.Sprintf("  (with message %q))", logTag),
@@ -237,13 +263,13 @@ func generateWriteRules(allowPaths, denyPaths []string, allowGitConfig bool, log
 
 		if ContainsGlobChars(normalized) {
 			regex := GlobToRegex(normalized)
-			rules = append(rules,
+			builder.add(
 				"(allow file-write*",
 				fmt.Sprintf("  (regex %s)", escapePath(regex)),
 				fmt.Sprintf("  (with message %q))", logTag),
 			)
 		} else {
-			rules = append(rules,
+			builder.add(
 				"(allow file-write*",
 				fmt.Sprintf("  (subpath %s)", escapePath(normalized)),
 				fmt.Sprintf("  (with message %q))", logTag),
@@ -263,13 +289,13 @@ func generateWriteRules(allowPaths, denyPaths []string, allowGitConfig bool, log
 
 		if ContainsGlobChars(normalized) {
 			regex := GlobToRegex(normalized)
-			rules = append(rules,
+			builder.add(
 				"(deny file-write*",
 				fmt.Sprintf("  (regex %s)", escapePath(regex)),
 				fmt.Sprintf("  (with message %q))", logTag),
 			)
 		} else {
-			rules = append(rules,
+			builder.add(
 				"(deny file-write*",
 				fmt.Sprintf("  (subpath %s)", escapePath(normalized)),
 				fmt.Sprintf("  (with message %q))", logTag),
@@ -278,21 +304,19 @@ func generateWriteRules(allowPaths, denyPaths []string, allowGitConfig bool, log
 	}
 
 	// Block file movement
-	rules = append(rules, generateMoveBlockingRules(allDenyPaths, logTag)...)
+	generateMoveBlockingRules(builder, allDenyPaths, logTag)
 
-	return rules
+	return builder.rules
 }
 
 // generateMoveBlockingRules generates rules to prevent file movement bypasses.
-func generateMoveBlockingRules(pathPatterns []string, logTag string) []string {
-	var rules []string
-
+func generateMoveBlockingRules(builder *seatbeltRuleBuilder, pathPatterns []string, logTag string) {
 	for _, pathPattern := range pathPatterns {
 		normalized := NormalizePath(pathPattern)
 
 		if ContainsGlobChars(normalized) {
 			regex := GlobToRegex(normalized)
-			rules = append(rules,
+			builder.add(
 				"(deny file-write-unlink",
 				fmt.Sprintf("  (regex %s)", escapePath(regex)),
 				fmt.Sprintf("  (with message %q))", logTag),
@@ -308,14 +332,14 @@ func generateMoveBlockingRules(pathPatterns []string, logTag string) []string {
 					baseDir = filepath.Dir(staticPrefix)
 				}
 
-				rules = append(rules,
+				builder.add(
 					"(deny file-write-unlink",
 					fmt.Sprintf("  (literal %s)", escapePath(baseDir)),
 					fmt.Sprintf("  (with message %q))", logTag),
 				)
 
 				for _, ancestor := range getAncestorDirectories(baseDir) {
-					rules = append(rules,
+					builder.add(
 						"(deny file-write-unlink",
 						fmt.Sprintf("  (literal %s)", escapePath(ancestor)),
 						fmt.Sprintf("  (with message %q))", logTag),
@@ -323,14 +347,14 @@ func generateMoveBlockingRules(pathPatterns []string, logTag string) []string {
 				}
 			}
 		} else {
-			rules = append(rules,
+			builder.add(
 				"(deny file-write-unlink",
 				fmt.Sprintf("  (subpath %s)", escapePath(normalized)),
 				fmt.Sprintf("  (with message %q))", logTag),
 			)
 
 			for _, ancestor := range getAncestorDirectories(normalized) {
-				rules = append(rules,
+				builder.add(
 					"(deny file-write-unlink",
 					fmt.Sprintf("  (literal %s)", escapePath(ancestor)),
 					fmt.Sprintf("  (with message %q))", logTag),
@@ -338,8 +362,6 @@ func generateMoveBlockingRules(pathPatterns []string, logTag string) []string {
 			}
 		}
 	}
-
-	return rules
 }
 
 // GenerateSandboxProfile generates a complete macOS sandbox profile.
