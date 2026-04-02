@@ -60,6 +60,10 @@ const (
 	linuxBootstrapLogPath   = linuxBootstrapDir + "/bootstrap.log"
 )
 
+// linuxMinimalCoreDevicePaths are rebound from the outer environment when we
+// ask Bubblewrap to create a fresh /dev. Intentionally exclude /dev/ptmx:
+// Bubblewrap wires that up to the sandbox's devpts instance, and rebinding the
+// host path on top breaks PTY allocation (openpty()/node-pty).
 var linuxMinimalCoreDevicePaths = []string{
 	"/dev/null",
 	"/dev/zero",
@@ -67,7 +71,25 @@ var linuxMinimalCoreDevicePaths = []string{
 	"/dev/random",
 	"/dev/urandom",
 	"/dev/tty",
-	"/dev/ptmx",
+}
+
+// linuxDefaultCrossMountReadablePaths are the default read-only locations that
+// still need explicit binds when they live on separate mount points and the
+// sandbox rebuilds portions of the filesystem tree (for example, `/home`) to
+// expose allowlisted writable paths. Keep special mounts like /dev, /proc,
+// /run, and /tmp out of this list so the sandbox's dedicated mount setup
+// continues to control them.
+func linuxDefaultCrossMountReadablePaths() []string {
+	home, _ := os.UserHomeDir()
+
+	paths := []string{
+		"/usr/local",
+		"/opt",
+		"/nix",
+		"/snap",
+	}
+
+	return append(paths, getDefaultUserToolingPaths(home)...)
 }
 
 // NewLinuxBridge creates Unix socket bridges to the proxy servers.
@@ -994,7 +1016,9 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		// Track which paths need writable bind (--bind vs --ro-bind)
 		crossMountWritable := make(map[string]bool)
 
-		// Collect all cross-mount paths from allowExecute and allowRead
+		// Collect all cross-mount paths from allowExecute, allowRead, and the
+		// default readable toolchain roots that should stay visible when /home or
+		// other submounts are reconstructed from allowlisted paths.
 		var crossMountPaths []string
 		for _, p := range cfg.Filesystem.AllowExecute {
 			if !ContainsGlobChars(p) {
@@ -1021,6 +1045,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 			crossMountPaths = append(crossMountPaths, p)
 			crossMountWritable[p] = true
 		}
+		crossMountPaths = append(crossMountPaths, linuxDefaultCrossMountReadablePaths()...)
 
 		for _, p := range crossMountPaths {
 			if !fileExists(p) || sameDevice("/", p) || crossMountBound[p] {

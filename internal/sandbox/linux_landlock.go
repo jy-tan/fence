@@ -118,9 +118,10 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 		fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add /tmp write path: %v\n", err)
 	}
 
-	// /dev needs read+write for /dev/null, /dev/zero, /dev/tty, etc.
-	// Landlock doesn't support rules on device files directly, so we allow the whole /dev
-	if err := ruleset.AllowReadWrite("/dev"); err != nil && debug {
+	// /dev needs read+write for /dev/null, /dev/zero, /dev/tty, etc. PTY setup
+	// also relies on device ioctls, so include IOCTL_DEV when the kernel supports it.
+	// Landlock doesn't support rules on device files directly, so we allow the whole /dev.
+	if err := ruleset.AllowDeviceAccess("/dev"); err != nil && debug {
 		fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add /dev write path: %v\n", err)
 	}
 
@@ -357,6 +358,12 @@ func (l *LandlockRuleset) AllowReadWrite(path string) error {
 		return err
 	}
 	return l.AllowWrite(path)
+}
+
+// AllowDeviceAccess adds read/write access to a device subtree, including
+// device ioctls on kernels that expose LANDLOCK_ACCESS_FS_IOCTL_DEV.
+func (l *LandlockRuleset) AllowDeviceAccess(path string) error {
+	return l.addPathRule(path, l.getHandledAccessFS())
 }
 
 // addPathRule adds a rule for a specific path.

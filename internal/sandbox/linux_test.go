@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -259,6 +260,52 @@ func TestResolveLinuxDeviceMode(t *testing.T) {
 	}
 }
 
+func TestLinuxDefaultCrossMountReadablePaths(t *testing.T) {
+	paths := linuxDefaultCrossMountReadablePaths()
+
+	for _, want := range []string{"/usr/local", "/opt", "/nix", "/snap"} {
+		if !slices.Contains(paths, want) {
+			t.Fatalf("linuxDefaultCrossMountReadablePaths() missing %q", want)
+		}
+	}
+
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		for _, want := range []string{
+			filepath.Join(home, ".nvm"),
+			filepath.Join(home, ".pyenv"),
+			filepath.Join(home, ".cargo/bin"),
+			filepath.Join(home, ".local/bin"),
+		} {
+			if !slices.Contains(paths, want) {
+				t.Fatalf("linuxDefaultCrossMountReadablePaths() missing %q", want)
+			}
+		}
+	}
+
+	for _, notWant := range []string{"/dev", "/proc", "/sys", "/run", "/tmp"} {
+		if slices.Contains(paths, notWant) {
+			t.Fatalf("linuxDefaultCrossMountReadablePaths() should not include special mount %q", notWant)
+		}
+	}
+}
+
+func TestLandlockHandledAccessFS(t *testing.T) {
+	t.Run("includes ioctl_dev on ABI v5+", func(t *testing.T) {
+		ruleset := &LandlockRuleset{abiVersion: 5}
+		if ruleset.getHandledAccessFS()&LANDLOCK_ACCESS_FS_IOCTL_DEV == 0 {
+			t.Fatal("expected handled access mask to include IOCTL_DEV on ABI v5+")
+		}
+	})
+
+	t.Run("omits ioctl_dev before ABI v5", func(t *testing.T) {
+		ruleset := &LandlockRuleset{abiVersion: 4}
+		if ruleset.getHandledAccessFS()&LANDLOCK_ACCESS_FS_IOCTL_DEV != 0 {
+			t.Fatal("did not expect handled access mask to include IOCTL_DEV before ABI v5")
+		}
+	})
+}
+
 func TestEffectiveLinuxForceNewSession(t *testing.T) {
 	t.Run("defaults to strict outside interactive pty", func(t *testing.T) {
 		if !effectiveLinuxForceNewSession(&config.Config{}, false, false) {
@@ -326,6 +373,11 @@ func TestWrapCommandLinuxWithOptions_UsesMinimalDevMode(t *testing.T) {
 	nullFragment := ShellQuote([]string{"--dev-bind", "/dev/null", "/dev/null"})
 	if count := strings.Count(cmd, nullFragment); count != 1 {
 		t.Fatalf("expected /dev/null passthrough exactly once in minimal mode, got %d: %s", count, cmd)
+	}
+
+	ptmxFragment := ShellQuote([]string{"--dev-bind", "/dev/ptmx", "/dev/ptmx"})
+	if strings.Contains(cmd, ptmxFragment) {
+		t.Fatalf("did not expect /dev/ptmx passthrough in minimal mode: %s", cmd)
 	}
 
 	fdFragment := ShellQuote([]string{"--dev-bind", "/dev/fd", "/dev/fd"})

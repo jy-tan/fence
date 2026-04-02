@@ -792,6 +792,67 @@ func TestLinux_XDGRuntimeDirPreservedWhenWritable(t *testing.T) {
 	}
 }
 
+func TestLinux_PTYAllocationWorksInDirectSandbox(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+	skipIfCommandNotFound(t, "python3")
+
+	workspace := createTempWorkspace(t)
+
+	for _, mode := range []config.DeviceMode{config.DeviceModeMinimal, config.DeviceModeHost} {
+		t.Run(string(mode), func(t *testing.T) {
+			cfg := testConfigWithWorkspace(workspace)
+			cfg.AllowPty = true
+			cfg.Devices.Mode = mode
+
+			result := runUnderLinuxSandboxDirect(t, cfg, `python3 -c "import os; master, slave = os.openpty(); os.close(master); os.close(slave); print('OK')"`, workspace)
+
+			assertAllowed(t, result)
+			assertContains(t, result.Stdout, "OK")
+		})
+	}
+}
+
+func TestLinux_DefaultCrossMountToolchainPathsRemainVisible(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+	skipIfCommandNotFound(t, "python3")
+
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		t.Skip("skipping: home directory unavailable")
+	}
+
+	var candidate string
+	for _, path := range linuxDefaultCrossMountReadablePaths() {
+		if !strings.HasPrefix(path, home+string(os.PathSeparator)) {
+			continue
+		}
+		if fileExists(path) && !sameDevice("/", path) {
+			candidate = path
+			break
+		}
+	}
+	if candidate == "" {
+		t.Skip("skipping: no user toolchain path exists on a separate mount")
+	}
+
+	workspace, err := os.MkdirTemp(home, ".fence-crossmount-*")
+	if err != nil {
+		t.Fatalf("failed to create home-based workspace: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(workspace) }()
+
+	cfg := testConfigWithWorkspace(workspace)
+	result := runUnderLinuxSandboxDirect(
+		t,
+		cfg,
+		fmt.Sprintf(`test -e %q && echo OK`, candidate),
+		workspace,
+	)
+
+	assertAllowed(t, result)
+	assertContains(t, result.Stdout, "OK")
+}
+
 // ============================================================================
 // Security Edge Case Tests
 // ============================================================================
