@@ -203,6 +203,41 @@ func TestWrapCommandLinuxWithOptions_DropsShellFromRuntimeDenyMounts(t *testing.
 	}
 }
 
+func TestWrapCommandLinuxWithOptions_UsesStagedBootstrapShell(t *testing.T) {
+	if _, err := exec.LookPath("bwrap"); err != nil {
+		t.Skip("bwrap not available")
+	}
+
+	shellPath, _, err := ResolveExecutionShell(ShellModeDefault, false)
+	if err != nil {
+		t.Skipf("default shell unavailable: %v", err)
+	}
+	shellSource, ok := resolvePathForMount(shellPath)
+	if !ok {
+		t.Fatalf("expected shell path %q to be mountable", shellPath)
+	}
+
+	cmd, err := WrapCommandLinuxWithOptions(&config.Config{}, "echo ok", nil, nil, LinuxSandboxOptions{
+		UseLandlock: false,
+		UseSeccomp:  false,
+		UseEBPF:     false,
+		ShellMode:   ShellModeDefault,
+	})
+	if err != nil {
+		t.Fatalf("WrapCommandLinuxWithOptions failed: %v", err)
+	}
+
+	stageFragment := ShellQuote([]string{"--ro-bind", shellSource, linuxBootstrapShellPath})
+	if !strings.Contains(cmd, stageFragment) {
+		t.Fatalf("expected staged shell mount in command: %s", cmd)
+	}
+
+	execFragment := ShellQuote([]string{"--", linuxBootstrapShellPath, "-c"})
+	if !strings.Contains(cmd, execFragment) {
+		t.Fatalf("expected sandbox to launch staged shell in command: %s", cmd)
+	}
+}
+
 func TestResolveLinuxDeviceMode(t *testing.T) {
 	tests := []struct {
 		name          string

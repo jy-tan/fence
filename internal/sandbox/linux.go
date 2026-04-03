@@ -56,9 +56,24 @@ type LinuxSandboxOptions struct {
 
 const (
 	linuxBootstrapDir       = "/tmp/fence"
+	linuxBootstrapBinDir    = linuxBootstrapDir + "/bin"
+	linuxBootstrapShellPath = linuxBootstrapBinDir + "/shell"
+	linuxBootstrapFencePath = linuxBootstrapBinDir + "/fence"
+	linuxBootstrapSocatPath = linuxBootstrapBinDir + "/socat"
 	linuxBootstrapInputPath = linuxBootstrapDir + "/bootstrap.stdin"
 	linuxBootstrapLogPath   = linuxBootstrapDir + "/bootstrap.log"
 )
+
+type linuxBootstrapExecutables struct {
+	Shell string
+	Fence string
+	Socat string
+}
+
+type linuxBootstrapExecutableMount struct {
+	Source      string
+	Destination string
+}
 
 // linuxMinimalCoreDevicePaths are rebound from the outer environment when we
 // ask Bubblewrap to create a fresh /dev. Intentionally exclude /dev/ptmx:
@@ -476,6 +491,69 @@ fi
 `
 }
 
+func planLinuxBootstrapExecutables(
+	shellPath string,
+	fenceExePath string,
+	useLandlockWrapper bool,
+	needsSocat bool,
+) ([]linuxBootstrapExecutableMount, linuxBootstrapExecutables, error) {
+	execs := linuxBootstrapExecutables{
+		Shell: linuxBootstrapShellPath,
+	}
+	var mounts []linuxBootstrapExecutableMount
+
+	addMount := func(hostPath string, sandboxPath string, name string) error {
+		source, ok := resolvePathForMount(hostPath)
+		if !ok {
+			return fmt.Errorf("failed to stage bootstrap %s executable %q", name, hostPath)
+		}
+		mounts = append(mounts, linuxBootstrapExecutableMount{
+			Source:      source,
+			Destination: sandboxPath,
+		})
+		return nil
+	}
+
+	if err := addMount(shellPath, execs.Shell, "shell"); err != nil {
+		return nil, linuxBootstrapExecutables{}, err
+	}
+
+	if useLandlockWrapper {
+		execs.Fence = linuxBootstrapFencePath
+		if err := addMount(fenceExePath, execs.Fence, "fence"); err != nil {
+			return nil, linuxBootstrapExecutables{}, err
+		}
+	}
+
+	if needsSocat {
+		socatPath, err := exec.LookPath("socat")
+		if err != nil {
+			return nil, linuxBootstrapExecutables{}, fmt.Errorf("failed to locate socat for sandbox bootstrap: %w", err)
+		}
+		execs.Socat = linuxBootstrapSocatPath
+		if err := addMount(socatPath, execs.Socat, "socat"); err != nil {
+			return nil, linuxBootstrapExecutables{}, err
+		}
+	}
+
+	return mounts, execs, nil
+}
+
+func appendLinuxBootstrapExecutableMounts(args []string, mounts []linuxBootstrapExecutableMount) []string {
+	if len(mounts) == 0 {
+		return args
+	}
+
+	args = append(args,
+		"--dir", linuxBootstrapDir,
+		"--dir", linuxBootstrapBinDir,
+	)
+	for _, mount := range mounts {
+		args = append(args, "--ro-bind", mount.Source, mount.Destination)
+	}
+	return args
+}
+
 func buildLinuxBootstrapScript(
 	cfg *config.Config,
 	command string,
@@ -483,8 +561,7 @@ func buildLinuxBootstrapScript(
 	reverseBridge *ReverseBridge,
 	opts LinuxSandboxOptions,
 	useLandlockWrapper bool,
-	fenceExePath string,
-	shellPath string,
+	bootstrapExecs linuxBootstrapExecutables,
 	shellFlag string,
 ) (string, error) {
 	var script strings.Builder
@@ -566,12 +643,12 @@ export FENCE_SANDBOX=1
 
 `,
 			ShellQuote([]string{
-				"socat",
+				bootstrapExecs.Socat,
 				fmt.Sprintf("TCP-LISTEN:%d,fork,reuseaddr", 3128),
 				fmt.Sprintf("UNIX-CONNECT:%s", bridge.HTTPSocketPath),
 			}),
 			ShellQuote([]string{
-				"socat",
+				bootstrapExecs.Socat,
 				fmt.Sprintf("TCP-LISTEN:%d,fork,reuseaddr", 1080),
 				fmt.Sprintf("UNIX-CONNECT:%s", bridge.SOCKSSocketPath),
 			}),
@@ -584,7 +661,7 @@ export FENCE_SANDBOX=1
 			socketPath := reverseBridge.SocketPaths[i]
 			_, _ = fmt.Fprintf(&script, "fence_start_helper %s\n",
 				ShellQuote([]string{
-					"socat",
+					bootstrapExecs.Socat,
 					fmt.Sprintf("UNIX-LISTEN:%s,fork,reuseaddr", socketPath),
 					fmt.Sprintf("TCP:127.0.0.1:%d", port),
 				}),
@@ -606,11 +683,11 @@ export FENCE_SANDBOX=1
 			}
 		}
 
-		wrapperArgs := []string{fenceExePath, "--landlock-apply"}
+		wrapperArgs := []string{bootstrapExecs.Fence, "--landlock-apply"}
 		if opts.Debug {
 			wrapperArgs = append(wrapperArgs, "--debug")
 		}
-		wrapperArgs = append(wrapperArgs, "--", shellPath, shellFlag, command)
+		wrapperArgs = append(wrapperArgs, "--", bootstrapExecs.Shell, shellFlag, command)
 		_, _ = fmt.Fprintf(&script, "exec %s\n", ShellQuote(wrapperArgs))
 		return script.String(), nil
 	}
@@ -1114,9 +1191,20 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		fmt.Fprintf(os.Stderr, "[fence:linux] Skipping Landlock wrapper (running as library, not fence CLI)\n")
 	}
 
-	bwrapArgs = append(bwrapArgs, "--", shellPath, shellFlag)
+	bootstrapMounts, bootstrapExecs, err := planLinuxBootstrapExecutables(
+		shellPath,
+		fenceExePath,
+		useLandlockWrapper,
+		bridge != nil || (reverseBridge != nil && len(reverseBridge.Ports) > 0),
+	)
+	if err != nil {
+		return "", err
+	}
+	bwrapArgs = appendLinuxBootstrapExecutableMounts(bwrapArgs, bootstrapMounts)
 
-	innerScript, err := buildLinuxBootstrapScript(cfg, command, bridge, reverseBridge, opts, useLandlockWrapper, fenceExePath, shellPath, shellFlag)
+	bwrapArgs = append(bwrapArgs, "--", bootstrapExecs.Shell, shellFlag)
+
+	innerScript, err := buildLinuxBootstrapScript(cfg, command, bridge, reverseBridge, opts, useLandlockWrapper, bootstrapExecs, shellFlag)
 	if err != nil {
 		return "", err
 	}

@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -269,6 +270,60 @@ func TestLinux_LandlockAllowsTmpFence(t *testing.T) {
 
 	assertAllowed(t, result)
 	assertFileExists(t, testFile)
+}
+
+func TestLinux_LandlockWrapperPreservesRepoLocalFenceBinary(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+
+	features := DetectLinuxFeatures()
+	if !features.CanUseLandlock() {
+		t.Skip("skipping: Landlock not available on this kernel")
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		t.Skip("skipping: home directory unavailable")
+	}
+	if sameDevice("/", home) {
+		t.Skip("skipping: home directory is not on a separate mount")
+	}
+
+	sandboxRoot, err := os.MkdirTemp(home, ".fence-landlock-wrapper-*")
+	if err != nil {
+		t.Fatalf("failed to create home-based sandbox root: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(sandboxRoot) }()
+
+	allowedDir := filepath.Join(sandboxRoot, "allowed")
+	if err := os.MkdirAll(allowedDir, 0o700); err != nil {
+		t.Fatalf("failed to create allowWrite directory: %v", err)
+	}
+
+	fenceBin := filepath.Join(sandboxRoot, "fence")
+	build := exec.Command("go", "build", "-o", fenceBin, "../../cmd/fence")
+	build.Stdout = os.Stdout
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		t.Fatalf("failed to build fence: %v", err)
+	}
+
+	configJSON, err := json.Marshal(map[string]any{
+		"filesystem": map[string]any{
+			"allowWrite": []string{allowedDir},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+
+	configPath := filepath.Join(t.TempDir(), "test-fence.json")
+	if err := os.WriteFile(configPath, configJSON, 0o600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	result := executeShellCommand(t, ShellQuote([]string{fenceBin, "--settings", configPath, "--", "ls"}), allowedDir)
+
+	assertAllowed(t, result)
 }
 
 // TestLinux_SymlinkedGlobalGitConfigDoesNotBreakSandbox reproduces issue #51
