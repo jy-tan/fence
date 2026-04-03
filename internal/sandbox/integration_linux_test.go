@@ -300,6 +300,7 @@ func TestLinux_LandlockWrapperPreservesRepoLocalFenceBinary(t *testing.T) {
 	}
 
 	fenceBin := filepath.Join(sandboxRoot, "fence")
+	// #nosec G204 -- arguments are fixed in this test and output path is a test-controlled temp directory under $HOME.
 	build := exec.Command("go", "build", "-o", fenceBin, "../../cmd/fence")
 	build.Stdout = os.Stdout
 	build.Stderr = os.Stderr
