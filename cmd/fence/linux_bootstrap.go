@@ -190,6 +190,8 @@ func execUserCommand(opts bootstrapOptions) {
 	cmd.Stdin = os.Stdin
 
 	// Sanitize environment (strips LD_PRELOAD, etc.)
+	// FENCE_SANDBOX=1 is injected from outside the sandbox by bwrap via --setenv,
+	// so it is already present in os.Environ() here.
 	cmd.Env = sandbox.FilterDangerousEnv(os.Environ())
 
 	// Run the command; keeping this process alive preserves the bridge goroutines.

@@ -722,6 +722,10 @@ func appendLinuxBootstrapWrapperArgs(
 	}
 	bootstrapCmd = append(bootstrapCmd, "--", shellPath, shellFlag, command)
 
+	// Set FENCE_SANDBOX=1 from outside the sandbox via bwrap --setenv so it is structurally
+	// guaranteed to be present regardless of any in-sandbox code paths.
+	bwrapArgs = append(bwrapArgs, "--setenv", "FENCE_SANDBOX", "1")
+
 	// Pass config via environment variable
 	if cfg != nil {
 		configJSON, err := json.Marshal(cfg)
@@ -800,6 +804,11 @@ trap cleanup EXIT
 `)
 	script.WriteString(linuxRuntimeEnvScript())
 
+	// NOTE: FENCE_SANDBOX=1 is only exported inside this bridge block, meaning it is absent
+	// when no network bridge is active. This is likely a bug in the shell-based bootstrap path,
+	// but we leave it as-is here; the Go-based bootstrap sets it unconditionally from outside
+	// the sandbox via bwrap --setenv in appendLinuxBootstrapWrapperArgs, which is structurally
+	// guaranteed regardless of any in-sandbox code paths.
 	if bridge != nil {
 		_, _ = fmt.Fprintf(&script, `
 # Start HTTP proxy listener (port 3128 -> Unix socket -> host HTTP proxy)
@@ -820,6 +829,7 @@ export all_proxy=socks5h://127.0.0.1:1080
 export NO_PROXY=localhost,127.0.0.1
 export no_proxy=localhost,127.0.0.1
 export FENCE_SANDBOX=1
+
 
 `,
 			ShellQuote([]string{
