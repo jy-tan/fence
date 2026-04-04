@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -138,6 +139,9 @@ func TestUpsertEnv(t *testing.T) {
 }
 
 func TestLinuxBootstrapWrapper_SimpleCommand(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("--linux-bootstrap is only supported on Linux")
+	}
 	// Build the fence binary first
 	buildCmd := exec.Command("go", "build", "-o", "/tmp/fence-test", ".")
 	buildCmd.Dir = "."
@@ -160,6 +164,9 @@ func TestLinuxBootstrapWrapper_SimpleCommand(t *testing.T) {
 }
 
 func TestLinuxBootstrapWrapper_FlagParsing(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("--linux-bootstrap is only supported on Linux")
+	}
 	// Build the fence binary first
 	buildCmd := exec.Command("go", "build", "-o", "/tmp/fence-test", ".")
 	buildCmd.Dir = "."
@@ -186,6 +193,9 @@ func TestLinuxBootstrapWrapper_FlagParsing(t *testing.T) {
 }
 
 func TestLinuxBootstrapWrapper_ExitCode(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("--linux-bootstrap is only supported on Linux")
+	}
 	// Build the fence binary first
 	buildCmd := exec.Command("go", "build", "-o", "/tmp/fence-test", ".")
 	buildCmd.Dir = "."
@@ -211,6 +221,9 @@ func TestLinuxBootstrapWrapper_ExitCode(t *testing.T) {
 }
 
 func TestLinuxBootstrapWrapper_CommandNotFound(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("--linux-bootstrap is only supported on Linux")
+	}
 	// Build the fence binary first
 	buildCmd := exec.Command("go", "build", "-o", "/tmp/fence-test", ".")
 	buildCmd.Dir = "."
@@ -236,6 +249,9 @@ func TestLinuxBootstrapWrapper_CommandNotFound(t *testing.T) {
 }
 
 func TestLinuxBootstrapWrapper_NoCommand(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("--linux-bootstrap is only supported on Linux")
+	}
 	// Build the fence binary first
 	buildCmd := exec.Command("go", "build", "-o", "/tmp/fence-test", ".")
 	buildCmd.Dir = "."
