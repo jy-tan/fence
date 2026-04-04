@@ -1,3 +1,5 @@
+//go:build linux
+
 package main
 
 import (
@@ -13,7 +15,6 @@ import (
 	"time"
 
 	"github.com/Use-Tusk/fence/internal/config"
-	"github.com/Use-Tusk/fence/internal/platform"
 	"github.com/Use-Tusk/fence/internal/sandbox"
 	"github.com/spf13/pflag"
 )
@@ -23,13 +24,20 @@ const (
 	ExitCommandNotFound    = 127 // User command not in PATH
 )
 
-// runLinuxBootstrapWrapper handles the --linux-bootstrap wrapper mode.
-// This runs inside the sandbox and handles:
-// 1. Socket bridging (TCP <-> Unix sockets for proxy support)
-// 2. Waiting for sockets to be ready
-// 3. Applying Landlock restrictions (if configured)
-// 4. Running the user command
-func runLinuxBootstrapWrapper() {
+type bootstrapOptions struct {
+	httpSocket     string
+	socksSocket    string
+	reverseBridges []reverseBridgeSpec
+	command        []string
+	debug          bool
+}
+
+func fatal(exitCode int, format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: "+format+"\n", args...)
+	os.Exit(exitCode)
+}
+
+func parseFlagsAndArgs() bootstrapOptions {
 	flags := pflag.NewFlagSet("linux-bootstrap", pflag.ContinueOnError)
 	httpSocket := flags.String("http-socket", "", "")
 	socksSocket := flags.String("socks-socket", "", "")
@@ -37,53 +45,60 @@ func runLinuxBootstrapWrapper() {
 	debugMode := flags.Bool("debug", false, "")
 
 	if err := flags.Parse(os.Args[2:]); err != nil {
-		fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: %v\n", err)
-		os.Exit(ExitWrapperSetupFailed)
+		fatal(ExitWrapperSetupFailed, "%v", err)
 	}
 
 	var reverseBridges []reverseBridgeSpec
 	for _, s := range *reverseBridgeSpecs {
 		spec, err := parseReverseBridge(s)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: %v\n", err)
-			os.Exit(ExitWrapperSetupFailed)
+			fatal(ExitWrapperSetupFailed, "%v", err)
 		}
 		reverseBridges = append(reverseBridges, spec)
 	}
 
 	command := flags.Args()
 	if len(command) == 0 {
-		fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: no command specified\n")
-		os.Exit(ExitWrapperSetupFailed)
+		fatal(ExitWrapperSetupFailed, "no command specified")
 	}
 
-	// Create context for managing goroutines
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	return bootstrapOptions{
+		httpSocket:     *httpSocket,
+		socksSocket:    *socksSocket,
+		reverseBridges: reverseBridges,
+		command:        command,
+		debug:          *debugMode,
+	}
+}
 
-	// Track all socket paths we need to wait for
+func startBridgesAndSetEnv(ctx context.Context, opts bootstrapOptions) []string {
 	var socketPaths []string
 
-	// Start socket bridges
-	if *httpSocket != "" {
-		socketPaths = append(socketPaths, *httpSocket)
+	if opts.httpSocket != "" {
+		socketPaths = append(socketPaths, opts.httpSocket)
 		go func() {
-			if err := bridgeTCPToUnix(ctx, 3128, *httpSocket); err != nil {
+			if err := bridgeTCPToUnix(ctx, 3128, opts.httpSocket); err != nil {
 				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] HTTP bridge error: %v\n", err)
 			}
 		}()
+		os.Setenv("HTTP_PROXY", "http://127.0.0.1:3128")
+		os.Setenv("HTTPS_PROXY", "http://127.0.0.1:3128")
+		os.Setenv("http_proxy", "http://127.0.0.1:3128")
+		os.Setenv("https_proxy", "http://127.0.0.1:3128")
 	}
 
-	if *socksSocket != "" {
-		socketPaths = append(socketPaths, *socksSocket)
+	if opts.socksSocket != "" {
+		socketPaths = append(socketPaths, opts.socksSocket)
 		go func() {
-			if err := bridgeTCPToUnix(ctx, 1080, *socksSocket); err != nil {
+			if err := bridgeTCPToUnix(ctx, 1080, opts.socksSocket); err != nil {
 				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] SOCKS bridge error: %v\n", err)
 			}
 		}()
+		os.Setenv("ALL_PROXY", "socks5h://127.0.0.1:1080")
+		os.Setenv("all_proxy", "socks5h://127.0.0.1:1080")
 	}
 
-	for _, rb := range reverseBridges {
+	for _, rb := range opts.reverseBridges {
 		socketPaths = append(socketPaths, rb.socketPath)
 		go func(port int, socketPath string) {
 			if err := bridgeUnixToTCP(ctx, socketPath, port); err != nil {
@@ -92,110 +107,64 @@ func runLinuxBootstrapWrapper() {
 		}(rb.port, rb.socketPath)
 	}
 
-	// Wait for sockets to be ready (5 second timeout)
-	if len(socketPaths) > 0 {
-		if err := waitForUnixSockets(ctx, socketPaths, 5*time.Second); err != nil {
-			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] %v\n", err)
-			os.Exit(ExitWrapperSetupFailed)
-		}
-	}
+	return socketPaths
+}
 
-	// Set proxy environment variables
-	if *httpSocket != "" {
-		os.Setenv("HTTP_PROXY", "http://127.0.0.1:3128")
-		os.Setenv("HTTPS_PROXY", "http://127.0.0.1:3128")
-		os.Setenv("http_proxy", "http://127.0.0.1:3128")
-		os.Setenv("https_proxy", "http://127.0.0.1:3128")
-	}
-
-	if *socksSocket != "" {
-		os.Setenv("ALL_PROXY", "socks5h://127.0.0.1:1080")
-		os.Setenv("all_proxy", "socks5h://127.0.0.1:1080")
-	}
-
-	// Apply Landlock restrictions before running the command.
-	// Landlock restrictions are inherited by all child processes, so applying them
-	// here before cmd.Run() correctly restricts the sandboxed command too.
-	// We must use cmd.Run() (not syscall.Exec) so that the bridge goroutines above
-	// stay alive while the command is running — syscall.Exec replaces this process
-	// image entirely, killing all goroutines and leaving port 3128/1080 with no
-	// listener, causing curl and other network tools to get "connection refused".
-
-	// Check if Landlock is available and should be applied
-	detectedPlatform := platform.Detect()
-	applyLandlock := detectedPlatform == platform.Linux
-
-	if *debugMode {
-		fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Platform detected: %v, applyLandlock: %v\n", detectedPlatform, applyLandlock)
-	}
-	if applyLandlock {
-		cfg, err := loadConfigFromEnv()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: %v\n", err)
-			os.Exit(ExitWrapperSetupFailed)
-		}
-
-		// Get current working directory for relative path resolution
-		cwd, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: failed to get working directory: %v\n", err)
-			os.Exit(ExitWrapperSetupFailed)
-		}
-
-		if *debugMode {
-			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Applying Landlock restrictions before command execution\n")
-		}
-
-		// Collect execute paths - we need to allow execution of the shell
-		// The command[0] is the shell path (e.g., /nix/store/.../bash)
-		var executePaths []string
-		if len(command) > 0 {
-			// Resolve the command path to get the actual executable
-			execPath, err := exec.LookPath(command[0])
-			if err == nil {
-				// Add the resolved shell binary path for execution
-				executePaths = append(executePaths, execPath)
-				if *debugMode {
-					fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Adding execute path: %s\n", execPath)
-				}
-			} else if *debugMode {
-				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Warning: could not resolve command path: %v\n", err)
-			}
-		}
-
-		// Apply Landlock restrictions
-		err = sandbox.ApplyLandlockFromConfigWithExec(cfg, cwd, nil, executePaths, *debugMode)
-		if err != nil {
-			if *debugMode {
-				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Warning: Landlock not applied: %v\n", err)
-			}
-		} else if *debugMode {
-			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Landlock restrictions applied\n")
-		}
-
-		// Find the executable
-		execPath, err := exec.LookPath(command[0])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: command not found: %s\n", command[0])
-			os.Exit(ExitCommandNotFound)
-		}
-
-		if *debugMode {
-			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Running: %s %v\n", execPath, command[1:])
-		}
-	}
-
-	// Use cmd.Run() for all platforms so that bridge goroutines remain alive
-	// while the command executes. On Linux, Landlock restrictions applied above
-	// are automatically inherited by child processes.
-	execPath, err := exec.LookPath(command[0])
+func applyLandlock(opts bootstrapOptions) {
+	cfg, err := loadConfigFromEnv()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: command not found: %s\n", command[0])
-		os.Exit(ExitCommandNotFound)
+		fatal(ExitWrapperSetupFailed, "%v", err)
+	}
+
+	// Get current working directory for relative path resolution
+	cwd, err := os.Getwd()
+	if err != nil {
+		fatal(ExitWrapperSetupFailed, "failed to get working directory: %v", err)
+	}
+
+	if opts.debug {
+		fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Applying Landlock restrictions before command execution\n")
+	}
+
+	// Collect execute paths - we need to allow execution of the shell
+	// The command[0] is the shell path (e.g., /nix/store/.../bash)
+	var executePaths []string
+	if len(opts.command) > 0 {
+		// Resolve the command path to get the actual executable
+		execPath, err := exec.LookPath(opts.command[0])
+		if err == nil {
+			// Add the resolved shell binary path for execution
+			executePaths = append(executePaths, execPath)
+			if opts.debug {
+				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Adding execute path: %s\n", execPath)
+			}
+		} else if opts.debug {
+			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Warning: could not resolve command path: %v\n", err)
+		}
+	}
+
+	// Apply Landlock restrictions
+	err = sandbox.ApplyLandlockFromConfigWithExec(cfg, cwd, nil, executePaths, opts.debug)
+	if err != nil {
+		if opts.debug {
+			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Warning: Landlock not applied: %v\n", err)
+		}
+	} else if opts.debug {
+		fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Landlock restrictions applied\n")
+	}
+}
+
+func execUserCommand(opts bootstrapOptions) {
+	// Use cmd.Run() so that bridge goroutines remain alive
+	// while the command executes. Landlock restrictions applied above
+	// are automatically inherited by child processes.
+	execPath, err := exec.LookPath(opts.command[0])
+	if err != nil {
+		fatal(ExitCommandNotFound, "command not found: %s", opts.command[0])
 	}
 
 	// Create the command
-	cmd := exec.Command(execPath, command[1:]...)
+	cmd := exec.Command(execPath, opts.command[1:]...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -211,12 +180,34 @@ func runLinuxBootstrapWrapper() {
 		}
 		// Check if the error is "command not found"
 		if cmdErr, ok := err.(*exec.Error); ok && cmdErr.Err == exec.ErrNotFound {
-			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: command not found: %s\n", command[0])
-			os.Exit(ExitCommandNotFound)
+			fatal(ExitCommandNotFound, "command not found: %s", opts.command[0])
 		}
-		fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Run failed: %v\n", err)
-		os.Exit(1)
+		fatal(ExitWrapperSetupFailed, "run failed: %v", err)
 	}
+}
+
+// runLinuxBootstrapWrapper handles the --linux-bootstrap wrapper mode.
+// This runs inside the sandbox and handles:
+// 1. Socket bridging (TCP <-> Unix sockets for proxy support)
+// 2. Waiting for sockets to be ready
+// 3. Applying Landlock restrictions (if configured)
+// 4. Running the user command
+func runLinuxBootstrapWrapper() {
+	opts := parseFlagsAndArgs()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	socketPaths := startBridgesAndSetEnv(ctx, opts)
+
+	if len(socketPaths) > 0 {
+		if err := waitForUnixSockets(ctx, socketPaths, 5*time.Second); err != nil {
+			fatal(ExitWrapperSetupFailed, "%v", err)
+		}
+	}
+
+	applyLandlock(opts)
+	execUserCommand(opts)
 }
 
 // reverseBridgeSpec represents a reverse bridge specification (port:socketPath)
