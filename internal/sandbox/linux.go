@@ -683,6 +683,57 @@ func appendLinuxBootstrapExecutableMounts(args []string, mounts []linuxBootstrap
 	return args
 }
 
+func appendLinuxBootstrapWrapperArgs(
+	bwrapArgs []string,
+	fenceExePath, shellPath, shellFlag, command string,
+	bridge *LinuxBridge,
+	reverseBridge *ReverseBridge,
+	cfg *config.Config,
+	debug bool,
+) []string {
+	// Ensure fence binary is accessible inside sandbox
+	if fenceExePath != "" {
+		bwrapArgs = append(bwrapArgs, "--ro-bind", fenceExePath, fenceExePath)
+	}
+
+	// Ensure shell binary is accessible inside sandbox
+	// This is needed because the shell may be in /nix/store or other non-standard locations
+	if shellPath != "" {
+		bwrapArgs = append(bwrapArgs, "--ro-bind", shellPath, shellPath)
+	}
+
+	// Build the linux-bootstrap command line
+	bootstrapCmd := []string{fenceExePath, "--linux-bootstrap"}
+	if debug {
+		bootstrapCmd = append(bootstrapCmd, "--debug")
+	}
+	if bridge != nil {
+		bootstrapCmd = append(bootstrapCmd,
+			"--http-socket", bridge.HTTPSocketPath,
+			"--socks-socket", bridge.SOCKSSocketPath,
+		)
+	}
+	if reverseBridge != nil {
+		for i, port := range reverseBridge.Ports {
+			bootstrapCmd = append(bootstrapCmd,
+				"--reverse-bridge", fmt.Sprintf("%d:%s", port, reverseBridge.SocketPaths[i]),
+			)
+		}
+	}
+	bootstrapCmd = append(bootstrapCmd, "--", shellPath, shellFlag, command)
+
+	// Pass config via environment variable
+	if cfg != nil {
+		configJSON, err := json.Marshal(cfg)
+		if err == nil {
+			bwrapArgs = append(bwrapArgs, "--setenv", "FENCE_CONFIG_JSON", string(configJSON))
+		}
+	}
+
+	// Execute the bootstrap command directly (no shell wrapper needed)
+	return append(bwrapArgs, bootstrapCmd...)
+}
+
 func buildLinuxBootstrapScript(
 	cfg *config.Config,
 	command string,
@@ -1441,40 +1492,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	}
 
 	if useLinuxBootstrapWrapper {
-		if fenceExePath != "" {
-			bwrapArgs = append(bwrapArgs, "--ro-bind", fenceExePath, fenceExePath)
-		}
-		if shellPath != "" {
-			bwrapArgs = append(bwrapArgs, "--ro-bind", shellPath, shellPath)
-		}
-
-		bootstrapCmd := []string{fenceExePath, "--linux-bootstrap"}
-		if opts.Debug {
-			bootstrapCmd = append(bootstrapCmd, "--debug")
-		}
-		if bridge != nil {
-			bootstrapCmd = append(bootstrapCmd,
-				"--http-socket", bridge.HTTPSocketPath,
-				"--socks-socket", bridge.SOCKSSocketPath,
-			)
-		}
-		if reverseBridge != nil {
-			for i, port := range reverseBridge.Ports {
-				bootstrapCmd = append(bootstrapCmd,
-					"--reverse-bridge", fmt.Sprintf("%d:%s", port, reverseBridge.SocketPaths[i]),
-				)
-			}
-		}
-		bootstrapCmd = append(bootstrapCmd, "--", shellPath, shellFlag, command)
-
-		if cfg != nil {
-			configJSON, err := json.Marshal(cfg)
-			if err == nil {
-				bwrapArgs = append(bwrapArgs, "--setenv", "FENCE_CONFIG_JSON", string(configJSON))
-			}
-		}
-
-		bwrapArgs = append(bwrapArgs, bootstrapCmd...)
+		bwrapArgs = appendLinuxBootstrapWrapperArgs(bwrapArgs, fenceExePath, shellPath, shellFlag, command, bridge, reverseBridge, cfg, opts.Debug)
 	} else {
 		bootstrapMounts, bootstrapExecs, err := planLinuxBootstrapExecutables(
 			shellPath,
