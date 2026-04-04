@@ -656,6 +656,12 @@ func TestLinux_NetworkBlocksPing(t *testing.T) {
 	skipIfAlreadySandboxed(t)
 	skipIfCommandNotFound(t, "ping")
 
+	// Skip if network namespace is not available (ping won't be blocked without it)
+	features := DetectLinuxFeatures()
+	if !features.CanUnshareNet {
+		t.Skip("skipping: network namespace not available in this environment")
+	}
+
 	workspace := createTempWorkspace(t)
 	cfg := testConfigWithWorkspace(workspace)
 

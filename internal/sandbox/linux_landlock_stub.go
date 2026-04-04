@@ -9,6 +9,11 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 	return nil
 }
 
+// ApplyLandlockFromConfigWithExec is a no-op on non-Linux platforms.
+func ApplyLandlockFromConfigWithExec(cfg *config.Config, cwd string, socketPaths []string, executePaths []string, debug bool) error {
+	return nil
+}
+
 // LandlockRuleset is a stub for non-Linux platforms.
 type LandlockRuleset struct{}
 

@@ -20,6 +20,14 @@ import (
 // This should be called before exec'ing the sandboxed command.
 // Returns nil if Landlock is not available (graceful fallback).
 func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []string, debug bool) error {
+	return ApplyLandlockFromConfigWithExec(cfg, cwd, socketPaths, nil, debug)
+}
+
+// ApplyLandlockFromConfigWithExec creates and applies Landlock restrictions based on config.
+// This should be called before exec'ing the sandboxed command.
+// Returns nil if Landlock is not available (graceful fallback).
+// executePaths are additional paths that need execute permission.
+func ApplyLandlockFromConfigWithExec(cfg *config.Config, cwd string, socketPaths []string, executePaths []string, debug bool) error {
 	features := DetectLinuxFeatures()
 	if !features.CanUseLandlock() {
 		if debug {
@@ -68,6 +76,55 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 			// Ignore errors for paths that don't exist
 			if !os.IsNotExist(err) {
 				fencelog.Printf("[fence:landlock] Warning: failed to add read path %s: %v\n", p, err)
+			}
+		}
+	}
+
+	// System binary paths need execute permission for running commands
+	systemExecutePaths := []string{
+		"/bin",
+		"/sbin",
+		"/usr/bin",
+		"/usr/sbin",
+		"/usr/local/bin",
+		"/usr/local/sbin",
+		"/opt",
+	}
+
+	// Add additional execute paths (e.g., for shell in non-standard locations)
+	systemExecutePaths = append(systemExecutePaths, executePaths...)
+
+	for _, p := range systemExecutePaths {
+		if err := ruleset.AllowExecute(p); err != nil && debug {
+			// Ignore errors for paths that don't exist
+			if !os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add execute path %s: %v\n", p, err)
+			}
+		}
+
+		// For non-directory execute paths (individual binaries), also add read+execute
+		// access to all parent directories. This is needed to traverse to the executable,
+		// especially for multicall binaries like coreutils where the binary is in
+		// /nix/store/.../bin/ but those directories aren't in the default read paths,
+		// and for binaries in /tmp/fence/bin/ (shell-based bootstrap) where the kernel
+		// requires execute permission on every directory component of the path.
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			// Walk up the directory tree from the binary's parent to root
+			// and add read+execute access to each directory so the kernel can
+			// traverse the path and exec the binary.
+			dir := filepath.Dir(p)
+			for dir != "/" && dir != "." {
+				if err := ruleset.AllowExecute(dir); err != nil && debug {
+					if !os.IsNotExist(err) {
+						fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add execute path for executable parent %s: %v\n", dir, err)
+					}
+				}
+				if err := ruleset.AllowRead(dir); err != nil && debug {
+					if !os.IsNotExist(err) {
+						fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add read path for executable parent %s: %v\n", dir, err)
+					}
+				}
+				dir = filepath.Dir(dir)
 			}
 		}
 	}

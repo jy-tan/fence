@@ -48,21 +48,22 @@ type ServiceOptions struct {
 
 // Manager handles sandbox initialization and command wrapping.
 type Manager struct {
-	config              *config.Config
-	httpProxy           *proxy.HTTPProxy
-	socksProxy          *proxy.SOCKSProxy
-	linuxBridge         *LinuxBridge
-	reverseBridge       *ReverseBridge
-	localOutboundBridge *LocalOutboundBridge
-	httpPort            int
-	socksPort           int
-	service             ServiceOptions
-	exposedHostPaths    []exposedHostPath
-	shellMode           string
-	shellLogin          bool
-	debug               bool
-	monitor             bool
-	initialized         bool
+	config                   *config.Config
+	httpProxy                *proxy.HTTPProxy
+	socksProxy               *proxy.SOCKSProxy
+	linuxBridge              *LinuxBridge
+	reverseBridge            *ReverseBridge
+	localOutboundBridge      *LocalOutboundBridge
+	httpPort                 int
+	socksPort                int
+	service                  ServiceOptions
+	exposedHostPaths         []exposedHostPath
+	shellMode                string
+	shellLogin               bool
+	debug                    bool
+	monitor                  bool
+	initialized              bool
+	shellBasedLinuxBootstrap bool // Development-only: use shell script bootstrap TODO remove before merge
 }
 
 // exposedHostPath records a host path that should be visible inside the
@@ -124,6 +125,11 @@ func (m *Manager) SetShellOptions(mode string, login bool) {
 	}
 	m.shellMode = mode
 	m.shellLogin = login
+}
+
+// SetShellBasedLinuxBootstrap sets whether to use shell script bootstrap (development-only).
+func (m *Manager) SetShellBasedLinuxBootstrap(useShell bool) {
+	m.shellBasedLinuxBootstrap = useShell
 }
 
 // Initialize sets up the sandbox infrastructure (proxies, etc.).
@@ -259,16 +265,18 @@ func (m *Manager) WrapCommandInDir(command string, workingDir string) (string, e
 		return WrapCommandMacOS(m.config, command, workingDir, m.httpPort, m.socksPort, m.service.ExposedPorts, m.exposedHostPaths, m.debug, m.shellMode, m.shellLogin)
 	case platform.Linux:
 		return WrapCommandLinuxWithOptions(m.config, command, m.linuxBridge, m.reverseBridge, LinuxSandboxOptions{
-			UseLandlock:         true,
-			UseSeccomp:          true,
-			UseEBPF:             true,
-			Monitor:             m.monitor,
-			Debug:               m.debug,
-			ShellMode:           m.shellMode,
-			ShellLogin:          m.shellLogin,
-			WorkDir:             workingDir,
-			LocalOutboundBridge: m.localOutboundBridge,
-			ExposedHostPaths:    m.exposedHostPaths,
+			UseLandlock:              true,
+			UseSeccomp:               true,
+			UseEBPF:                  true,
+			Monitor:                  m.monitor,
+			Debug:                    m.debug,
+			ShellMode:                m.shellMode,
+			ShellLogin:               m.shellLogin,
+			WorkDir:                  workingDir,
+			LocalOutboundBridge:      m.localOutboundBridge,
+			ExposedHostPaths:         m.exposedHostPaths,
+			UseLinuxBootstrap:        !m.shellBasedLinuxBootstrap,
+			ShellBasedLinuxBootstrap: m.shellBasedLinuxBootstrap,
 		})
 	default:
 		return "", fmt.Errorf("unsupported platform: %s", plat)

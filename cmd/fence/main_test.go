@@ -2,8 +2,10 @@ package main
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Use-Tusk/fence/internal/sandbox"
@@ -119,4 +121,122 @@ func TestUpsertEnv(t *testing.T) {
 			t.Fatalf("expected appended env entry, got %v", updated)
 		}
 	})
+}
+
+func TestLinuxBootstrapWrapper_SimpleCommand(t *testing.T) {
+	// Build the fence binary first
+	buildCmd := exec.Command("go", "build", "-o", "/tmp/fence-test", ".")
+	buildCmd.Dir = "."
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build fence: %v\n%s", err, output)
+	}
+	defer os.Remove("/tmp/fence-test")
+
+	// Run with --linux-bootstrap -- echo hello
+	cmd := exec.Command("/tmp/fence-test", "--linux-bootstrap", "--", "echo", "hello")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("command failed: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(string(output), "hello") {
+		t.Errorf("expected output to contain 'hello', got: %s", output)
+	}
+}
+
+func TestLinuxBootstrapWrapper_FlagParsing(t *testing.T) {
+	// Build the fence binary first
+	buildCmd := exec.Command("go", "build", "-o", "/tmp/fence-test", ".")
+	buildCmd.Dir = "."
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build fence: %v\n%s", err, output)
+	}
+	defer os.Remove("/tmp/fence-test")
+
+	// Test that flags are parsed correctly and -- separates flags from command
+	// Note: We don't pass socket paths here since we're just testing flag parsing
+	cmd := exec.Command("/tmp/fence-test",
+		"--linux-bootstrap",
+		"--", "echo", "test")
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("command failed: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(string(output), "test") {
+		t.Errorf("expected output to contain 'test', got: %s", output)
+	}
+}
+
+func TestLinuxBootstrapWrapper_ExitCode(t *testing.T) {
+	// Build the fence binary first
+	buildCmd := exec.Command("go", "build", "-o", "/tmp/fence-test", ".")
+	buildCmd.Dir = "."
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build fence: %v\n%s", err, output)
+	}
+	defer os.Remove("/tmp/fence-test")
+
+	// Test that exit codes are properly propagated
+	cmd := exec.Command("/tmp/fence-test", "--linux-bootstrap", "--", "sh", "-c", "exit 42")
+
+	_ = cmd.Run()
+
+	if cmd.ProcessState == nil {
+		t.Fatal("ProcessState is nil")
+	}
+
+	exitCode := cmd.ProcessState.ExitCode()
+	if exitCode != 42 {
+		t.Errorf("expected exit code 42, got %d", exitCode)
+	}
+}
+
+func TestLinuxBootstrapWrapper_CommandNotFound(t *testing.T) {
+	// Build the fence binary first
+	buildCmd := exec.Command("go", "build", "-o", "/tmp/fence-test", ".")
+	buildCmd.Dir = "."
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build fence: %v\n%s", err, output)
+	}
+	defer os.Remove("/tmp/fence-test")
+
+	// Test command not found returns exit code 127
+	cmd := exec.Command("/tmp/fence-test", "--linux-bootstrap", "--", "nonexistent-command-xyz")
+
+	_ = cmd.Run()
+
+	if cmd.ProcessState == nil {
+		t.Fatal("ProcessState is nil")
+	}
+
+	exitCode := cmd.ProcessState.ExitCode()
+	if exitCode != 127 {
+		t.Errorf("expected exit code 127 for command not found, got %d", exitCode)
+	}
+}
+
+func TestLinuxBootstrapWrapper_NoCommand(t *testing.T) {
+	// Build the fence binary first
+	buildCmd := exec.Command("go", "build", "-o", "/tmp/fence-test", ".")
+	buildCmd.Dir = "."
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build fence: %v\n%s", err, output)
+	}
+	defer os.Remove("/tmp/fence-test")
+
+	// Test no command specified returns exit code 125 (ExitWrapperSetupFailed)
+	cmd := exec.Command("/tmp/fence-test", "--linux-bootstrap")
+
+	_ = cmd.Run()
+
+	if cmd.ProcessState == nil {
+		t.Fatal("ProcessState is nil")
+	}
+
+	exitCode := cmd.ProcessState.ExitCode()
+	if exitCode != 125 {
+		t.Errorf("expected exit code 125 for no command, got %d", exitCode)
+	}
 }
