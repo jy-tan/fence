@@ -76,32 +76,52 @@ func startBridgesAndSetEnv(ctx context.Context, opts bootstrapOptions) []string 
 
 	if opts.httpSocket != "" {
 		socketPaths = append(socketPaths, opts.httpSocket)
+		startErrCh := make(chan error, 1)
 		go func() {
-			if err := bridgeTCPToUnix(ctx, 3128, opts.httpSocket); err != nil {
+			if err := bridgeTCPToUnix(ctx, 3128, opts.httpSocket, startErrCh); err != nil && err != context.Canceled {
 				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] HTTP bridge error: %v\n", err)
 			}
 		}()
-		os.Setenv("HTTP_PROXY", "http://127.0.0.1:3128")
-		os.Setenv("HTTPS_PROXY", "http://127.0.0.1:3128")
-		os.Setenv("http_proxy", "http://127.0.0.1:3128")
-		os.Setenv("https_proxy", "http://127.0.0.1:3128")
+		if err := <-startErrCh; err != nil {
+			fatal(ExitWrapperSetupFailed, "failed to start HTTP bridge: %v", err)
+		}
+		if err := os.Setenv("HTTP_PROXY", "http://127.0.0.1:3128"); err != nil {
+			fatal(ExitWrapperSetupFailed, "failed to set HTTP_PROXY: %v", err)
+		}
+		if err := os.Setenv("HTTPS_PROXY", "http://127.0.0.1:3128"); err != nil {
+			fatal(ExitWrapperSetupFailed, "failed to set HTTPS_PROXY: %v", err)
+		}
+		if err := os.Setenv("http_proxy", "http://127.0.0.1:3128"); err != nil {
+			fatal(ExitWrapperSetupFailed, "failed to set http_proxy: %v", err)
+		}
+		if err := os.Setenv("https_proxy", "http://127.0.0.1:3128"); err != nil {
+			fatal(ExitWrapperSetupFailed, "failed to set https_proxy: %v", err)
+		}
 	}
 
 	if opts.socksSocket != "" {
 		socketPaths = append(socketPaths, opts.socksSocket)
+		startErrCh := make(chan error, 1)
 		go func() {
-			if err := bridgeTCPToUnix(ctx, 1080, opts.socksSocket); err != nil {
+			if err := bridgeTCPToUnix(ctx, 1080, opts.socksSocket, startErrCh); err != nil && err != context.Canceled {
 				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] SOCKS bridge error: %v\n", err)
 			}
 		}()
-		os.Setenv("ALL_PROXY", "socks5h://127.0.0.1:1080")
-		os.Setenv("all_proxy", "socks5h://127.0.0.1:1080")
+		if err := <-startErrCh; err != nil {
+			fatal(ExitWrapperSetupFailed, "failed to start SOCKS bridge: %v", err)
+		}
+		if err := os.Setenv("ALL_PROXY", "socks5h://127.0.0.1:1080"); err != nil {
+			fatal(ExitWrapperSetupFailed, "failed to set ALL_PROXY: %v", err)
+		}
+		if err := os.Setenv("all_proxy", "socks5h://127.0.0.1:1080"); err != nil {
+			fatal(ExitWrapperSetupFailed, "failed to set all_proxy: %v", err)
+		}
 	}
 
 	for _, rb := range opts.reverseBridges {
 		socketPaths = append(socketPaths, rb.socketPath)
 		go func(port int, socketPath string) {
-			if err := bridgeUnixToTCP(ctx, socketPath, port); err != nil {
+			if err := bridgeUnixToTCP(ctx, socketPath, port); err != nil && err != context.Canceled {
 				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Reverse bridge error: %v\n", err)
 			}
 		}(rb.port, rb.socketPath)
@@ -164,7 +184,7 @@ func execUserCommand(opts bootstrapOptions) {
 	}
 
 	// Create the command
-	cmd := exec.Command(execPath, opts.command[1:]...)
+	cmd := exec.Command(execPath, opts.command[1:]...) // #nosec G204 -- execPath is resolved via exec.LookPath
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -256,27 +276,36 @@ func loadConfigFromEnv() (*config.Config, error) {
 	return cfg, nil
 }
 
-// bridgeTCPToUnix bridges TCP connections on a port to a Unix socket
-// This is used for proxy support (HTTP/SOCKS proxies)
-func bridgeTCPToUnix(ctx context.Context, listenPort int, unixSocketPath string) error {
+// bridgeTCPToUnix bridges TCP connections on a port to a Unix socket.
+// This is used for proxy support (HTTP/SOCKS proxies).
+// startErrCh receives nil once the listener is ready, or an error if setup
+// fails; it is always sent to exactly once before the function returns.
+func bridgeTCPToUnix(ctx context.Context, listenPort int, unixSocketPath string, startErrCh chan<- error) error {
 	lc := net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
-			return c.Control(func(fd uintptr) {
+			var setsockoptErr error
+			err := c.Control(func(fd uintptr) {
 				// Allow reuse of address to avoid "address already in use" errors
-				syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+				setsockoptErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
 			})
+			if err != nil {
+				return err
+			}
+			return setsockoptErr
 		},
 	}
 
 	ln, err := lc.Listen(ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", listenPort))
 	if err != nil {
+		startErrCh <- fmt.Errorf("failed to listen on port %d: %w", listenPort, err)
 		return fmt.Errorf("failed to listen on port %d: %w", listenPort, err)
 	}
+	startErrCh <- nil
 
 	// Close listener when context is cancelled
 	go func() {
 		<-ctx.Done()
-		ln.Close()
+		_ = ln.Close()
 	}()
 
 	for {
@@ -303,22 +332,22 @@ func bridgeTCPToUnix(ctx context.Context, listenPort int, unixSocketPath string)
 
 // handleTCPToUnixConnection handles a single TCP to Unix socket connection
 func handleTCPToUnixConnection(tcpConn net.Conn, unixPath string) {
-	defer tcpConn.Close()
+	defer func() { _ = tcpConn.Close() }()
 
 	unixConn, err := net.Dial("unix", unixPath)
 	if err != nil {
 		return
 	}
-	defer unixConn.Close()
+	defer func() { _ = unixConn.Close() }()
 
 	// Bidirectional copy
 	done := make(chan struct{}, 2)
 	go func() {
-		io.Copy(tcpConn, unixConn)
+		_, _ = io.Copy(tcpConn, unixConn)
 		done <- struct{}{}
 	}()
 	go func() {
-		io.Copy(unixConn, tcpConn)
+		_, _ = io.Copy(unixConn, tcpConn)
 		done <- struct{}{}
 	}()
 
@@ -330,7 +359,7 @@ func handleTCPToUnixConnection(tcpConn net.Conn, unixPath string) {
 // This is used for exposing ports from inside the sandbox
 func bridgeUnixToTCP(ctx context.Context, unixSocketPath string, targetPort int) error {
 	// Remove socket if it already exists
-	os.Remove(unixSocketPath)
+	_ = os.Remove(unixSocketPath)
 
 	// Create Unix socket listener
 	lc := net.ListenConfig{}
@@ -342,8 +371,8 @@ func bridgeUnixToTCP(ctx context.Context, unixSocketPath string, targetPort int)
 	// Close listener when context is cancelled
 	go func() {
 		<-ctx.Done()
-		ln.Close()
-		os.Remove(unixSocketPath)
+		_ = ln.Close()
+		_ = os.Remove(unixSocketPath)
 	}()
 
 	for {
@@ -370,22 +399,22 @@ func bridgeUnixToTCP(ctx context.Context, unixSocketPath string, targetPort int)
 
 // handleUnixToTCPConnection handles a single Unix to TCP socket connection
 func handleUnixToTCPConnection(unixConn net.Conn, targetPort int) {
-	defer unixConn.Close()
+	defer func() { _ = unixConn.Close() }()
 
 	tcpConn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", targetPort))
 	if err != nil {
 		return
 	}
-	defer tcpConn.Close()
+	defer func() { _ = tcpConn.Close() }()
 
 	// Bidirectional copy
 	done := make(chan struct{}, 2)
 	go func() {
-		io.Copy(unixConn, tcpConn)
+		_, _ = io.Copy(unixConn, tcpConn)
 		done <- struct{}{}
 	}()
 	go func() {
-		io.Copy(tcpConn, unixConn)
+		_, _ = io.Copy(tcpConn, unixConn)
 		done <- struct{}{}
 	}()
 
@@ -420,7 +449,7 @@ func waitForUnixSocket(ctx context.Context, socketPath string) error {
 			// Try to connect to the socket
 			conn, err := net.Dial("unix", socketPath)
 			if err == nil {
-				conn.Close()
+				_ = conn.Close()
 				return nil
 			}
 		}

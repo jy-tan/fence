@@ -144,7 +144,7 @@ func TestLinuxBootstrapWrapper_SimpleCommand(t *testing.T) {
 	if output, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build fence: %v\n%s", err, output)
 	}
-	defer os.Remove("/tmp/fence-test")
+	defer func() { _ = os.Remove("/tmp/fence-test") }()
 
 	// Run with --linux-bootstrap -- echo hello
 	cmd := exec.Command("/tmp/fence-test", "--linux-bootstrap", "--", "echo", "hello")
@@ -166,7 +166,7 @@ func TestLinuxBootstrapWrapper_FlagParsing(t *testing.T) {
 	if output, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build fence: %v\n%s", err, output)
 	}
-	defer os.Remove("/tmp/fence-test")
+	defer func() { _ = os.Remove("/tmp/fence-test") }()
 
 	// Test that flags are parsed correctly and -- separates flags from command
 	// Note: We don't pass socket paths here since we're just testing flag parsing
@@ -192,7 +192,7 @@ func TestLinuxBootstrapWrapper_ExitCode(t *testing.T) {
 	if output, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build fence: %v\n%s", err, output)
 	}
-	defer os.Remove("/tmp/fence-test")
+	defer func() { _ = os.Remove("/tmp/fence-test") }()
 
 	// Test that exit codes are properly propagated
 	cmd := exec.Command("/tmp/fence-test", "--linux-bootstrap", "--", "sh", "-c", "exit 42")
@@ -217,7 +217,7 @@ func TestLinuxBootstrapWrapper_CommandNotFound(t *testing.T) {
 	if output, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build fence: %v\n%s", err, output)
 	}
-	defer os.Remove("/tmp/fence-test")
+	defer func() { _ = os.Remove("/tmp/fence-test") }()
 
 	// Test command not found returns exit code 127
 	cmd := exec.Command("/tmp/fence-test", "--linux-bootstrap", "--", "nonexistent-command-xyz")
@@ -242,7 +242,7 @@ func TestLinuxBootstrapWrapper_NoCommand(t *testing.T) {
 	if output, err := buildCmd.CombinedOutput(); err != nil {
 		t.Fatalf("failed to build fence: %v\n%s", err, output)
 	}
-	defer os.Remove("/tmp/fence-test")
+	defer func() { _ = os.Remove("/tmp/fence-test") }()
 
 	// Test no command specified returns exit code 125 (ExitWrapperSetupFailed)
 	cmd := exec.Command("/tmp/fence-test", "--linux-bootstrap")

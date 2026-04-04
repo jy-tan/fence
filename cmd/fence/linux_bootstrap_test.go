@@ -26,7 +26,7 @@ func TestBridgeTCPToUnix(t *testing.T) {
 			t.Errorf("failed to listen on unix socket: %v", err)
 			return
 		}
-		defer ln.Close()
+		defer func() { _ = ln.Close() }()
 
 		close(serverReady)
 
@@ -36,13 +36,13 @@ func TestBridgeTCPToUnix(t *testing.T) {
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				buf := make([]byte, 1024)
 				n, err := c.Read(buf)
 				if err != nil {
 					return
 				}
-				c.Write(buf[:n])
+				_, _ = c.Write(buf[:n])
 			}(conn)
 		}
 	}()
@@ -55,21 +55,22 @@ func TestBridgeTCPToUnix(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	startErrCh := make(chan error, 1)
 	go func() {
-		if err := bridgeTCPToUnix(ctx, 18080, socketPath); err != nil && err != context.Canceled {
+		if err := bridgeTCPToUnix(ctx, 18080, socketPath, startErrCh); err != nil && err != context.Canceled {
 			t.Logf("bridge error: %v", err)
 		}
 	}()
-
-	// Wait for bridge to start
-	time.Sleep(100 * time.Millisecond)
+	if err := <-startErrCh; err != nil {
+		t.Fatalf("bridge failed to start: %v", err)
+	}
 
 	// Connect via TCP and send data
 	conn, err := net.Dial("tcp", "127.0.0.1:18080")
 	if err != nil {
 		t.Fatalf("failed to connect to bridge: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	testData := "hello world"
 	_, err = conn.Write([]byte(testData))
@@ -100,7 +101,7 @@ func TestBridgeTCPToUnix_MultipleConnections(t *testing.T) {
 			t.Errorf("failed to listen on unix socket: %v", err)
 			return
 		}
-		defer ln.Close()
+		defer func() { _ = ln.Close() }()
 
 		close(serverReady)
 
@@ -110,10 +111,10 @@ func TestBridgeTCPToUnix_MultipleConnections(t *testing.T) {
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				buf := make([]byte, 1024)
 				n, _ := c.Read(buf)
-				c.Write(buf[:n])
+				_, _ = c.Write(buf[:n])
 			}(conn)
 		}
 	}()
@@ -124,13 +125,15 @@ func TestBridgeTCPToUnix_MultipleConnections(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	startErrCh := make(chan error, 1)
 	go func() {
-		if err := bridgeTCPToUnix(ctx, 18081, socketPath); err != nil && err != context.Canceled {
+		if err := bridgeTCPToUnix(ctx, 18081, socketPath, startErrCh); err != nil && err != context.Canceled {
 			t.Logf("bridge error: %v", err)
 		}
 	}()
-
-	time.Sleep(100 * time.Millisecond)
+	if err := <-startErrCh; err != nil {
+		t.Fatalf("bridge failed to start: %v", err)
+	}
 
 	// Test multiple concurrent connections
 	done := make(chan bool, 3)
@@ -142,10 +145,10 @@ func TestBridgeTCPToUnix_MultipleConnections(t *testing.T) {
 				done <- false
 				return
 			}
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 
 			msg := "test"
-			conn.Write([]byte(msg))
+			_, _ = conn.Write([]byte(msg))
 
 			buf := make([]byte, 1024)
 			n, _ := conn.Read(buf)
@@ -176,7 +179,7 @@ func TestBridgeTCPToUnix_ContextCancellation(t *testing.T) {
 			t.Errorf("failed to listen: %v", err)
 			return
 		}
-		defer ln.Close()
+		defer func() { _ = ln.Close() }()
 		close(serverReady)
 
 		for {
@@ -184,7 +187,7 @@ func TestBridgeTCPToUnix_ContextCancellation(t *testing.T) {
 			if err != nil {
 				return
 			}
-			conn.Close()
+			_ = conn.Close()
 		}
 	}()
 
@@ -193,12 +196,14 @@ func TestBridgeTCPToUnix_ContextCancellation(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	startErrCh := make(chan error, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- bridgeTCPToUnix(ctx, 18082, socketPath)
+		errCh <- bridgeTCPToUnix(ctx, 18082, socketPath, startErrCh)
 	}()
-
-	time.Sleep(100 * time.Millisecond)
+	if err := <-startErrCh; err != nil {
+		t.Fatalf("bridge failed to start: %v", err)
+	}
 
 	// Cancel the context
 	cancel()
@@ -220,7 +225,7 @@ func TestBridgeUnixToTCP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to listen: %v", err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	serverReady := make(chan struct{})
 	go func() {
@@ -231,10 +236,10 @@ func TestBridgeUnixToTCP(t *testing.T) {
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				buf := make([]byte, 1024)
 				n, _ := c.Read(buf)
-				c.Write(buf[:n])
+				_, _ = c.Write(buf[:n])
 			}(conn)
 		}
 	}()
@@ -262,7 +267,7 @@ func TestBridgeUnixToTCP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to connect to unix socket: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	testData := "reverse test"
 	_, err = conn.Write([]byte(testData))
@@ -303,13 +308,13 @@ func TestWaitForUnixSocket_Success(t *testing.T) {
 			t.Errorf("failed to listen: %v", err)
 			return
 		}
-		defer ln.Close()
+		defer func() { _ = ln.Close() }()
 
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		conn.Close()
+		_ = conn.Close()
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -337,13 +342,13 @@ func TestWaitForUnixSockets_AllReady(t *testing.T) {
 			if err != nil {
 				return
 			}
-			defer ln.Close()
+			defer func() { _ = ln.Close() }()
 
 			conn, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			conn.Close()
+			_ = conn.Close()
 		}(path)
 	}
 
@@ -427,7 +432,7 @@ func TestParseReverseBridge(t *testing.T) {
 
 func TestLoadConfigFromEnv(t *testing.T) {
 	t.Run("empty env", func(t *testing.T) {
-		os.Unsetenv("FENCE_CONFIG_JSON")
+		_ = os.Unsetenv("FENCE_CONFIG_JSON")
 		_, err := loadConfigFromEnv()
 		if err == nil {
 			t.Error("expected error for empty env, got nil")
