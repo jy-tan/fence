@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Use-Tusk/fence/internal/config"
 	"github.com/Use-Tusk/fence/internal/sandbox"
 	"github.com/spf13/cobra"
 )
@@ -41,6 +43,18 @@ func TestPresentWrapCommandError_WrapsNonPolicyError(t *testing.T) {
 	if got, want := err.Error(), "failed to wrap command: boom"; got != want {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
+}
+
+// minimalFenceConfigJSON returns a valid FENCE_CONFIG_JSON value for use in
+// bootstrap integration tests. The outer process always sets this variable, so
+// tests that invoke the binary directly must provide it too.
+func minimalFenceConfigJSON(t *testing.T) string {
+	t.Helper()
+	data, err := json.Marshal(config.Default())
+	if err != nil {
+		t.Fatalf("failed to marshal default config: %v", err)
+	}
+	return string(data)
 }
 
 func TestStartCommandWithSignalProxy_CleanupIsIdempotent(t *testing.T) {
@@ -134,6 +148,7 @@ func TestLinuxBootstrapWrapper_SimpleCommand(t *testing.T) {
 
 	// Run with --linux-bootstrap -- echo hello
 	cmd := exec.Command("/tmp/fence-test", "--linux-bootstrap", "--", "echo", "hello")
+	cmd.Env = append(os.Environ(), "FENCE_CONFIG_JSON="+minimalFenceConfigJSON(t))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("command failed: %v\n%s", err, output)
@@ -158,6 +173,7 @@ func TestLinuxBootstrapWrapper_FlagParsing(t *testing.T) {
 	cmd := exec.Command("/tmp/fence-test",
 		"--linux-bootstrap",
 		"--", "echo", "test")
+	cmd.Env = append(os.Environ(), "FENCE_CONFIG_JSON="+minimalFenceConfigJSON(t))
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -180,6 +196,7 @@ func TestLinuxBootstrapWrapper_ExitCode(t *testing.T) {
 
 	// Test that exit codes are properly propagated
 	cmd := exec.Command("/tmp/fence-test", "--linux-bootstrap", "--", "sh", "-c", "exit 42")
+	cmd.Env = append(os.Environ(), "FENCE_CONFIG_JSON="+minimalFenceConfigJSON(t))
 
 	_ = cmd.Run()
 
@@ -204,6 +221,7 @@ func TestLinuxBootstrapWrapper_CommandNotFound(t *testing.T) {
 
 	// Test command not found returns exit code 127
 	cmd := exec.Command("/tmp/fence-test", "--linux-bootstrap", "--", "nonexistent-command-xyz")
+	cmd.Env = append(os.Environ(), "FENCE_CONFIG_JSON="+minimalFenceConfigJSON(t))
 
 	_ = cmd.Run()
 
@@ -228,6 +246,7 @@ func TestLinuxBootstrapWrapper_NoCommand(t *testing.T) {
 
 	// Test no command specified returns exit code 125 (ExitWrapperSetupFailed)
 	cmd := exec.Command("/tmp/fence-test", "--linux-bootstrap")
+	cmd.Env = append(os.Environ(), "FENCE_CONFIG_JSON="+minimalFenceConfigJSON(t))
 
 	_ = cmd.Run()
 

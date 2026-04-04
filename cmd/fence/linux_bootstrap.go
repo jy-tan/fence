@@ -57,10 +57,6 @@ func runLinuxBootstrapWrapper() {
 		os.Exit(ExitWrapperSetupFailed)
 	}
 
-	// Load config from FENCE_CONFIG_JSON environment variable
-	// Note: We don't use cfg here, but loadConfigFromEnv() validates the JSON
-	_ = loadConfigFromEnv()
-
 	// Create context for managing goroutines
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -133,23 +129,18 @@ func runLinuxBootstrapWrapper() {
 		fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Platform detected: %v, applyLandlock: %v\n", detectedPlatform, applyLandlock)
 	}
 	if applyLandlock {
-		// Load config from environment variable
-		var cfg *config.Config
-		if configJSON := os.Getenv("FENCE_CONFIG_JSON"); configJSON != "" {
-			cfg = &config.Config{}
-			if err := json.Unmarshal([]byte(configJSON), cfg); err != nil {
-				if *debugMode {
-					fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Warning: failed to parse FENCE_CONFIG_JSON: %v\n", err)
-				}
-				cfg = nil
-			}
-		}
-		if cfg == nil {
-			cfg = config.Default()
+		cfg, err := loadConfigFromEnv()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: %v\n", err)
+			os.Exit(ExitWrapperSetupFailed)
 		}
 
 		// Get current working directory for relative path resolution
-		cwd, _ := os.Getwd()
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: failed to get working directory: %v\n", err)
+			os.Exit(ExitWrapperSetupFailed)
+		}
 
 		if *debugMode {
 			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Applying Landlock restrictions before command execution\n")
@@ -173,7 +164,7 @@ func runLinuxBootstrapWrapper() {
 		}
 
 		// Apply Landlock restrictions
-		err := sandbox.ApplyLandlockFromConfigWithExec(cfg, cwd, nil, executePaths, *debugMode)
+		err = sandbox.ApplyLandlockFromConfigWithExec(cfg, cwd, nil, executePaths, *debugMode)
 		if err != nil {
 			if *debugMode {
 				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Warning: Landlock not applied: %v\n", err)
@@ -260,19 +251,18 @@ func parseReverseBridge(spec string) (reverseBridgeSpec, error) {
 	}, nil
 }
 
-// loadConfigFromEnv loads the config from FENCE_CONFIG_JSON environment variable
-func loadConfigFromEnv() interface{} {
+// loadConfigFromEnv loads the config from FENCE_CONFIG_JSON environment variable,
+// falling back to config.Default() if the variable is absent or invalid.
+func loadConfigFromEnv() (*config.Config, error) {
 	configJSON := os.Getenv("FENCE_CONFIG_JSON")
 	if configJSON == "" {
-		return nil
+		return nil, fmt.Errorf("FENCE_CONFIG_JSON is not set")
 	}
-	// Just validate that it's valid JSON, we don't actually use it
-	var cfg interface{}
-	if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Warning: failed to parse FENCE_CONFIG_JSON: %v\n", err)
-		return nil
+	cfg := &config.Config{}
+	if err := json.Unmarshal([]byte(configJSON), cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse FENCE_CONFIG_JSON: %w", err)
 	}
-	return cfg
+	return cfg, nil
 }
 
 // bridgeTCPToUnix bridges TCP connections on a port to a Unix socket

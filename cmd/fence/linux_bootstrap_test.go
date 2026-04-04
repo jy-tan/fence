@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/Use-Tusk/fence/internal/config"
 )
 
 func TestBridgeTCPToUnix(t *testing.T) {
@@ -423,27 +426,50 @@ func TestParseReverseBridge(t *testing.T) {
 func TestLoadConfigFromEnv(t *testing.T) {
 	t.Run("empty env", func(t *testing.T) {
 		os.Unsetenv("FENCE_CONFIG_JSON")
-		cfg := loadConfigFromEnv()
-		if cfg != nil {
-			t.Error("expected nil config for empty env")
+		_, err := loadConfigFromEnv()
+		if err == nil {
+			t.Error("expected error for empty env, got nil")
 		}
 	})
 
 	t.Run("valid json", func(t *testing.T) {
 		t.Setenv("FENCE_CONFIG_JSON", `{"allowPty": true}`)
-		cfg := loadConfigFromEnv()
-		if cfg == nil {
-			t.Fatal("expected config, got nil")
+		cfg, err := loadConfigFromEnv()
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
 		}
-		// Just verify we got a valid JSON object
-		// The actual config parsing is done elsewhere
+		if !cfg.AllowPty {
+			t.Error("expected AllowPty=true from parsed config")
+		}
 	})
 
 	t.Run("invalid json", func(t *testing.T) {
 		t.Setenv("FENCE_CONFIG_JSON", `{invalid}`)
-		cfg := loadConfigFromEnv()
-		if cfg != nil {
-			t.Error("expected nil config for invalid json")
+		_, err := loadConfigFromEnv()
+		if err == nil {
+			t.Error("expected error for invalid json, got nil")
+		}
+	})
+
+	t.Run("valid json with network config", func(t *testing.T) {
+		cfg := &config.Config{
+			Network: config.NetworkConfig{
+				AllowedDomains: []string{"github.com"},
+				DeniedDomains:  []string{},
+			},
+		}
+		data, err := json.Marshal(cfg)
+		if err != nil {
+			t.Fatalf("failed to marshal config: %v", err)
+		}
+		t.Setenv("FENCE_CONFIG_JSON", string(data))
+
+		result, err := loadConfigFromEnv()
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if len(result.Network.AllowedDomains) != 1 || result.Network.AllowedDomains[0] != "github.com" {
+			t.Errorf("expected AllowedDomains=[github.com], got %v", result.Network.AllowedDomains)
 		}
 	})
 }
