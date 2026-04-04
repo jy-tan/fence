@@ -15,6 +15,7 @@ import (
 	"github.com/Use-Tusk/fence/internal/config"
 	"github.com/Use-Tusk/fence/internal/platform"
 	"github.com/Use-Tusk/fence/internal/sandbox"
+	"github.com/spf13/pflag"
 )
 
 const (
@@ -29,68 +30,32 @@ const (
 // 3. Applying Landlock restrictions (if configured)
 // 4. Running the user command
 func runLinuxBootstrapWrapper() {
-	// Parse flags manually to avoid cobra dependency
-	args := os.Args[2:] // Skip "fence" and "--linux-bootstrap"
+	flags := pflag.NewFlagSet("linux-bootstrap", pflag.ContinueOnError)
+	httpSocket := flags.String("http-socket", "", "")
+	socksSocket := flags.String("socks-socket", "", "")
+	reverseBridgeSpecs := flags.StringArray("reverse-bridge", nil, "")
+	debugMode := flags.Bool("debug", false, "")
 
-	var (
-		httpSocket     string
-		socksSocket    string
-		reverseBridges []reverseBridgeSpec
-		debugMode      bool
-		cmdStart       int
-	)
-
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--debug":
-			debugMode = true
-		case "--http-socket":
-			if i+1 >= len(args) {
-				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: --http-socket requires a path\n")
-				os.Exit(ExitWrapperSetupFailed)
-			}
-			httpSocket = args[i+1]
-			i++
-		case "--socks-socket":
-			if i+1 >= len(args) {
-				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: --socks-socket requires a path\n")
-				os.Exit(ExitWrapperSetupFailed)
-			}
-			socksSocket = args[i+1]
-			i++
-		case "--reverse-bridge":
-			if i+1 >= len(args) {
-				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: --reverse-bridge requires PORT:PATH spec\n")
-				os.Exit(ExitWrapperSetupFailed)
-			}
-			spec, err := parseReverseBridge(args[i+1])
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: %v\n", err)
-				os.Exit(ExitWrapperSetupFailed)
-			}
-			reverseBridges = append(reverseBridges, spec)
-			i++
-		case "--":
-			cmdStart = i + 1
-			goto parseCommand
-		default:
-			// Unknown flag or start of command
-			if strings.HasPrefix(args[i], "--") {
-				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: unknown flag: %s\n", args[i])
-				os.Exit(ExitWrapperSetupFailed)
-			}
-			cmdStart = i
-			goto parseCommand
-		}
-	}
-
-parseCommand:
-	if cmdStart >= len(args) {
-		fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: no command specified\n")
+	if err := flags.Parse(os.Args[2:]); err != nil {
+		fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: %v\n", err)
 		os.Exit(ExitWrapperSetupFailed)
 	}
 
-	command := args[cmdStart:]
+	var reverseBridges []reverseBridgeSpec
+	for _, s := range *reverseBridgeSpecs {
+		spec, err := parseReverseBridge(s)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: %v\n", err)
+			os.Exit(ExitWrapperSetupFailed)
+		}
+		reverseBridges = append(reverseBridges, spec)
+	}
+
+	command := flags.Args()
+	if len(command) == 0 {
+		fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: no command specified\n")
+		os.Exit(ExitWrapperSetupFailed)
+	}
 
 	// Load config from FENCE_CONFIG_JSON environment variable
 	// Note: We don't use cfg here, but loadConfigFromEnv() validates the JSON
@@ -104,19 +69,19 @@ parseCommand:
 	var socketPaths []string
 
 	// Start socket bridges
-	if httpSocket != "" {
-		socketPaths = append(socketPaths, httpSocket)
+	if *httpSocket != "" {
+		socketPaths = append(socketPaths, *httpSocket)
 		go func() {
-			if err := bridgeTCPToUnix(ctx, 3128, httpSocket); err != nil {
+			if err := bridgeTCPToUnix(ctx, 3128, *httpSocket); err != nil {
 				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] HTTP bridge error: %v\n", err)
 			}
 		}()
 	}
 
-	if socksSocket != "" {
-		socketPaths = append(socketPaths, socksSocket)
+	if *socksSocket != "" {
+		socketPaths = append(socketPaths, *socksSocket)
 		go func() {
-			if err := bridgeTCPToUnix(ctx, 1080, socksSocket); err != nil {
+			if err := bridgeTCPToUnix(ctx, 1080, *socksSocket); err != nil {
 				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] SOCKS bridge error: %v\n", err)
 			}
 		}()
@@ -140,14 +105,14 @@ parseCommand:
 	}
 
 	// Set proxy environment variables
-	if httpSocket != "" {
+	if *httpSocket != "" {
 		os.Setenv("HTTP_PROXY", "http://127.0.0.1:3128")
 		os.Setenv("HTTPS_PROXY", "http://127.0.0.1:3128")
 		os.Setenv("http_proxy", "http://127.0.0.1:3128")
 		os.Setenv("https_proxy", "http://127.0.0.1:3128")
 	}
 
-	if socksSocket != "" {
+	if *socksSocket != "" {
 		os.Setenv("ALL_PROXY", "socks5h://127.0.0.1:1080")
 		os.Setenv("all_proxy", "socks5h://127.0.0.1:1080")
 	}
@@ -164,7 +129,7 @@ parseCommand:
 	detectedPlatform := platform.Detect()
 	applyLandlock := detectedPlatform == platform.Linux
 
-	if debugMode {
+	if *debugMode {
 		fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Platform detected: %v, applyLandlock: %v\n", detectedPlatform, applyLandlock)
 	}
 	if applyLandlock {
@@ -173,7 +138,7 @@ parseCommand:
 		if configJSON := os.Getenv("FENCE_CONFIG_JSON"); configJSON != "" {
 			cfg = &config.Config{}
 			if err := json.Unmarshal([]byte(configJSON), cfg); err != nil {
-				if debugMode {
+				if *debugMode {
 					fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Warning: failed to parse FENCE_CONFIG_JSON: %v\n", err)
 				}
 				cfg = nil
@@ -186,7 +151,7 @@ parseCommand:
 		// Get current working directory for relative path resolution
 		cwd, _ := os.Getwd()
 
-		if debugMode {
+		if *debugMode {
 			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Applying Landlock restrictions before command execution\n")
 		}
 
@@ -199,22 +164,21 @@ parseCommand:
 			if err == nil {
 				// Add the resolved shell binary path for execution
 				executePaths = append(executePaths, execPath)
-				if debugMode {
+				if *debugMode {
 					fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Adding execute path: %s\n", execPath)
 				}
-			} else if debugMode {
+			} else if *debugMode {
 				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Warning: could not resolve command path: %v\n", err)
 			}
 		}
 
 		// Apply Landlock restrictions
-		err := sandbox.ApplyLandlockFromConfigWithExec(cfg, cwd, nil, executePaths, debugMode)
+		err := sandbox.ApplyLandlockFromConfigWithExec(cfg, cwd, nil, executePaths, *debugMode)
 		if err != nil {
-			if debugMode {
+			if *debugMode {
 				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Warning: Landlock not applied: %v\n", err)
 			}
-			// Continue without Landlock - bwrap still provides isolation
-		} else if debugMode {
+		} else if *debugMode {
 			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Landlock restrictions applied\n")
 		}
 
@@ -225,7 +189,7 @@ parseCommand:
 			os.Exit(ExitCommandNotFound)
 		}
 
-		if debugMode {
+		if *debugMode {
 			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Running: %s %v\n", execPath, command[1:])
 		}
 	}
