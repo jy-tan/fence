@@ -130,7 +130,7 @@ func startBridgesAndSetEnv(ctx context.Context, opts bootstrapOptions) []string 
 	return socketPaths
 }
 
-func applyLandlock(opts bootstrapOptions) {
+func applyLandlock(opts bootstrapOptions, socketPaths []string) {
 	cfg, err := loadConfigFromEnv()
 	if err != nil {
 		fatal(ExitWrapperSetupFailed, "%v", err)
@@ -164,7 +164,7 @@ func applyLandlock(opts bootstrapOptions) {
 	}
 
 	// Apply Landlock restrictions
-	err = sandbox.ApplyLandlockFromConfigWithExec(cfg, cwd, nil, executePaths, opts.debug)
+	err = sandbox.ApplyLandlockFromConfigWithExec(cfg, cwd, socketPaths, executePaths, opts.debug)
 	if err != nil {
 		if opts.debug {
 			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Warning: Landlock not applied: %v\n", err)
@@ -228,7 +228,7 @@ func runLinuxBootstrapWrapper() {
 		}
 	}
 
-	applyLandlock(opts)
+	applyLandlock(opts, socketPaths)
 	execUserCommand(opts)
 }
 
