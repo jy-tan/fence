@@ -692,14 +692,20 @@ func appendLinuxBootstrapWrapperArgs(
 	debug bool,
 ) []string {
 	// Ensure fence binary is accessible inside sandbox
+	// Resolve symlinks to avoid bwrap failures on usr-merged distros where /bin -> /usr/bin
 	if fenceExePath != "" {
-		bwrapArgs = append(bwrapArgs, "--ro-bind", fenceExePath, fenceExePath)
+		if resolved, ok := resolvePathForMount(fenceExePath); ok {
+			bwrapArgs = append(bwrapArgs, "--ro-bind", resolved, resolved)
+		}
 	}
 
 	// Ensure shell binary is accessible inside sandbox
 	// This is needed because the shell may be in /nix/store or other non-standard locations
+	// Resolve symlinks to avoid bwrap failures on usr-merged distros where /bin -> /usr/bin
 	if shellPath != "" {
-		bwrapArgs = append(bwrapArgs, "--ro-bind", shellPath, shellPath)
+		if resolved, ok := resolvePathForMount(shellPath); ok {
+			bwrapArgs = append(bwrapArgs, "--ro-bind", resolved, resolved)
+		}
 	}
 
 	// Build the linux-bootstrap command line

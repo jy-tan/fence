@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -235,6 +236,95 @@ func TestWrapCommandLinuxWithOptions_UsesStagedBootstrapShell(t *testing.T) {
 	execFragment := ShellQuote([]string{"--", linuxBootstrapShellPath, "-c"})
 	if !strings.Contains(cmd, execFragment) {
 		t.Fatalf("expected sandbox to launch staged shell in command: %s", cmd)
+	}
+}
+
+// TestAppendLinuxBootstrapWrapperArgs_ResolvesSymlinks verifies that the
+// appendLinuxBootstrapWrapperArgs function resolves symlinks for shell and fence
+// paths before passing them to --ro-bind. This is critical on usr-merged distros
+// where /bin is a symlink to /usr/bin, as bwrap will fail if the destination path
+// contains symlink components.
+func TestAppendLinuxBootstrapWrapperArgs_ResolvesSymlinks(t *testing.T) {
+	// Create a temporary directory with a real file and a symlink to it
+	tmpDir := t.TempDir()
+
+	// Create a real shell binary (just an empty file for testing)
+	realShell := filepath.Join(tmpDir, "real-shell")
+	if err := os.WriteFile(realShell, []byte("#!/bin/sh\necho test"), 0o755); err != nil {
+		t.Fatalf("failed to create real shell: %v", err)
+	}
+
+	// Create a symlink to the shell
+	symlinkShell := filepath.Join(tmpDir, "shell-link")
+	if err := os.Symlink(realShell, symlinkShell); err != nil {
+		t.Fatalf("failed to create shell symlink: %v", err)
+	}
+
+	// Create a real fence binary
+	realFence := filepath.Join(tmpDir, "real-fence")
+	if err := os.WriteFile(realFence, []byte("#!/bin/sh\necho fence"), 0o755); err != nil {
+		t.Fatalf("failed to create real fence: %v", err)
+	}
+
+	// Create a symlink to the fence binary
+	symlinkFence := filepath.Join(tmpDir, "fence-link")
+	if err := os.Symlink(realFence, symlinkFence); err != nil {
+		t.Fatalf("failed to create fence symlink: %v", err)
+	}
+
+	// Call appendLinuxBootstrapWrapperArgs with symlinked paths
+	args := []string{"bwrap"}
+	args = appendLinuxBootstrapWrapperArgs(args, symlinkFence, symlinkShell, "-c", "echo test", nil, nil, nil)
+
+	// Verify that the resolved paths are used in --ro-bind
+	// The function should resolve symlinks to avoid bwrap failures
+	realShellBind := fmt.Sprintf("--ro-bind\x00%s\x00%s", realShell, realShell)
+	realFenceBind := fmt.Sprintf("--ro-bind\x00%s\x00%s", realFence, realFence)
+
+	// Convert args to a single string for easier checking
+	argsStr := strings.Join(args, "\x00")
+
+	// Check that the resolved shell path is used
+	if !strings.Contains(argsStr, realShellBind) {
+		// Check if the unresolved symlink path is being used (indicates the bug)
+		symlinkShellBind := fmt.Sprintf("--ro-bind\x00%s\x00%s", symlinkShell, symlinkShell)
+		if strings.Contains(argsStr, symlinkShellBind) {
+			t.Fatalf("BUG: appendLinuxBootstrapWrapperArgs uses unresolved shell symlink %q instead of resolved path %q. This will fail on usr-merged distros.", symlinkShell, realShell)
+		}
+		t.Fatalf("Expected --ro-bind with resolved shell path %q, but it was not found in args: %v", realShell, args)
+	}
+
+	// Check that the resolved fence path is used
+	if !strings.Contains(argsStr, realFenceBind) {
+		// Check if the unresolved symlink path is being used (indicates the bug)
+		symlinkFenceBind := fmt.Sprintf("--ro-bind\x00%s\x00%s", symlinkFence, symlinkFence)
+		if strings.Contains(argsStr, symlinkFenceBind) {
+			t.Fatalf("BUG: appendLinuxBootstrapWrapperArgs uses unresolved fence symlink %q instead of resolved path %q. This will fail on usr-merged distros.", symlinkFence, realFence)
+		}
+		t.Fatalf("Expected --ro-bind with resolved fence path %q, but it was not found in args: %v", realFence, args)
+	}
+}
+
+// TestAppendLinuxBootstrapWrapperArgs_HandlesNonexistentPaths verifies that
+// appendLinuxBootstrapWrapperArgs gracefully handles nonexistent paths by
+// skipping the mount rather than failing.
+func TestAppendLinuxBootstrapWrapperArgs_HandlesNonexistentPaths(t *testing.T) {
+	args := []string{"bwrap"}
+
+	// Call with nonexistent paths - should not panic or add invalid mounts
+	nonexistentPath := "/nonexistent/path/to/fence"
+	nonexistentShell := "/nonexistent/path/to/shell"
+
+	result := appendLinuxBootstrapWrapperArgs(args, nonexistentPath, nonexistentShell, "-c", "echo test", nil, nil, nil)
+
+	// Should only have the original args plus the bootstrap command
+	// No --ro-bind should be added for nonexistent paths
+	for _, arg := range result {
+		if arg == "--ro-bind" {
+			// Check if the next argument is a nonexistent path
+			// This would indicate the bug
+			t.Fatalf("BUG: appendLinuxBootstrapWrapperArgs added --ro-bind for nonexistent path")
+		}
 	}
 }
 
