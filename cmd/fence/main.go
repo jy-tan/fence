@@ -773,6 +773,19 @@ parseCommand:
 		fencelog.Printf("[fence:landlock-wrapper] Applying Landlock restrictions\n")
 	}
 
+	// Resolve the executable path once, before applying Landlock restrictions.
+	// This is important because exec.LookPath may fail under Landlock for non-standard
+	// paths (e.g., /tmp/fence/bin/shell) where directory traversal is constrained.
+	var execPath string
+	if len(command) > 0 {
+		var err error
+		execPath, err = exec.LookPath(command[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[fence:landlock-wrapper] Error: command not found: %s\n", command[0])
+			os.Exit(127)
+		}
+	}
+
 	// Only apply Landlock on Linux
 	if platform.Detect() == platform.Linux {
 		// Load config from environment variable (passed by parent fence process)
@@ -796,14 +809,10 @@ parseCommand:
 		// Allow execution of the command we're about to exec (e.g. /tmp/fence/bin/shell
 		// in the shell-based bootstrap, which is a bind-mount into a non-standard path).
 		var executePaths []string
-		if len(command) > 0 {
-			if resolvedExecPath, err := exec.LookPath(command[0]); err == nil {
-				executePaths = append(executePaths, resolvedExecPath)
-				if debugMode {
-					fmt.Fprintf(os.Stderr, "[fence:landlock-wrapper] Adding execute path: %s\n", resolvedExecPath)
-				}
-			} else if debugMode {
-				fmt.Fprintf(os.Stderr, "[fence:landlock-wrapper] Warning: could not resolve command path %q: %v\n", command[0], err)
+		if execPath != "" {
+			executePaths = append(executePaths, execPath)
+			if debugMode {
+				fmt.Fprintf(os.Stderr, "[fence:landlock-wrapper] Adding execute path: %s\n", execPath)
 			}
 		}
 
@@ -819,13 +828,6 @@ parseCommand:
 		}
 	}
 
-	// Find the executable
-	execPath, err := exec.LookPath(command[0])
-	if err != nil {
-		fencelog.Printf("[fence:landlock-wrapper] Error: command not found: %s\n", command[0])
-		os.Exit(127)
-	}
-
 	if debugMode {
 		fencelog.Printf("[fence:landlock-wrapper] Exec: %s %v\n", execPath, command[1:])
 	}
@@ -834,9 +836,9 @@ parseCommand:
 	hardenedEnv := sandbox.FilterDangerousEnv(os.Environ())
 
 	// Exec the command (replaces this process)
-	err = syscall.Exec(execPath, command, hardenedEnv) //nolint:gosec
-	if err != nil {
-		fencelog.Printf("[fence:landlock-wrapper] Exec failed: %v\n", err)
+	execErr := syscall.Exec(execPath, command, hardenedEnv) //nolint:gosec
+	if execErr != nil {
+		fmt.Fprintf(os.Stderr, "[fence:landlock-wrapper] Exec failed: %v\n", execErr)
 		os.Exit(1)
 	}
 }
