@@ -353,7 +353,8 @@ func handleTCPToUnixConnection(tcpConn net.Conn, unixPath string) {
 		done <- struct{}{}
 	}()
 
-	// Wait for one direction to finish
+	// Wait for both directions to finish
+	<-done
 	<-done
 }
 

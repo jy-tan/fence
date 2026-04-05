@@ -430,6 +430,130 @@ func TestParseReverseBridge(t *testing.T) {
 	}
 }
 
+// TestHandleTCPToUnixConnection_WaitsForBothDirections tests that the bridge
+// waits for both directions to complete before closing connections.
+// This prevents data loss when one direction finishes before the other.
+func TestHandleTCPToUnixConnection_WaitsForBothDirections(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := tmpDir + "/test.sock"
+
+	// Create a Unix socket server that:
+	// 1. Reads a small request
+	// 2. Waits to ensure the request direction finishes first
+	// 3. Sends a large response
+	serverReady := make(chan struct{})
+	responseSize := 100 * 1024 // 100KB response
+	go func() {
+		ln, err := net.Listen("unix", socketPath)
+		if err != nil {
+			t.Errorf("failed to listen on unix socket: %v", err)
+			return
+		}
+		defer func() { _ = ln.Close() }()
+
+		close(serverReady)
+
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		// Read the small request
+		buf := make([]byte, 1024)
+		n, _ := conn.Read(buf)
+		t.Logf("Server received %d bytes: %q", n, string(buf[:n]))
+
+		// Wait to ensure the request direction finishes first
+		// This simulates a slow server response
+		time.Sleep(200 * time.Millisecond)
+
+		// Send a large response
+		largeResponse := make([]byte, responseSize)
+		for i := range largeResponse {
+			largeResponse[i] = 'X'
+		}
+		written, err := conn.Write(largeResponse)
+		if err != nil {
+			t.Logf("Server write error: %v", err)
+		} else {
+			t.Logf("Server wrote %d bytes", written)
+		}
+	}()
+
+	<-serverReady
+	time.Sleep(50 * time.Millisecond)
+
+	// Start TCP to Unix bridge
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	startErrCh := make(chan error, 1)
+	go func() {
+		if err := bridgeTCPToUnix(ctx, 18085, socketPath, startErrCh); err != nil && err != context.Canceled {
+			t.Logf("bridge error: %v", err)
+		}
+	}()
+	if err := <-startErrCh; err != nil {
+		t.Fatalf("bridge failed to start: %v", err)
+	}
+
+	// Connect via TCP
+	conn, err := net.Dial("tcp", "127.0.0.1:18085")
+	if err != nil {
+		t.Fatalf("failed to connect to bridge: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	// Send a small request
+	request := []byte("REQUEST")
+	_, err = conn.Write(request)
+	if err != nil {
+		t.Fatalf("failed to write request: %v", err)
+	}
+	t.Logf("Client sent %d bytes", len(request))
+
+	// Close write side to signal EOF to server
+	// This causes the request direction (unixConn <- tcpConn) to finish
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		_ = tcpConn.CloseWrite()
+		t.Log("Client closed write side")
+	}
+
+	// Read the large response
+	// With the bug: connection closes early, read fails or gets partial data
+	// With the fix: we get the full response
+	responseBuf := make([]byte, responseSize*2)
+	totalRead := 0
+	deadline := time.After(5 * time.Second)
+
+	for totalRead < responseSize {
+		select {
+		case <-deadline:
+			t.Fatalf("timeout: only received %d of %d bytes - data was truncated", totalRead, responseSize)
+		default:
+		}
+
+		n, err := conn.Read(responseBuf[totalRead:])
+		if n > 0 {
+			totalRead += n
+			t.Logf("Client read %d bytes, total: %d", n, totalRead)
+		}
+		if err != nil {
+			if totalRead < responseSize {
+				t.Fatalf("connection closed early: got %d of %d bytes: %v", totalRead, responseSize, err)
+			}
+			break
+		}
+	}
+
+	if totalRead < responseSize {
+		t.Errorf("expected %d bytes, got %d - response was truncated", responseSize, totalRead)
+	} else {
+		t.Logf("SUCCESS: received full response of %d bytes", totalRead)
+	}
+}
+
 func TestLoadConfigFromEnv(t *testing.T) {
 	t.Run("empty env", func(t *testing.T) {
 		_ = os.Unsetenv("FENCE_CONFIG_JSON")
