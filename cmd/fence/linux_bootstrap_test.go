@@ -8,13 +8,12 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Use-Tusk/fence/internal/config"
 )
-
-
 
 func TestBridgeTCPToUnix(t *testing.T) {
 	// Create a Unix socket server that echoes data
@@ -619,6 +618,211 @@ func TestLoadConfigFromEnv(t *testing.T) {
 		}
 		if len(result.Network.AllowedDomains) != 1 || result.Network.AllowedDomains[0] != "github.com" {
 			t.Errorf("expected AllowedDomains=[github.com], got %v", result.Network.AllowedDomains)
+		}
+	})
+}
+
+// TestRepairRuntimeEnv_Integration tests the runtime environment repair
+// in realistic scenarios where TMPDIR or XDG_RUNTIME_DIR are problematic.
+// This mirrors the shell script logic from linuxRuntimeEnvScript().
+func TestRepairRuntimeEnv_Integration(t *testing.T) {
+	// Save original values
+	origTMPDIR := os.Getenv("TMPDIR")
+	origXDG := os.Getenv("XDG_RUNTIME_DIR")
+	defer func() {
+		if origTMPDIR != "" {
+			os.Setenv("TMPDIR", origTMPDIR)
+		} else {
+			os.Unsetenv("TMPDIR")
+		}
+		if origXDG != "" {
+			os.Setenv("XDG_RUNTIME_DIR", origXDG)
+		} else {
+			os.Unsetenv("XDG_RUNTIME_DIR")
+		}
+	}()
+
+	t.Run("repairs unset TMPDIR", func(t *testing.T) {
+		os.Unsetenv("TMPDIR")
+		cleanup := repairRuntimeEnv()
+		defer cleanup()
+
+		tmpdir := os.Getenv("TMPDIR")
+		if tmpdir != "/tmp" {
+			t.Errorf("expected TMPDIR=/tmp for unset TMPDIR, got %q", tmpdir)
+		}
+	})
+
+	t.Run("repairs TMPDIR pointing to nonexistent directory", func(t *testing.T) {
+		os.Setenv("TMPDIR", "/nonexistent/tmp/dir/xyz123")
+		cleanup := repairRuntimeEnv()
+		defer cleanup()
+
+		tmpdir := os.Getenv("TMPDIR")
+		if tmpdir != "/tmp" {
+			t.Errorf("expected TMPDIR=/tmp for nonexistent path, got %q", tmpdir)
+		}
+	})
+
+	t.Run("keeps valid TMPDIR", func(t *testing.T) {
+		validTmpDir := t.TempDir()
+		os.Setenv("TMPDIR", validTmpDir)
+		cleanup := repairRuntimeEnv()
+		defer cleanup()
+
+		tmpdir := os.Getenv("TMPDIR")
+		if tmpdir != validTmpDir {
+			t.Errorf("expected TMPDIR to remain %q, got %q", validTmpDir, tmpdir)
+		}
+	})
+
+	t.Run("creates XDG_RUNTIME_DIR when unset", func(t *testing.T) {
+		os.Unsetenv("XDG_RUNTIME_DIR")
+		cleanup := repairRuntimeEnv()
+		defer cleanup()
+
+		xdg := os.Getenv("XDG_RUNTIME_DIR")
+		if xdg == "" {
+			t.Fatal("expected XDG_RUNTIME_DIR to be set")
+		}
+
+		// Verify it's under /tmp with correct prefix
+		if !strings.HasPrefix(xdg, "/tmp/fence-runtime-") {
+			t.Errorf("expected XDG_RUNTIME_DIR under /tmp/fence-runtime-, got %q", xdg)
+		}
+
+		// Verify directory exists and is usable
+		info, err := os.Stat(xdg)
+		if err != nil {
+			t.Fatalf("XDG_RUNTIME_DIR directory does not exist: %v", err)
+		}
+
+		// Verify permissions are 0700
+		if info.Mode().Perm() != 0700 {
+			t.Errorf("expected XDG_RUNTIME_DIR permissions 0700, got %04o", info.Mode().Perm())
+		}
+
+		// Verify we can write to it
+		testFile := xdg + "/test-write"
+		if err := os.WriteFile(testFile, []byte("test"), 0600); err != nil {
+			t.Errorf("cannot write to XDG_RUNTIME_DIR: %v", err)
+		}
+		os.Remove(testFile)
+	})
+
+	t.Run("repairs XDG_RUNTIME_DIR pointing to nonexistent directory", func(t *testing.T) {
+		os.Setenv("XDG_RUNTIME_DIR", "/nonexistent/runtime/dir/xyz123")
+		cleanup := repairRuntimeEnv()
+		defer cleanup()
+
+		xdg := os.Getenv("XDG_RUNTIME_DIR")
+		if xdg == "" {
+			t.Fatal("expected XDG_RUNTIME_DIR to be set")
+		}
+
+		// Verify it was replaced with a new directory
+		if !strings.HasPrefix(xdg, "/tmp/fence-runtime-") {
+			t.Errorf("expected XDG_RUNTIME_DIR under /tmp/fence-runtime-, got %q", xdg)
+		}
+
+		// Verify the new directory exists
+		if _, err := os.Stat(xdg); err != nil {
+			t.Fatalf("XDG_RUNTIME_DIR directory does not exist: %v", err)
+		}
+	})
+
+	t.Run("keeps valid XDG_RUNTIME_DIR", func(t *testing.T) {
+		validRuntimeDir := t.TempDir()
+		os.Setenv("XDG_RUNTIME_DIR", validRuntimeDir)
+		cleanup := repairRuntimeEnv()
+		defer cleanup()
+
+		xdg := os.Getenv("XDG_RUNTIME_DIR")
+		if xdg != validRuntimeDir {
+			t.Errorf("expected XDG_RUNTIME_DIR to remain %q, got %q", validRuntimeDir, xdg)
+		}
+	})
+
+	t.Run("cleanup removes created runtime directory", func(t *testing.T) {
+		os.Unsetenv("XDG_RUNTIME_DIR")
+		cleanup := repairRuntimeEnv()
+
+		xdg := os.Getenv("XDG_RUNTIME_DIR")
+		if xdg == "" {
+			t.Fatal("XDG_RUNTIME_DIR was not set")
+		}
+
+		// Verify directory exists
+		if _, err := os.Stat(xdg); err != nil {
+			t.Fatalf("directory does not exist: %v", err)
+		}
+
+		// Call cleanup
+		cleanup()
+
+		// Verify directory is removed
+		if _, err := os.Stat(xdg); !os.IsNotExist(err) {
+			t.Errorf("expected directory to be removed after cleanup, got error: %v", err)
+		}
+	})
+
+	t.Run("cleanup does not remove pre-existing XDG_RUNTIME_DIR", func(t *testing.T) {
+		existingDir := t.TempDir()
+		os.Setenv("XDG_RUNTIME_DIR", existingDir)
+		cleanup := repairRuntimeEnv()
+
+		// Call cleanup
+		cleanup()
+
+		// Verify original directory still exists
+		if _, err := os.Stat(existingDir); err != nil {
+			t.Errorf("expected pre-existing directory to remain after cleanup: %v", err)
+		}
+	})
+
+	t.Run("handles both TMPDIR and XDG_RUNTIME_DIR needing repair", func(t *testing.T) {
+		os.Unsetenv("TMPDIR")
+		os.Unsetenv("XDG_RUNTIME_DIR")
+		cleanup := repairRuntimeEnv()
+		defer cleanup()
+
+		// Verify both are repaired
+		tmpdir := os.Getenv("TMPDIR")
+		if tmpdir != "/tmp" {
+			t.Errorf("expected TMPDIR=/tmp, got %q", tmpdir)
+		}
+
+		xdg := os.Getenv("XDG_RUNTIME_DIR")
+		if xdg == "" {
+			t.Error("expected XDG_RUNTIME_DIR to be set")
+		}
+	})
+
+	t.Run("handles read-only XDG_RUNTIME_DIR", func(t *testing.T) {
+		if os.Getuid() == 0 {
+			t.Skip("test requires non-root user")
+		}
+
+		// Create a read-only directory
+		tmpDir := t.TempDir()
+		readOnlyDir := tmpDir + "/readonly"
+		if err := os.Mkdir(readOnlyDir, 0555); err != nil {
+			t.Fatalf("failed to create read-only dir: %v", err)
+		}
+		defer os.Chmod(readOnlyDir, 0755) // Clean up
+
+		os.Setenv("XDG_RUNTIME_DIR", readOnlyDir)
+		cleanup := repairRuntimeEnv()
+		defer cleanup()
+
+		xdg := os.Getenv("XDG_RUNTIME_DIR")
+		// Should have created a new directory since the read-only one is unusable
+		if xdg == readOnlyDir {
+			t.Error("expected read-only XDG_RUNTIME_DIR to be replaced")
+		}
+
+		if !strings.HasPrefix(xdg, "/tmp/fence-runtime-") {
+			t.Errorf("expected new XDG_RUNTIME_DIR under /tmp/fence-runtime-, got %q", xdg)
 		}
 	})
 }

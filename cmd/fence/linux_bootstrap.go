@@ -234,6 +234,13 @@ func runLinuxBootstrapWrapper() {
 		}
 	}
 
+	// Repair runtime environment (TMPDIR, XDG_RUNTIME_DIR) if needed.
+	// This mirrors the runtime env repair logic from linuxRuntimeEnvScript()
+	// which is used in the shell script bootstrap path.
+	// This must happen before applyLandlock since it creates directories.
+	runtimeCleanup := repairRuntimeEnv()
+	defer runtimeCleanup()
+
 	applyLandlock(opts, socketPaths)
 	execUserCommand(opts)
 }
@@ -270,19 +277,7 @@ func parseReverseBridge(spec string) (reverseBridgeSpec, error) {
 	}, nil
 }
 
-// loadConfigFromEnv loads the config from FENCE_CONFIG_JSON environment variable,
-// falling back to config.Default() if the variable is absent or invalid.
-func loadConfigFromEnv() (*config.Config, error) {
-	configJSON := os.Getenv("FENCE_CONFIG_JSON")
-	if configJSON == "" {
-		return nil, fmt.Errorf("FENCE_CONFIG_JSON is not set")
-	}
-	cfg := &config.Config{}
-	if err := json.Unmarshal([]byte(configJSON), cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse FENCE_CONFIG_JSON: %w", err)
-	}
-	return cfg, nil
-}
+
 
 // bridgeTCPToUnix bridges TCP connections on a port to a Unix socket.
 // This is used for proxy support (HTTP/SOCKS proxies).
@@ -476,4 +471,110 @@ func waitForUnixSocket(ctx context.Context, socketPath string) error {
 			}
 		}
 	}
+}
+
+// dirIsUsable checks if a directory exists and is writable.
+func dirIsUsable(path string) bool {
+	if path == "" {
+		return false
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+
+	if !info.IsDir() {
+		return false
+	}
+
+	// Try to create a test file to verify write permissions
+	testFile := path + "/.fence-write-test-" + fmt.Sprintf("%d", os.Getpid())
+	f, err := os.OpenFile(testFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return false
+	}
+	f.Close()
+	os.Remove(testFile)
+
+	return true
+}
+
+// preparePrivateRuntimeDir creates a private runtime directory under /tmp.
+func preparePrivateRuntimeDir() (dir string, cleanup func(), err error) {
+	uid := os.Getuid()
+	pattern := fmt.Sprintf("fence-runtime-%d-XXXXXX", uid)
+
+	dir, err = os.MkdirTemp("/tmp", pattern)
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+
+	// Set permissions to 0700 (private)
+	if err := os.Chmod(dir, 0700); err != nil {
+		os.RemoveAll(dir)
+		return "", nil, err
+	}
+
+	// Verify the directory is usable
+	if !dirIsUsable(dir) {
+		os.RemoveAll(dir)
+		return "", nil, fmt.Errorf("created directory is not usable")
+	}
+
+	cleanup = func() {
+		os.RemoveAll(dir)
+	}
+
+	return dir, cleanup, nil
+}
+
+// repairRuntimeEnv repairs TMPDIR and XDG_RUNTIME_DIR environment variables.
+// Returns a cleanup function to remove any created runtime directory.
+func repairRuntimeEnv() (cleanup func()) {
+	cleanup = func() {} // Default no-op cleanup
+
+	// Repair TMPDIR if not usable
+	tmpdir := os.Getenv("TMPDIR")
+	if !dirIsUsable(tmpdir) {
+		os.Setenv("TMPDIR", "/tmp")
+	}
+
+	// Repair XDG_RUNTIME_DIR if not usable
+	xdgRuntimeDir := os.Getenv("XDG_RUNTIME_DIR")
+	var createdRuntimeDir string
+
+	if !dirIsUsable(xdgRuntimeDir) {
+		// Create a private runtime directory
+		dir, dirCleanup, err := preparePrivateRuntimeDir()
+		if err == nil {
+			os.Setenv("XDG_RUNTIME_DIR", dir)
+			createdRuntimeDir = dir
+			cleanup = dirCleanup
+		} else {
+			// If we can't create a runtime dir, unset it
+			os.Unsetenv("XDG_RUNTIME_DIR")
+		}
+	}
+
+	// If we created a runtime dir, return a cleanup that removes it
+	if createdRuntimeDir != "" {
+		return cleanup
+	}
+
+	return func() {} // No cleanup needed if we didn't create a directory
+}
+
+// loadConfigFromEnv loads the config from FENCE_CONFIG_JSON environment variable,
+// falling back to config.Default() if the variable is absent or invalid.
+func loadConfigFromEnv() (*config.Config, error) {
+	configJSON := os.Getenv("FENCE_CONFIG_JSON")
+	if configJSON == "" {
+		return nil, fmt.Errorf("FENCE_CONFIG_JSON is not set")
+	}
+	cfg := &config.Config{}
+	if err := json.Unmarshal([]byte(configJSON), cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse FENCE_CONFIG_JSON: %w", err)
+	}
+	return cfg, nil
 }
