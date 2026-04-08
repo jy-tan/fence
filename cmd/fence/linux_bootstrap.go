@@ -32,12 +32,37 @@ type bootstrapOptions struct {
 	debug          bool
 }
 
+// exitError represents an error with an associated exit code
+type exitError struct {
+	code int
+	err  error
+}
+
+func (e *exitError) Error() string {
+	return e.err.Error()
+}
+
+func (e *exitError) ExitCode() int {
+	return e.code
+}
+
+// fatalError creates an exitError and returns it
+func fatalError(code int, format string, args ...any) error {
+	msg := fmt.Sprintf(format, args...)
+	fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: %s\n", msg)
+	return &exitError{
+		code: code,
+		err:  fmt.Errorf("%s", msg),
+	}
+}
+
+// fatal calls os.Exit with the appropriate code (kept for backward compatibility)
 func fatal(exitCode int, format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: "+format+"\n", args...)
 	os.Exit(exitCode)
 }
 
-func parseFlagsAndArgs() bootstrapOptions {
+func parseFlagsAndArgs() (bootstrapOptions, error) {
 	flags := pflag.NewFlagSet("linux-bootstrap", pflag.ContinueOnError)
 	httpSocket := flags.String("http-socket", "", "")
 	socksSocket := flags.String("socks-socket", "", "")
@@ -45,21 +70,21 @@ func parseFlagsAndArgs() bootstrapOptions {
 	debugMode := flags.Bool("debug", false, "")
 
 	if err := flags.Parse(os.Args[2:]); err != nil {
-		fatal(ExitWrapperSetupFailed, "%v", err)
+		return bootstrapOptions{}, fatalError(ExitWrapperSetupFailed, "%v", err)
 	}
 
 	var reverseBridges []reverseBridgeSpec
 	for _, s := range *reverseBridgeSpecs {
 		spec, err := parseReverseBridge(s)
 		if err != nil {
-			fatal(ExitWrapperSetupFailed, "%v", err)
+			return bootstrapOptions{}, fatalError(ExitWrapperSetupFailed, "%v", err)
 		}
 		reverseBridges = append(reverseBridges, spec)
 	}
 
 	command := flags.Args()
 	if len(command) == 0 {
-		fatal(ExitWrapperSetupFailed, "no command specified")
+		return bootstrapOptions{}, fatalError(ExitWrapperSetupFailed, "no command specified")
 	}
 
 	return bootstrapOptions{
@@ -68,10 +93,10 @@ func parseFlagsAndArgs() bootstrapOptions {
 		reverseBridges: reverseBridges,
 		command:        command,
 		debug:          *debugMode,
-	}
+	}, nil
 }
 
-func startBridgesAndSetEnv(ctx context.Context, opts bootstrapOptions) []string {
+func startBridgesAndSetEnv(ctx context.Context, opts bootstrapOptions) ([]string, error) {
 	var socketPaths []string
 
 	if opts.httpSocket != "" {
@@ -86,19 +111,19 @@ func startBridgesAndSetEnv(ctx context.Context, opts bootstrapOptions) []string 
 			}
 		}()
 		if result := <-startErrCh; result.err != nil {
-			fatal(ExitWrapperSetupFailed, "failed to start HTTP bridge: %v", result.err)
+			return nil, fatalError(ExitWrapperSetupFailed, "failed to start HTTP bridge: %v", result.err)
 		}
 		if err := os.Setenv("HTTP_PROXY", "http://127.0.0.1:3128"); err != nil {
-			fatal(ExitWrapperSetupFailed, "failed to set HTTP_PROXY: %v", err)
+			return nil, fatalError(ExitWrapperSetupFailed, "failed to set HTTP_PROXY: %v", err)
 		}
 		if err := os.Setenv("HTTPS_PROXY", "http://127.0.0.1:3128"); err != nil {
-			fatal(ExitWrapperSetupFailed, "failed to set HTTPS_PROXY: %v", err)
+			return nil, fatalError(ExitWrapperSetupFailed, "failed to set HTTPS_PROXY: %v", err)
 		}
 		if err := os.Setenv("http_proxy", "http://127.0.0.1:3128"); err != nil {
-			fatal(ExitWrapperSetupFailed, "failed to set http_proxy: %v", err)
+			return nil, fatalError(ExitWrapperSetupFailed, "failed to set http_proxy: %v", err)
 		}
 		if err := os.Setenv("https_proxy", "http://127.0.0.1:3128"); err != nil {
-			fatal(ExitWrapperSetupFailed, "failed to set https_proxy: %v", err)
+			return nil, fatalError(ExitWrapperSetupFailed, "failed to set https_proxy: %v", err)
 		}
 	}
 
@@ -114,13 +139,13 @@ func startBridgesAndSetEnv(ctx context.Context, opts bootstrapOptions) []string 
 			}
 		}()
 		if result := <-startErrCh; result.err != nil {
-			fatal(ExitWrapperSetupFailed, "failed to start SOCKS bridge: %v", result.err)
+			return nil, fatalError(ExitWrapperSetupFailed, "failed to start SOCKS bridge: %v", result.err)
 		}
 		if err := os.Setenv("ALL_PROXY", "socks5h://127.0.0.1:1080"); err != nil {
-			fatal(ExitWrapperSetupFailed, "failed to set ALL_PROXY: %v", err)
+			return nil, fatalError(ExitWrapperSetupFailed, "failed to set ALL_PROXY: %v", err)
 		}
 		if err := os.Setenv("all_proxy", "socks5h://127.0.0.1:1080"); err != nil {
-			fatal(ExitWrapperSetupFailed, "failed to set all_proxy: %v", err)
+			return nil, fatalError(ExitWrapperSetupFailed, "failed to set all_proxy: %v", err)
 		}
 	}
 
@@ -133,19 +158,19 @@ func startBridgesAndSetEnv(ctx context.Context, opts bootstrapOptions) []string 
 		}(rb.port, rb.socketPath)
 	}
 
-	return socketPaths
+	return socketPaths, nil
 }
 
-func applyLandlock(opts bootstrapOptions, socketPaths []string) {
+func applyLandlock(opts bootstrapOptions, socketPaths []string) error {
 	cfg, err := loadConfigFromEnv()
 	if err != nil {
-		fatal(ExitWrapperSetupFailed, "%v", err)
+		return fatalError(ExitWrapperSetupFailed, "%v", err)
 	}
 
 	// Get current working directory for relative path resolution
 	cwd, err := os.Getwd()
 	if err != nil {
-		fatal(ExitWrapperSetupFailed, "failed to get working directory: %v", err)
+		return fatalError(ExitWrapperSetupFailed, "failed to get working directory: %v", err)
 	}
 
 	if opts.debug {
@@ -178,15 +203,17 @@ func applyLandlock(opts bootstrapOptions, socketPaths []string) {
 	} else if opts.debug {
 		fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Landlock restrictions applied\n")
 	}
+
+	return nil
 }
 
-func execUserCommand(opts bootstrapOptions) {
+func execUserCommand(opts bootstrapOptions) error {
 	// Use cmd.Run() so that bridge goroutines remain alive
 	// while the command executes. Landlock restrictions applied above
 	// are automatically inherited by child processes.
 	execPath, err := exec.LookPath(opts.command[0])
 	if err != nil {
-		fatal(ExitCommandNotFound, "command not found: %s", opts.command[0])
+		return fatalError(ExitCommandNotFound, "command not found: %s", opts.command[0])
 	}
 
 	// Create the command
@@ -204,14 +231,19 @@ func execUserCommand(opts bootstrapOptions) {
 	err = cmd.Run()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
+			return &exitError{
+				code: exitErr.ExitCode(),
+				err:  exitErr,
+			}
 		}
 		// Check if the error is "command not found"
 		if cmdErr, ok := err.(*exec.Error); ok && cmdErr.Err == exec.ErrNotFound {
-			fatal(ExitCommandNotFound, "command not found: %s", opts.command[0])
+			return fatalError(ExitCommandNotFound, "command not found: %s", opts.command[0])
 		}
-		fatal(ExitWrapperSetupFailed, "run failed: %v", err)
+		return fatalError(ExitWrapperSetupFailed, "run failed: %v", err)
 	}
+
+	return nil
 }
 
 // runLinuxBootstrapWrapper handles the --linux-bootstrap wrapper mode.
@@ -221,16 +253,25 @@ func execUserCommand(opts bootstrapOptions) {
 // 3. Applying Landlock restrictions (if configured)
 // 4. Running the user command
 func runLinuxBootstrapWrapper() {
-	opts := parseFlagsAndArgs()
+	opts, err := parseFlagsAndArgs()
+	if err != nil {
+		handleErrorAndExit(err)
+		return
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	socketPaths := startBridgesAndSetEnv(ctx, opts)
+	socketPaths, err := startBridgesAndSetEnv(ctx, opts)
+	if err != nil {
+		handleErrorAndExit(err)
+		return
+	}
 
 	if len(socketPaths) > 0 {
 		if err := waitForUnixSockets(ctx, socketPaths, 5*time.Second); err != nil {
-			fatal(ExitWrapperSetupFailed, "%v", err)
+			handleErrorAndExit(fatalError(ExitWrapperSetupFailed, "%v", err))
+			return
 		}
 	}
 
@@ -241,8 +282,24 @@ func runLinuxBootstrapWrapper() {
 	runtimeCleanup := repairRuntimeEnv()
 	defer runtimeCleanup()
 
-	applyLandlock(opts, socketPaths)
-	execUserCommand(opts)
+	if err := applyLandlock(opts, socketPaths); err != nil {
+		handleErrorAndExit(err)
+		return
+	}
+
+	if err := execUserCommand(opts); err != nil {
+		handleErrorAndExit(err)
+		return
+	}
+}
+
+// handleErrorAndExit extracts the exit code from an error and calls os.Exit
+func handleErrorAndExit(err error) {
+	if exitErr, ok := err.(*exitError); ok {
+		os.Exit(exitErr.ExitCode())
+	}
+	// Fallback for unexpected error types
+	os.Exit(ExitWrapperSetupFailed)
 }
 
 // reverseBridgeSpec represents a reverse bridge specification (port:socketPath)

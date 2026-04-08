@@ -5,6 +5,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net"
 	"os"
 	"strconv"
@@ -823,6 +825,216 @@ func TestRepairRuntimeEnv_Integration(t *testing.T) {
 
 		if !strings.HasPrefix(xdg, "/tmp/fence-runtime-") {
 			t.Errorf("expected new XDG_RUNTIME_DIR under /tmp/fence-runtime-, got %q", xdg)
+		}
+	})
+}
+
+// TestExecUserCommand tests the command execution function.
+func TestExecUserCommand(t *testing.T) {
+	t.Run("command not found", func(t *testing.T) {
+		opts := bootstrapOptions{
+			command: []string{"nonexistent-command-xyz123"},
+		}
+
+		err := execUserCommand(opts)
+		if err == nil {
+			t.Fatal("expected error for nonexistent command")
+		}
+
+		var exitErr *exitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("expected exitError, got %T", err)
+		}
+
+		if exitErr.ExitCode() != ExitCommandNotFound {
+			t.Errorf("expected exit code %d, got %d", ExitCommandNotFound, exitErr.ExitCode())
+		}
+	})
+
+	t.Run("successful command execution", func(t *testing.T) {
+		opts := bootstrapOptions{
+			command: []string{"echo", "hello"},
+		}
+
+		err := execUserCommand(opts)
+		if err != nil {
+			t.Errorf("expected no error, got: %v", err)
+		}
+	})
+
+	t.Run("command with exit code", func(t *testing.T) {
+		opts := bootstrapOptions{
+			command: []string{"sh", "-c", "exit 42"},
+		}
+
+		err := execUserCommand(opts)
+		if err == nil {
+			t.Fatal("expected error for non-zero exit code")
+		}
+
+		var exitErr *exitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("expected exitError, got %T", err)
+		}
+
+		if exitErr.ExitCode() != 42 {
+			t.Errorf("expected exit code 42, got %d", exitErr.ExitCode())
+		}
+	})
+}
+
+// TestParseFlagsAndArgs tests flag parsing and validation.
+func TestParseFlagsAndArgs(t *testing.T) {
+	// Save original args
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+
+	t.Run("no command specified", func(t *testing.T) {
+		os.Args = []string{"fence", "--linux-bootstrap"}
+		_, err := parseFlagsAndArgs()
+		if err == nil {
+			t.Error("expected error for no command")
+		}
+
+		var exitErr *exitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("expected exitError, got %T", err)
+		}
+
+		if exitErr.ExitCode() != ExitWrapperSetupFailed {
+			t.Errorf("expected exit code %d, got %d", ExitWrapperSetupFailed, exitErr.ExitCode())
+		}
+	})
+
+	t.Run("valid command", func(t *testing.T) {
+		os.Args = []string{"fence", "--linux-bootstrap", "echo", "hello"}
+		opts, err := parseFlagsAndArgs()
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+
+		if len(opts.command) != 2 {
+			t.Errorf("expected 2 command args, got %d", len(opts.command))
+		}
+		if opts.command[0] != "echo" {
+			t.Errorf("expected command[0]=echo, got %q", opts.command[0])
+		}
+	})
+
+	t.Run("invalid reverse-bridge spec", func(t *testing.T) {
+		os.Args = []string{"fence", "--linux-bootstrap", "--reverse-bridge", "invalid", "echo"}
+		_, err := parseFlagsAndArgs()
+		if err == nil {
+			t.Error("expected error for invalid reverse-bridge spec")
+		}
+
+		var exitErr *exitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("expected exitError, got %T", err)
+		}
+
+		if exitErr.ExitCode() != ExitWrapperSetupFailed {
+			t.Errorf("expected exit code %d, got %d", ExitWrapperSetupFailed, exitErr.ExitCode())
+		}
+	})
+
+	t.Run("parses reverse-bridge correctly", func(t *testing.T) {
+		os.Args = []string{"fence", "--linux-bootstrap", "--reverse-bridge", "3000:/tmp/test.sock", "echo"}
+		opts, err := parseFlagsAndArgs()
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+
+		if len(opts.reverseBridges) != 1 {
+			t.Fatalf("expected 1 reverse bridge, got %d", len(opts.reverseBridges))
+		}
+		if opts.reverseBridges[0].port != 3000 {
+			t.Errorf("expected port 3000, got %d", opts.reverseBridges[0].port)
+		}
+		if opts.reverseBridges[0].socketPath != "/tmp/test.sock" {
+			t.Errorf("expected socket path /tmp/test.sock, got %q", opts.reverseBridges[0].socketPath)
+		}
+	})
+}
+
+// TestApplyLandlock tests Landlock application.
+func TestApplyLandlock(t *testing.T) {
+	t.Run("missing FENCE_CONFIG_JSON", func(t *testing.T) {
+		_ = os.Unsetenv("FENCE_CONFIG_JSON")
+		opts := bootstrapOptions{
+			command: []string{"echo"},
+		}
+
+		err := applyLandlock(opts, nil)
+		if err == nil {
+			t.Error("expected error for missing FENCE_CONFIG_JSON")
+		}
+
+		var exitErr *exitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("expected exitError, got %T", err)
+		}
+
+		if exitErr.ExitCode() != ExitWrapperSetupFailed {
+			t.Errorf("expected exit code %d, got %d", ExitWrapperSetupFailed, exitErr.ExitCode())
+		}
+	})
+
+	t.Run("valid config", func(t *testing.T) {
+		t.Setenv("FENCE_CONFIG_JSON", `{}`)
+		opts := bootstrapOptions{
+			command: []string{"echo"},
+		}
+
+		err := applyLandlock(opts, nil)
+		// Landlock may fail if not supported, but should not return exitError
+		if err != nil {
+			var exitErr *exitError
+			if errors.As(err, &exitErr) {
+				t.Errorf("unexpected exitError: %v", err)
+			}
+			// Non-exit errors are acceptable (e.g., Landlock not supported)
+		}
+	})
+}
+
+// TestExitError tests the exitError type.
+func TestExitError(t *testing.T) {
+	t.Run("Error() returns message", func(t *testing.T) {
+		err := &exitError{
+			code: 42,
+			err:  fmt.Errorf("test error"),
+		}
+
+		if err.Error() != "test error" {
+			t.Errorf("expected 'test error', got %q", err.Error())
+		}
+	})
+
+	t.Run("ExitCode() returns code", func(t *testing.T) {
+		err := &exitError{
+			code: 42,
+			err:  fmt.Errorf("test error"),
+		}
+
+		if err.ExitCode() != 42 {
+			t.Errorf("expected exit code 42, got %d", err.ExitCode())
+		}
+	})
+
+	t.Run("errors.As works", func(t *testing.T) {
+		err := &exitError{
+			code: 42,
+			err:  fmt.Errorf("test error"),
+		}
+
+		var exitErr *exitError
+		if !errors.As(err, &exitErr) {
+			t.Error("expected errors.As to work")
+		}
+
+		if exitErr.ExitCode() != 42 {
+			t.Errorf("expected exit code 42, got %d", exitErr.ExitCode())
 		}
 	})
 }
