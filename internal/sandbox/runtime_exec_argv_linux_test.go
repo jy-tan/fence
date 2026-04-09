@@ -85,6 +85,62 @@ func TestMatchRuntimeExecPolicy_AllowOverridesDeny(t *testing.T) {
 	}
 }
 
+func TestEvaluateLinuxRuntimeExecDecisionForCandidate_BootstrapExecStillChecksContinueSafety(t *testing.T) {
+	called := false
+	decision := evaluateLinuxRuntimeExecDecisionForCandidate(
+		1234,
+		linuxBootstrapShellPath,
+		[]string{"shell"},
+		nil,
+		&linuxArgvExecSupervisorState{},
+		func(int) (int, error) {
+			called = true
+			return 2, nil
+		},
+	)
+	if !called {
+		t.Fatal("expected bootstrap exec to run CONTINUE safety checks")
+	}
+	if decision.Allow {
+		t.Fatal("expected multithreaded bootstrap exec to be blocked")
+	}
+	if !strings.Contains(decision.Message, "multithreaded exec cannot be safely continued in argv mode") {
+		t.Fatalf("expected multithreaded exec message, got: %s", decision.Message)
+	}
+}
+
+func TestEvaluateLinuxRuntimeExecDecisionForCandidate_FirstBootstrapExecUsesOneTimeAllowance(t *testing.T) {
+	state := &linuxArgvExecSupervisorState{
+		allowOneMultithreadedBootstrapContinue: true,
+	}
+
+	decision := evaluateLinuxRuntimeExecDecisionForCandidate(
+		1234,
+		linuxBootstrapShellPath,
+		[]string{"shell"},
+		nil,
+		state,
+		func(int) (int, error) {
+			return 2, nil
+		},
+	)
+	if !decision.Allow {
+		t.Fatalf("expected first multithreaded bootstrap exec to use one-time allowance, got: %s", decision.Message)
+	}
+	if state.allowOneMultithreadedBootstrapContinue {
+		t.Fatal("expected multithreaded bootstrap allowance to be consumed")
+	}
+}
+
+func TestIsLinuxBootstrapExecPath_OnlyAllowsStagedExecutables(t *testing.T) {
+	if !isLinuxBootstrapExecPath(linuxBootstrapShellPath) {
+		t.Fatalf("expected %q to be treated as a bootstrap exec path", linuxBootstrapShellPath)
+	}
+	if isLinuxBootstrapExecPath(filepath.Join(linuxBootstrapBinDir, "evil")) {
+		t.Fatalf("unexpected bootstrap exec match for %q", filepath.Join(linuxBootstrapBinDir, "evil"))
+	}
+}
+
 func TestWrapCommandLinuxWithOptions_ArgvRuntimeExecPolicyRequiresFenceCLI(t *testing.T) {
 	exePath, err := os.Executable()
 	if err != nil {

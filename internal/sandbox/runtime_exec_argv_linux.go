@@ -73,6 +73,12 @@ type linuxRuntimeExecDecision struct {
 	Message string
 }
 
+type linuxArgvExecSupervisorState struct {
+	allowOneMultithreadedBootstrapContinue bool
+}
+
+type linuxThreadCountFunc func(int) (int, error)
+
 type runtimeExecPolicyMatch struct {
 	BlockedPrefix string
 	IsDefault     bool
@@ -445,6 +451,10 @@ func installLinuxArgvExecNotifyFilter() (int, error) {
 }
 
 func runLinuxArgvExecSupervisor(listenerFD int, cfg *config.Config, debug bool) error {
+	state := &linuxArgvExecSupervisorState{
+		allowOneMultithreadedBootstrapContinue: true,
+	}
+
 	for {
 		req := &linuxSeccompNotif{}
 		if err := linuxRecvSeccompNotif(listenerFD, req); err != nil {
@@ -460,7 +470,7 @@ func runLinuxArgvExecSupervisor(listenerFD int, cfg *config.Config, debug bool) 
 			}
 		}
 
-		decision := evaluateLinuxRuntimeExecDecision(req, listenerFD, cfg)
+		decision := evaluateLinuxRuntimeExecDecision(req, listenerFD, cfg, state)
 		resp := &linuxSeccompNotifResp{ID: req.ID}
 		if decision.Allow {
 			// CONTINUE is safe enough here only after we verify the notification is
@@ -490,7 +500,12 @@ func runLinuxArgvExecSupervisor(listenerFD int, cfg *config.Config, debug bool) 
 	}
 }
 
-func evaluateLinuxRuntimeExecDecision(req *linuxSeccompNotif, listenerFD int, cfg *config.Config) linuxRuntimeExecDecision {
+func evaluateLinuxRuntimeExecDecision(
+	req *linuxSeccompNotif,
+	listenerFD int,
+	cfg *config.Config,
+	state *linuxArgvExecSupervisorState,
+) linuxRuntimeExecDecision {
 	execPath, argv, err := readLinuxExecCandidate(req, listenerFD)
 	if err != nil {
 		return linuxRuntimeExecDecision{
@@ -503,6 +518,29 @@ func evaluateLinuxRuntimeExecDecision(req *linuxSeccompNotif, listenerFD int, cf
 		}
 	}
 
+	return evaluateLinuxRuntimeExecDecisionForCandidate(int(req.PID), execPath, argv, cfg, state, linuxProcessThreadCount)
+}
+
+func evaluateLinuxRuntimeExecDecisionForCandidate(
+	pid int,
+	execPath string,
+	argv []string,
+	cfg *config.Config,
+	state *linuxArgvExecSupervisorState,
+	threadCountFunc linuxThreadCountFunc,
+) linuxRuntimeExecDecision {
+	if decision := classifyLinuxRuntimeExecDecision(execPath, argv, cfg); !decision.Allow {
+		return decision
+	}
+
+	if decision := verifyLinuxRuntimeExecSafeToContinue(pid, execPath, argv, state, threadCountFunc); !decision.Allow {
+		return decision
+	}
+
+	return linuxRuntimeExecDecision{Allow: true}
+}
+
+func classifyLinuxRuntimeExecDecision(execPath string, argv []string, cfg *config.Config) linuxRuntimeExecDecision {
 	if isLinuxBootstrapExecPath(execPath) {
 		return linuxRuntimeExecDecision{Allow: true}
 	}
@@ -523,7 +561,24 @@ func evaluateLinuxRuntimeExecDecision(req *linuxSeccompNotif, listenerFD int, cf
 		}
 	}
 
-	threadCount, err := linuxProcessThreadCount(int(req.PID))
+	return linuxRuntimeExecDecision{Allow: true}
+}
+
+// Every allow path eventually returns SECCOMP_USER_NOTIF_FLAG_CONTINUE, so
+// they must all pass the same replay-safety checks before we let the kernel
+// continue the exec.
+func verifyLinuxRuntimeExecSafeToContinue(
+	pid int,
+	execPath string,
+	argv []string,
+	state *linuxArgvExecSupervisorState,
+	threadCountFunc linuxThreadCountFunc,
+) linuxRuntimeExecDecision {
+	if threadCountFunc == nil {
+		threadCountFunc = linuxProcessThreadCount
+	}
+
+	threadCount, err := threadCountFunc(pid)
 	if err != nil {
 		return linuxRuntimeExecDecision{
 			Allow: false,
@@ -535,6 +590,9 @@ func evaluateLinuxRuntimeExecDecision(req *linuxSeccompNotif, listenerFD int, cf
 		}
 	}
 	if threadCount > 1 {
+		if consumeLinuxMultithreadedBootstrapContinue(state, execPath) {
+			return linuxRuntimeExecDecision{Allow: true}
+		}
 		return linuxRuntimeExecDecision{
 			Allow: false,
 			Message: fmt.Sprintf("[fence:linux] Runtime exec policy blocked exec=%q argv=%s: multithreaded exec cannot be safely continued in argv mode",
@@ -545,6 +603,14 @@ func evaluateLinuxRuntimeExecDecision(req *linuxSeccompNotif, listenerFD int, cf
 	}
 
 	return linuxRuntimeExecDecision{Allow: true}
+}
+
+func consumeLinuxMultithreadedBootstrapContinue(state *linuxArgvExecSupervisorState, execPath string) bool {
+	if state == nil || !state.allowOneMultithreadedBootstrapContinue || !isLinuxBootstrapExecPath(execPath) {
+		return false
+	}
+	state.allowOneMultithreadedBootstrapContinue = false
+	return true
 }
 
 func linuxRecvSeccompNotif(listenerFD int, req *linuxSeccompNotif) error {
@@ -802,7 +868,12 @@ func quoteRuntimeArgv(argv []string) string {
 
 func isLinuxBootstrapExecPath(path string) bool {
 	cleaned := filepath.Clean(path)
-	return cleaned == linuxBootstrapBinDir || strings.HasPrefix(cleaned, linuxBootstrapBinDir+string(filepath.Separator))
+	switch cleaned {
+	case linuxBootstrapShellPath, linuxBootstrapFencePath, linuxBootstrapSocatPath:
+		return true
+	default:
+		return false
+	}
 }
 
 func insertLinuxArgsBeforeBwrapCommand(args []string, insert []string) []string {
