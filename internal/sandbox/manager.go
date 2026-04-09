@@ -124,6 +124,9 @@ func (m *Manager) WrapCommand(command string) (string, error) {
 	}
 
 	plat := platform.Detect()
+	if effectiveRuntimeExecPolicy(m.config) == config.RuntimeExecPolicyArgv && plat != platform.Linux {
+		return "", fmt.Errorf("command.runtimeExecPolicy=%q is only supported on Linux", config.RuntimeExecPolicyArgv)
+	}
 	switch plat {
 	case platform.MacOS:
 		return WrapCommandMacOS(m.config, command, m.httpPort, m.socksPort, m.exposedPorts, m.debug, m.shellMode, m.shellLogin)

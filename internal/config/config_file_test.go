@@ -67,6 +67,7 @@ func TestMarshalConfigJSON_IncludesExtendedSections(t *testing.T) {
 	cfg.Devices.Mode = DeviceModeMinimal
 	cfg.Devices.Allow = []string{"/dev/null"}
 	cfg.Command.AcceptSharedBinaryCannotRuntimeDeny = []string{"python"}
+	cfg.Command.RuntimeExecPolicy = RuntimeExecPolicyArgv
 	cfg.SSH.AllowedHosts = []string{"*.example.com"}
 	cfg.SSH.AllowedCommands = []string{"ls"}
 	cfg.SSH.InheritDeny = true
@@ -88,6 +89,7 @@ func TestMarshalConfigJSON_IncludesExtendedSections(t *testing.T) {
 	assert.Contains(t, output, `"/dev/null"`)
 	assert.Contains(t, output, `"acceptSharedBinaryCannotRuntimeDeny": [`)
 	assert.Contains(t, output, `"python"`)
+	assert.Contains(t, output, `"runtimeExecPolicy": "argv"`)
 	assert.Contains(t, output, `"ssh": {`)
 	assert.Contains(t, output, `"allowedHosts": [`)
 	assert.Contains(t, output, `"*.example.com"`)

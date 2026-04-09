@@ -30,11 +30,19 @@
           "type": "array"
         },
         "deny": {
-          "description": "Commands or command prefixes the sandbox will refuse to run. Matched at both preflight (string parse) and runtime (executable path masking). Single-token entries (e.g. \"dd\") are also enforced at the OS level.",
+          "description": "Commands or command prefixes the sandbox will refuse to run. Matched at preflight and, depending on runtimeExecPolicy, at runtime for child execs.",
           "items": {
             "type": "string"
           },
           "type": "array"
+        },
+        "runtimeExecPolicy": {
+          "description": "Runtime child-process exec enforcement mode. \"path\" (default) uses executable-path masking for single-token denies. \"argv\" enables Linux-only argv-aware exec interception for child processes.",
+          "enum": [
+            "path",
+            "argv"
+          ],
+          "type": "string"
         },
         "useDefaults": {
           "description": "Whether to include the built-in default deny list (shutdown, reboot, insmod, mkfs, etc.). Defaults to true when omitted. Set to false to manage the deny list entirely yourself.",

@@ -1,0 +1,7 @@
+{
+    "command": {
+      "deny": ["git log"],
+      "useDefaults": false,
+      "runtimeExecPolicy": "argv"
+    }
+}

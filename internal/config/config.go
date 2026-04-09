@@ -65,12 +65,21 @@ type FilesystemConfig struct {
 	AllowGitConfig  bool     `json:"allowGitConfig,omitempty" description:"If true, allow read access to ~/.gitconfig and ~/.config/git. Enable when git operations inside the sandbox need the user's identity or settings."`
 }
 
+// RuntimeExecPolicy controls how Linux runtime child-process execs are enforced.
+type RuntimeExecPolicy string
+
+const (
+	RuntimeExecPolicyPath RuntimeExecPolicy = "path"
+	RuntimeExecPolicyArgv RuntimeExecPolicy = "argv"
+)
+
 // CommandConfig defines command restrictions.
 type CommandConfig struct {
-	Deny                                []string `json:"deny" description:"Commands or command prefixes the sandbox will refuse to run. Matched at both preflight (string parse) and runtime (executable path masking). Single-token entries (e.g. \"dd\") are also enforced at the OS level."`
-	Allow                               []string `json:"allow" description:"Commands that override a matching deny rule. Use to carve out specific exceptions from a broad deny pattern (e.g. allow \"git push origin docs\" when \"git push\" is denied)."`
-	UseDefaults                         *bool    `json:"useDefaults,omitempty" description:"Whether to include the built-in default deny list (shutdown, reboot, insmod, mkfs, etc.). Defaults to true when omitted. Set to false to manage the deny list entirely yourself."`
-	AcceptSharedBinaryCannotRuntimeDeny []string `json:"acceptSharedBinaryCannotRuntimeDeny,omitempty" description:"Commands for which the shared-binary skip warning is silenced. Add a command here after investigating a collision and accepting that it cannot be blocked on this system."`
+	Deny                                []string          `json:"deny" description:"Commands or command prefixes the sandbox will refuse to run. Matched at preflight and, depending on runtimeExecPolicy, at runtime for child execs."`
+	Allow                               []string          `json:"allow" description:"Commands that override a matching deny rule. Use to carve out specific exceptions from a broad deny pattern (e.g. allow \"git push origin docs\" when \"git push\" is denied)."`
+	UseDefaults                         *bool             `json:"useDefaults,omitempty" description:"Whether to include the built-in default deny list (shutdown, reboot, insmod, mkfs, etc.). Defaults to true when omitted. Set to false to manage the deny list entirely yourself."`
+	AcceptSharedBinaryCannotRuntimeDeny []string          `json:"acceptSharedBinaryCannotRuntimeDeny,omitempty" description:"Commands for which the shared-binary skip warning is silenced. Add a command here after investigating a collision and accepting that it cannot be blocked on this system."`
+	RuntimeExecPolicy                   RuntimeExecPolicy `json:"runtimeExecPolicy,omitempty" schema:"enum=path|argv" description:"Runtime child-process exec enforcement mode. \"path\" (default) uses executable-path masking for single-token denies. \"argv\" enables Linux-only argv-aware exec interception for child processes."`
 }
 
 // SSHConfig defines SSH command restrictions.
@@ -368,6 +377,11 @@ func (c *Config) Validate() error {
 	if slices.Contains(c.Command.Allow, "") {
 		return errors.New("command.allow contains empty command")
 	}
+	switch c.Command.RuntimeExecPolicy {
+	case "", RuntimeExecPolicyPath, RuntimeExecPolicyArgv:
+	default:
+		return fmt.Errorf("invalid command.runtimeExecPolicy %q (expected one of: path, argv)", c.Command.RuntimeExecPolicy)
+	}
 
 	// SSH config
 	for _, host := range c.SSH.AllowedHosts {
@@ -393,6 +407,14 @@ func (c *Config) Validate() error {
 // UseDefaultDeniedCommands returns whether to use the default deny list.
 func (c *CommandConfig) UseDefaultDeniedCommands() bool {
 	return c.UseDefaults == nil || *c.UseDefaults
+}
+
+// EffectiveRuntimeExecPolicy returns the runtime exec policy, defaulting to path.
+func (c *CommandConfig) EffectiveRuntimeExecPolicy() RuntimeExecPolicy {
+	if c == nil || c.RuntimeExecPolicy == "" {
+		return RuntimeExecPolicyPath
+	}
+	return c.RuntimeExecPolicy
 }
 
 func validateDomainPattern(pattern string) error {
@@ -632,6 +654,7 @@ func Merge(base, override *Config) *Config {
 			Deny:                                mergeStrings(base.Command.Deny, override.Command.Deny),
 			Allow:                               mergeStrings(base.Command.Allow, override.Command.Allow),
 			AcceptSharedBinaryCannotRuntimeDeny: mergeStrings(base.Command.AcceptSharedBinaryCannotRuntimeDeny, override.Command.AcceptSharedBinaryCannotRuntimeDeny),
+			RuntimeExecPolicy:                   mergeRuntimeExecPolicy(base.Command.RuntimeExecPolicy, override.Command.RuntimeExecPolicy),
 
 			// Pointer field: override wins if set
 			UseDefaults: mergeOptionalBool(base.Command.UseDefaults, override.Command.UseDefaults),
@@ -678,6 +701,13 @@ func mergeStrings(base, override []string) []string {
 		}
 	}
 	return result
+}
+
+func mergeRuntimeExecPolicy(base, override RuntimeExecPolicy) RuntimeExecPolicy {
+	if override != "" {
+		return override
+	}
+	return base
 }
 
 // mergeOptionalBool returns override if non-nil, otherwise base.

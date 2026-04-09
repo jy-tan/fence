@@ -1342,6 +1342,60 @@ func TestMergeAcceptSharedBinaryCannotRuntimeDeny(t *testing.T) {
 	})
 }
 
+func TestCommandRuntimeExecPolicyValidation(t *testing.T) {
+	t.Run("empty defaults to path", func(t *testing.T) {
+		cfg := Config{}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate() unexpected error: %v", err)
+		}
+		if got := cfg.Command.EffectiveRuntimeExecPolicy(); got != RuntimeExecPolicyPath {
+			t.Fatalf("EffectiveRuntimeExecPolicy() = %q, want %q", got, RuntimeExecPolicyPath)
+		}
+	})
+
+	t.Run("argv is accepted", func(t *testing.T) {
+		cfg := Config{
+			Command: CommandConfig{
+				RuntimeExecPolicy: RuntimeExecPolicyArgv,
+			},
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate() unexpected error: %v", err)
+		}
+	})
+
+	t.Run("invalid value is rejected", func(t *testing.T) {
+		cfg := Config{
+			Command: CommandConfig{
+				RuntimeExecPolicy: RuntimeExecPolicy("bogus"),
+			},
+		}
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("Validate() expected error for invalid runtimeExecPolicy")
+		}
+	})
+}
+
+func TestMergeRuntimeExecPolicy(t *testing.T) {
+	t.Run("override wins when set", func(t *testing.T) {
+		base := &Config{Command: CommandConfig{RuntimeExecPolicy: RuntimeExecPolicyPath}}
+		override := &Config{Command: CommandConfig{RuntimeExecPolicy: RuntimeExecPolicyArgv}}
+		result := Merge(base, override)
+		if result.Command.RuntimeExecPolicy != RuntimeExecPolicyArgv {
+			t.Fatalf("expected override runtimeExecPolicy %q, got %q", RuntimeExecPolicyArgv, result.Command.RuntimeExecPolicy)
+		}
+	})
+
+	t.Run("base inherited when override unset", func(t *testing.T) {
+		base := &Config{Command: CommandConfig{RuntimeExecPolicy: RuntimeExecPolicyArgv}}
+		override := &Config{}
+		result := Merge(base, override)
+		if result.Command.RuntimeExecPolicy != RuntimeExecPolicyArgv {
+			t.Fatalf("expected inherited runtimeExecPolicy %q, got %q", RuntimeExecPolicyArgv, result.Command.RuntimeExecPolicy)
+		}
+	})
+}
+
 func TestMergeSSHConfig(t *testing.T) {
 	t.Run("merge SSH allowed hosts", func(t *testing.T) {
 		base := &Config{

@@ -46,10 +46,11 @@ type cleanDevicesConfig struct {
 
 // cleanCommandConfig is used for JSON output with omitempty to skip empty fields.
 type cleanCommandConfig struct {
-	Deny                                []string `json:"deny,omitempty"`
-	Allow                               []string `json:"allow,omitempty"`
-	UseDefaults                         *bool    `json:"useDefaults,omitempty"`
-	AcceptSharedBinaryCannotRuntimeDeny []string `json:"acceptSharedBinaryCannotRuntimeDeny,omitempty"`
+	Deny                                []string          `json:"deny,omitempty"`
+	Allow                               []string          `json:"allow,omitempty"`
+	UseDefaults                         *bool             `json:"useDefaults,omitempty"`
+	AcceptSharedBinaryCannotRuntimeDeny []string          `json:"acceptSharedBinaryCannotRuntimeDeny,omitempty"`
+	RuntimeExecPolicy                   RuntimeExecPolicy `json:"runtimeExecPolicy,omitempty"`
 }
 
 // cleanSSHConfig is used for JSON output with omitempty to skip empty fields.
@@ -128,6 +129,7 @@ func MarshalConfigJSON(cfg *Config) ([]byte, error) {
 		Allow:                               cfg.Command.Allow,
 		UseDefaults:                         cfg.Command.UseDefaults,
 		AcceptSharedBinaryCannotRuntimeDeny: cfg.Command.AcceptSharedBinaryCannotRuntimeDeny,
+		RuntimeExecPolicy:                   cfg.Command.RuntimeExecPolicy,
 	}
 	if !isCommandEmpty(command) {
 		clean.Command = &command
@@ -179,7 +181,8 @@ func isCommandEmpty(c cleanCommandConfig) bool {
 	return len(c.Deny) == 0 &&
 		len(c.Allow) == 0 &&
 		c.UseDefaults == nil &&
-		len(c.AcceptSharedBinaryCannotRuntimeDeny) == 0
+		len(c.AcceptSharedBinaryCannotRuntimeDeny) == 0 &&
+		c.RuntimeExecPolicy == ""
 }
 
 func isSSHEmpty(s cleanSSHConfig) bool {

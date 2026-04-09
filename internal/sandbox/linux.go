@@ -494,7 +494,7 @@ fi
 func planLinuxBootstrapExecutables(
 	shellPath string,
 	fenceExePath string,
-	useLandlockWrapper bool,
+	needsFence bool,
 	needsSocat bool,
 ) ([]linuxBootstrapExecutableMount, linuxBootstrapExecutables, error) {
 	execs := linuxBootstrapExecutables{
@@ -518,7 +518,7 @@ func planLinuxBootstrapExecutables(
 		return nil, linuxBootstrapExecutables{}, err
 	}
 
-	if useLandlockWrapper {
+	if needsFence {
 		execs.Fence = linuxBootstrapFencePath
 		if err := addMount(fenceExePath, execs.Fence, "fence"); err != nil {
 			return nil, linuxBootstrapExecutables{}, err
@@ -799,25 +799,43 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		return "", err
 	}
 
-	deniedExecPaths, runtimeExecDenyDiagnostics := GetRuntimeDeniedExecutablePathsWithDiagnostics(cfg, opts.Debug)
-	for _, msg := range runtimeExecDenyDiagnostics {
-		fmt.Fprintf(os.Stderr, "[fence:linux] %s\n", msg)
-	}
-	if resolvedShellPath, err := filepath.EvalSymlinks(shellPath); err == nil {
-		deniedExecPaths = slices.DeleteFunc(deniedExecPaths, func(p string) bool {
-			return p == shellPath || p == resolvedShellPath
-		})
-	} else {
-		deniedExecPaths = slices.DeleteFunc(deniedExecPaths, func(p string) bool {
-			return p == shellPath
-		})
-	}
-
 	cwd, _ := os.Getwd()
 	features := DetectLinuxFeatures()
+	runtimeExecPolicy := effectiveRuntimeExecPolicy(cfg)
+	useArgvRuntimeExecPolicy := runtimeExecPolicy == config.RuntimeExecPolicyArgv
+
+	var deniedExecPaths []string
+	if !useArgvRuntimeExecPolicy {
+		var runtimeExecDenyDiagnostics []string
+		deniedExecPaths, runtimeExecDenyDiagnostics = GetRuntimeDeniedExecutablePathsWithDiagnostics(cfg, opts.Debug)
+		for _, msg := range runtimeExecDenyDiagnostics {
+			fmt.Fprintf(os.Stderr, "[fence:linux] %s\n", msg)
+		}
+		if resolvedShellPath, err := filepath.EvalSymlinks(shellPath); err == nil {
+			deniedExecPaths = slices.DeleteFunc(deniedExecPaths, func(p string) bool {
+				return p == shellPath || p == resolvedShellPath
+			})
+		} else {
+			deniedExecPaths = slices.DeleteFunc(deniedExecPaths, func(p string) bool {
+				return p == shellPath
+			})
+		}
+	}
 
 	if opts.Debug {
 		fmt.Fprintf(os.Stderr, "[fence:linux] Available features: %s\n", features.Summary())
+	}
+
+	fenceExePath, _ := os.Executable()
+	executableInTmp := strings.HasPrefix(fenceExePath, "/tmp/")
+	executableIsFence := strings.Contains(filepath.Base(fenceExePath), "fence")
+	if useArgvRuntimeExecPolicy {
+		if !features.HasSeccomp || features.SeccompLogLevel < 2 {
+			return "", fmt.Errorf("command.runtimeExecPolicy=%q requires Linux seccomp user notification support (kernel 5.0+)", config.RuntimeExecPolicyArgv)
+		}
+		if fenceExePath == "" || !executableIsFence {
+			return "", fmt.Errorf("command.runtimeExecPolicy=%q requires the fence CLI binary (current executable cannot host the runtime supervisor)", config.RuntimeExecPolicyArgv)
+		}
 	}
 
 	stdinIsTTY := term.IsTerminal(int(os.Stdin.Fd()))
@@ -1113,6 +1131,13 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 			crossMountWritable[p] = true
 		}
 		crossMountPaths = append(crossMountPaths, linuxDefaultCrossMountReadablePaths()...)
+		if cwd != "" {
+			// Keep the caller's working tree reachable when it lives on a
+			// separate mount (common for /home). Some tools like git need the
+			// cwd path to be discoverable from /, not just inherited as an
+			// already-open working directory.
+			crossMountPaths = append(crossMountPaths, cwd)
+		}
 
 		for _, p := range crossMountPaths {
 			if !fileExists(p) || sameDevice("/", p) || crossMountBound[p] {
@@ -1174,14 +1199,10 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		bwrapArgs = append(bwrapArgs, "--bind", tmpDir, tmpDir)
 	}
 
-	// Get fence executable path for Landlock wrapper
-	fenceExePath, _ := os.Executable()
 	// Skip Landlock wrapper if executable is in /tmp (test binaries are built there)
 	// The wrapper won't work because --tmpfs /tmp hides the test binary
-	executableInTmp := strings.HasPrefix(fenceExePath, "/tmp/")
 	// Skip Landlock wrapper if fence is being used as a library (executable is not fence)
 	// The wrapper re-executes the binary with --landlock-apply, which only fence understands
-	executableIsFence := strings.Contains(filepath.Base(fenceExePath), "fence")
 	useLandlockWrapper := opts.UseLandlock && features.CanUseLandlock() && fenceExePath != "" && !executableInTmp && executableIsFence
 
 	if opts.Debug && executableInTmp {
@@ -1194,7 +1215,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	bootstrapMounts, bootstrapExecs, err := planLinuxBootstrapExecutables(
 		shellPath,
 		fenceExePath,
-		useLandlockWrapper,
+		useLandlockWrapper || useArgvRuntimeExecPolicy,
 		bridge != nil || (reverseBridge != nil && len(reverseBridge.Ports) > 0),
 	)
 	if err != nil {
@@ -1202,14 +1223,19 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	}
 	bwrapArgs = appendLinuxBootstrapExecutableMounts(bwrapArgs, bootstrapMounts)
 
-	bwrapArgs = append(bwrapArgs, "--", bootstrapExecs.Shell, shellFlag)
-
 	innerScript, err := buildLinuxBootstrapScript(cfg, command, bridge, reverseBridge, opts, useLandlockWrapper, bootstrapExecs, shellFlag)
 	if err != nil {
 		return "", err
 	}
-
-	bwrapArgs = append(bwrapArgs, innerScript)
+	if useArgvRuntimeExecPolicy {
+		bwrapArgs = append(bwrapArgs, "--", bootstrapExecs.Fence, linuxArgvExecShimMode)
+		if opts.Debug {
+			bwrapArgs = append(bwrapArgs, "--debug")
+		}
+		bwrapArgs = append(bwrapArgs, "--", bootstrapExecs.Shell, shellFlag, innerScript)
+	} else {
+		bwrapArgs = append(bwrapArgs, "--", bootstrapExecs.Shell, shellFlag, innerScript)
+	}
 
 	if opts.Debug {
 		var featureList []string
@@ -1222,6 +1248,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		if features.HasSeccomp && opts.UseSeccomp && seccompFilterPath != "" {
 			featureList = append(featureList, "seccomp")
 		}
+		featureList = append(featureList, "runtime-exec:"+string(runtimeExecPolicy))
 		if useLandlockWrapper {
 			featureList = append(featureList, fmt.Sprintf("landlock-v%d(wrapper)", features.LandlockABI))
 		} else if features.CanUseLandlock() && opts.UseLandlock {
@@ -1236,6 +1263,15 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	// Build the final command
 	bwrapCmd := ShellQuote(bwrapArgs)
 	finalCmd := bwrapCmd
+
+	if useArgvRuntimeExecPolicy {
+		return buildLinuxArgvExecRunnerCommand(fenceExePath, linuxArgvExecPlan{
+			BwrapArgs:         bwrapArgs,
+			Config:            cfg,
+			Debug:             opts.Debug,
+			SeccompFilterPath: seccompFilterPath,
+		})
+	}
 
 	// If seccomp filter is enabled, wrap with fd redirection
 	// bwrap --seccomp expects the filter on the specified fd

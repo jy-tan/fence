@@ -301,6 +301,7 @@ Block specific commands from being executed, even within command chains.
 | `deny` | List of command prefixes to block (e.g., `["git push", "rm -rf"]`) |
 | `allow` | List of command prefixes to allow, overriding `deny` |
 | `useDefaults` | Enable default deny list of dangerous system commands (default: `true`) |
+| `runtimeExecPolicy` | Runtime child-process exec enforcement mode: `path` (default) or Linux-only `argv` |
 | `acceptSharedBinaryCannotRuntimeDeny` | List of command names that cannot be isolated at runtime on this system (see below) |
 
 Example:
@@ -309,7 +310,8 @@ Example:
 {
   "command": {
     "deny": ["git push", "npm publish"],
-    "allow": ["git push origin docs"]
+    "allow": ["git push origin docs"],
+    "runtimeExecPolicy": "argv"
   }
 }
 ```
@@ -335,10 +337,11 @@ Fence detects blocked commands in:
 - Pipelines: `echo test | git push`
 - Shell invocations: `bash -c "git push"` or `sh -lc "ls && git push"`
 
-Fence also enforces runtime executable deny for child processes:
+Fence also enforces runtime child-process exec policy:
 
-- Single-token deny entries (for example, `python3`, `node`, `ruby`) are resolved to executable paths and blocked at exec-time.
-- This applies even when the executable is launched by an allowed parent process (for example, `claude`, `codex`, `opencode`, or `env`).
+- `runtimeExecPolicy: "path"` is the default. Single-token deny entries (for example, `python3`, `node`, `ruby`) are resolved to executable paths and blocked at exec-time.
+- `runtimeExecPolicy: "argv"` is Linux-only and uses seccomp user notification to inspect the actual `execve` argv before allowing or denying child process execs.
+- Both modes apply even when the executable is launched by an allowed parent process (for example, `claude`, `codex`, `opencode`, or `env`).
 
 ### Shared and Multicall Binaries
 
@@ -372,10 +375,10 @@ Blocking a shared binary is **not** skipped when the collateral names are themse
 
 Current runtime-exec limitations:
 
-- Multi-token rules (for example, `git push`, `dd if=`, `docker run --privileged`) are still preflight-only for child processes.
-- Why: runtime enforcement operates at `execve` and is path-based (`/usr/bin/git`), not shell-intent-based (`git push`), so treating multi-token rules as runtime denies would overblock safe uses (for example, `git status`).
-- Aliases are enforced only when they resolve to a denied executable path; for reliable blocking, deny the real executable name/path (for example, `python3`), not only an alias name.
-- Runtime enforcement is path-based, so renamed/copied binaries at new paths may bypass unless those paths are also denied.
+- In `path` mode, multi-token rules (for example, `git push`, `dd if=`, `docker run --privileged`) are still preflight-only for child processes.
+- In `path` mode, aliases are enforced only when they resolve to a denied executable path; for reliable blocking, deny the real executable name/path (for example, `python3`), not only an alias name.
+- In `path` mode, renamed/copied binaries at new paths may bypass unless those paths are also denied.
+- In `argv` mode, Fence fails closed if it cannot safely reconstruct the exec request or if seccomp user notification is unavailable.
 
 ## SSH Configuration
 

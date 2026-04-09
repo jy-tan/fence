@@ -86,6 +86,20 @@ func runUnderLinuxSandboxDirect(t *testing.T, cfg *config.Config, command string
 	return executeShellCommand(t, wrappedCmd, workDir)
 }
 
+func buildFenceCLIBinary(t *testing.T) string {
+	t.Helper()
+
+	fenceBin := filepath.Join(t.TempDir(), "fence")
+	// #nosec G204 -- arguments are fixed in tests and output path is a test-controlled temp directory.
+	build := exec.Command("go", "build", "-o", fenceBin, "../../cmd/fence")
+	build.Stdout = os.Stdout
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		t.Fatalf("failed to build fence CLI: %v", err)
+	}
+	return fenceBin
+}
+
 // TestLinux_LandlockBlocksWriteOutsideWorkspace verifies that Landlock prevents
 // writes to locations outside the allowed workspace.
 func TestLinux_LandlockBlocksWriteOutsideWorkspace(t *testing.T) {
@@ -377,6 +391,96 @@ func TestLinux_RuntimeExecDeny_ChrootBlockedWhenMountable(t *testing.T) {
 
 	result := runUnderSandbox(t, cfg, "chroot --version", workspace)
 	assertBlocked(t, result)
+}
+
+func TestLinux_RuntimeExecPolicyArgv_DeniesGitPushAllowsGitStatus(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+	skipIfCommandNotFound(t, "git")
+
+	fenceBin := buildFenceCLIBinary(t)
+	workspace := createTempWorkspace(t)
+
+	scriptPath := filepath.Join(workspace, "spawn-git-commands.sh")
+	script := "#!/bin/sh\nset -e\ngit --version >/dev/null 2>&1\necho STATUS_OK\ngit push origin main\necho PUSH_UNEXPECTED\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatalf("failed to write test script: %v", err)
+	}
+
+	configJSON, err := json.Marshal(map[string]any{
+		"filesystem": map[string]any{
+			"allowWrite": []string{workspace},
+		},
+		"command": map[string]any{
+			"deny":              []string{"git push"},
+			"useDefaults":       false,
+			"runtimeExecPolicy": "argv",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+
+	configPath := filepath.Join(t.TempDir(), "argv-runtime-fence.json")
+	if err := os.WriteFile(configPath, configJSON, 0o600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	result := executeShellCommand(t, ShellQuote([]string{fenceBin, "--settings", configPath, "--", "sh", "./spawn-git-commands.sh"}), workspace)
+	assertBlocked(t, result)
+
+	assertContains(t, result.Stdout, "STATUS_OK")
+	if strings.Contains(result.Stdout, "PUSH_UNEXPECTED") {
+		t.Fatalf("unexpected post-push marker found in stdout: %s", result.Stdout)
+	}
+	if strings.Contains(result.Stderr, "blocked by sandbox command policy") {
+		t.Fatalf("expected runtime argv exec block, got preflight block: %s", result.Stderr)
+	}
+	assertContains(t, result.Stderr, "Runtime exec policy blocked")
+}
+
+func TestLinux_RuntimeExecPolicyArgv_GitStatusWorksInRepoRoot(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+	skipIfCommandNotFound(t, "git")
+
+	fenceBin := buildFenceCLIBinary(t)
+	pkgDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+	workspace := filepath.Clean(filepath.Join(pkgDir, "../.."))
+	if !isDirectory(filepath.Join(workspace, ".git")) {
+		t.Skip("skipping: repository root .git directory not available")
+	}
+
+	configJSON, err := json.Marshal(map[string]any{
+		"command": map[string]any{
+			"deny":              []string{"git log"},
+			"useDefaults":       false,
+			"runtimeExecPolicy": "argv",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+
+	configPath := filepath.Join(t.TempDir(), "argv-runtime-home-repo.json")
+	if err := os.WriteFile(configPath, configJSON, 0o600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	result := executeShellCommand(
+		t,
+		ShellQuote([]string{
+			fenceBin,
+			"--settings", configPath,
+			"--",
+			"sh", "-c", "git rev-parse --show-toplevel >/dev/null && git status --short >/dev/null && echo OK",
+		}),
+		workspace,
+	)
+
+	assertAllowed(t, result)
+	assertContains(t, result.Stdout, "OK")
 }
 
 // TestLinux_DenyPrecedence_DenyReadMandatoryAndRuntimeExec verifies denyRead

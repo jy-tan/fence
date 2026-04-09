@@ -7,7 +7,7 @@ Fence uses multiple layers of security on Linux, with graceful fallback when fea
 | Layer | Technology | Purpose | Minimum Kernel |
 |-------|------------|---------|----------------|
 | 1 | **bubblewrap (bwrap)** | Namespace isolation | 3.8+ |
-| 2 | **seccomp** | Syscall filtering | 3.5+ (logging: 4.14+) |
+| 2 | **seccomp** | Syscall filtering + argv-aware runtime exec policy | 3.5+ (logging: 4.14+, user notif: 5.0+) |
 | 3 | **Landlock** | Filesystem access control | 5.13+ |
 | 4 | **eBPF monitoring** | Violation visibility | 4.15+ (requires CAP_BPF) |
 
@@ -37,6 +37,11 @@ fence --linux-features
 #   ✓ eBPF monitoring available (enhanced visibility)
 ```
 
+Seccomp feature levels:
+
+- `Seccomp: true (log level: 1)` means seccomp filtering is available and the kernel supports `SECCOMP_RET_LOG`
+- `Seccomp: true (log level: 2)` means seccomp user notification is available; Fence uses this for `command.runtimeExecPolicy: "argv"` on Linux
+
 ## Landlock Integration
 
 Landlock is applied via an **embedded wrapper** approach:
@@ -46,6 +51,32 @@ Landlock is applied via an **embedded wrapper** approach:
 3. The wrapper `exec()`s the user command
 
 This provides **defense-in-depth**: both bwrap mounts AND Landlock kernel restrictions are enforced.
+
+## Argv-Aware Runtime Exec Policy
+
+Fence supports two Linux runtime child-process exec enforcement modes:
+
+- `runtimeExecPolicy: "path"`: default mode; blocks single-token denied executables by path at exec-time
+- `runtimeExecPolicy: "argv"`: Linux-only opt-in mode; uses seccomp user notification to inspect the actual `execve` / `execveat` argv and enforce command-prefix policy for child processes
+
+In `argv` mode, Fence uses a small two-part architecture:
+
+1. A sandbox-side shim installs a seccomp user-notification filter for `execve` and `execveat`
+2. A host-side Fence supervisor receives notifications, reconstructs the candidate exec path + argv, and decides allow or deny
+
+This allows rules like:
+
+- Deny `git log` for child processes without blocking all `git` execs
+- Deny `git push` while still allowing `git status`
+
+Requirements:
+
+- Linux kernel with seccomp user notification support (`5.0+`)
+- The Fence CLI binary must be available to host the supervisor path
+
+Failure mode:
+
+- If `runtimeExecPolicy: "argv"` is requested and Fence cannot safely inspect the exec request, it fails closed instead of silently downgrading enforcement
 
 ## Fallback Behavior
 
@@ -60,6 +91,12 @@ This provides **defense-in-depth**: both bwrap mounts AND Landlock kernel restri
 - **Impact**: Blocked syscalls are not logged
 - **Fallback**: Syscalls are still blocked, just silently
 - **Workaround**: Use `dmesg` manually to check for blocked syscalls
+
+### When seccomp user notification is not available (kernel < 5.0 or restricted environment)
+
+- **Impact**: `command.runtimeExecPolicy: "argv"` cannot be used
+- **Fallback**: Fence errors if `argv` mode is explicitly requested; use `runtimeExecPolicy: "path"` for the current cross-platform runtime-exec behavior
+- **Security**: `path` mode still blocks single-token child execs, but multi-token child exec rules remain preflight-only
 
 ### When eBPF is not available (no CAP_BPF/root)
 
@@ -166,6 +203,7 @@ On Linux, violation monitoring (`fence -m`) shows:
 
 - The eBPF monitor tracks sandbox processes and logs `EACCES`/`EPERM` errors from syscalls
 - Seccomp violations are blocked but not logged (programs show "Operation not permitted")
+- In `runtimeExecPolicy: "argv"` mode, denied child execs are reported directly as runtime exec policy denials on stderr
 - eBPF requires `bpftrace` to be installed: `sudo apt install bpftrace`
 
 ## Comparison with macOS
@@ -176,22 +214,23 @@ On Linux, violation monitoring (`fence -m`) shows:
 | Glob patterns | Native regex | Expanded at startup |
 | Network isolation | Syscall filtering | Network namespace |
 | Syscall filtering | Implicit | seccomp (27 blocked) |
+| Child exec argv-aware policy | No practical unprivileged hook | Yes (seccomp user notification, opt-in) |
 | Violation logging | log stream | eBPF (PID-filtered) |
 | Root required | No | No (eBPF monitoring: yes) |
 
 ## Kernel Version Reference
 
-| Distribution | Default Kernel | Landlock | seccomp LOG | eBPF |
-|--------------|----------------|----------|-------------|------|
-| Ubuntu 24.04 | 6.8 | ✅ v4 | ✅ | ✅ |
-| Ubuntu 22.04 | 5.15 | ✅ v1 | ✅ | ✅ |
-| Ubuntu 20.04 | 5.4 | ❌ | ✅ | ✅ |
-| Debian 12 | 6.1 | ✅ v2 | ✅ | ✅ |
-| Debian 11 | 5.10 | ❌ | ✅ | ✅ |
-| RHEL 9 | 5.14 | ✅ v1 | ✅ | ✅ |
-| RHEL 8 | 4.18 | ❌ | ✅ | ✅ |
-| Fedora 40 | 6.8 | ✅ v4 | ✅ | ✅ |
-| Arch Linux | Latest | ✅ | ✅ | ✅ |
+| Distribution | Default Kernel | Landlock | seccomp LOG | seccomp USER_NOTIF | eBPF |
+|--------------|----------------|----------|-------------|---------------------|------|
+| Ubuntu 24.04 | 6.8 | ✅ v4 | ✅ | ✅ | ✅ |
+| Ubuntu 22.04 | 5.15 | ✅ v1 | ✅ | ✅ | ✅ |
+| Ubuntu 20.04 | 5.4 | ❌ | ✅ | ✅ | ✅ |
+| Debian 12 | 6.1 | ✅ v2 | ✅ | ✅ | ✅ |
+| Debian 11 | 5.10 | ❌ | ✅ | ✅ | ✅ |
+| RHEL 9 | 5.14 | ✅ v1 | ✅ | ✅ | ✅ |
+| RHEL 8 | 4.18 | ❌ | ✅ | ❌ | ✅ |
+| Fedora 40 | 6.8 | ✅ v4 | ✅ | ✅ | ✅ |
+| Arch Linux | Latest | ✅ | ✅ | ✅ | ✅ |
 
 ## Installing Dependencies
 
