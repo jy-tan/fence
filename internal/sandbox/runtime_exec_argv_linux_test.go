@@ -109,9 +109,9 @@ func TestEvaluateLinuxRuntimeExecDecisionForCandidate_BootstrapExecStillChecksCo
 	}
 }
 
-func TestEvaluateLinuxRuntimeExecDecisionForCandidate_FirstBootstrapExecUsesOneTimeAllowance(t *testing.T) {
+func TestEvaluateLinuxRuntimeExecDecisionForCandidate_FirstBootstrapExecUsesConfiguredAllowance(t *testing.T) {
 	state := &linuxArgvExecSupervisorState{
-		allowOneMultithreadedBootstrapContinue: true,
+		remainingMultithreadedBootstrapContinues: 1,
 	}
 
 	decision := evaluateLinuxRuntimeExecDecisionForCandidate(
@@ -125,10 +125,58 @@ func TestEvaluateLinuxRuntimeExecDecisionForCandidate_FirstBootstrapExecUsesOneT
 		},
 	)
 	if !decision.Allow {
-		t.Fatalf("expected first multithreaded bootstrap exec to use one-time allowance, got: %s", decision.Message)
+		t.Fatalf("expected first multithreaded bootstrap exec to use configured allowance, got: %s", decision.Message)
 	}
-	if state.allowOneMultithreadedBootstrapContinue {
+	if state.remainingMultithreadedBootstrapContinues != 0 {
 		t.Fatal("expected multithreaded bootstrap allowance to be consumed")
+	}
+}
+
+func TestEvaluateLinuxRuntimeExecDecisionForCandidate_BootstrapAllowanceCanCoverLandlockFlow(t *testing.T) {
+	state := &linuxArgvExecSupervisorState{
+		remainingMultithreadedBootstrapContinues: 2,
+	}
+	threadCountFunc := func(int) (int, error) {
+		return 2, nil
+	}
+
+	for i := 0; i < 2; i++ {
+		decision := evaluateLinuxRuntimeExecDecisionForCandidate(
+			1234,
+			linuxBootstrapShellPath,
+			[]string{"shell"},
+			nil,
+			state,
+			threadCountFunc,
+		)
+		if !decision.Allow {
+			t.Fatalf("expected bootstrap allowance %d to be accepted, got: %s", i+1, decision.Message)
+		}
+	}
+
+	if state.remainingMultithreadedBootstrapContinues != 0 {
+		t.Fatalf("expected bootstrap allowance budget to be exhausted, got %d", state.remainingMultithreadedBootstrapContinues)
+	}
+
+	decision := evaluateLinuxRuntimeExecDecisionForCandidate(
+		1234,
+		linuxBootstrapShellPath,
+		[]string{"shell"},
+		nil,
+		state,
+		threadCountFunc,
+	)
+	if decision.Allow {
+		t.Fatal("expected third multithreaded bootstrap exec to be blocked after budget is exhausted")
+	}
+}
+
+func TestLinuxArgvExecMultithreadedBootstrapContinueBudget(t *testing.T) {
+	if got := linuxArgvExecMultithreadedBootstrapContinueBudget(false); got != 1 {
+		t.Fatalf("linuxArgvExecMultithreadedBootstrapContinueBudget(false) = %d, want 1", got)
+	}
+	if got := linuxArgvExecMultithreadedBootstrapContinueBudget(true); got != 2 {
+		t.Fatalf("linuxArgvExecMultithreadedBootstrapContinueBudget(true) = %d, want 2", got)
 	}
 }
 

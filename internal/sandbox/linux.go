@@ -1266,10 +1266,11 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 
 	if useArgvRuntimeExecPolicy {
 		return buildLinuxArgvExecRunnerCommand(fenceExePath, linuxArgvExecPlan{
-			BwrapArgs:         bwrapArgs,
-			Config:            cfg,
-			Debug:             opts.Debug,
-			SeccompFilterPath: seccompFilterPath,
+			BwrapArgs:                              bwrapArgs,
+			Config:                                 cfg,
+			Debug:                                  opts.Debug,
+			SeccompFilterPath:                      seccompFilterPath,
+			AllowedMultithreadedBootstrapContinues: linuxArgvExecMultithreadedBootstrapContinueBudget(useLandlockWrapper),
 		})
 	}
 

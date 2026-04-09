@@ -37,10 +37,11 @@ const (
 )
 
 type linuxArgvExecPlan struct {
-	BwrapArgs         []string       `json:"bwrapArgs"`
-	Config            *config.Config `json:"config,omitempty"`
-	Debug             bool           `json:"debug,omitempty"`
-	SeccompFilterPath string         `json:"seccompFilterPath,omitempty"`
+	BwrapArgs                              []string       `json:"bwrapArgs"`
+	Config                                 *config.Config `json:"config,omitempty"`
+	Debug                                  bool           `json:"debug,omitempty"`
+	SeccompFilterPath                      string         `json:"seccompFilterPath,omitempty"`
+	AllowedMultithreadedBootstrapContinues int            `json:"allowedMultithreadedBootstrapContinues"`
 }
 
 type linuxArgvExecHandshake struct {
@@ -74,7 +75,7 @@ type linuxRuntimeExecDecision struct {
 }
 
 type linuxArgvExecSupervisorState struct {
-	allowOneMultithreadedBootstrapContinue bool
+	remainingMultithreadedBootstrapContinues int
 }
 
 type linuxThreadCountFunc func(int) (int, error)
@@ -110,6 +111,9 @@ func RunLinuxArgvExecRunnerFromEnv() (int, error) {
 	}
 	if len(plan.BwrapArgs) == 0 {
 		return 1, errors.New("Linux argv exec plan has no bubblewrap command")
+	}
+	if plan.AllowedMultithreadedBootstrapContinues <= 0 {
+		return 1, errors.New("Linux argv exec plan has no multithreaded bootstrap continue budget")
 	}
 
 	socketDir, err := os.MkdirTemp("", "fence-argv-exec-")
@@ -193,9 +197,12 @@ func RunLinuxArgvExecRunnerFromEnv() (int, error) {
 		waitErrCh <- cmd.Wait()
 	}()
 
+	supervisorState := &linuxArgvExecSupervisorState{
+		remainingMultithreadedBootstrapContinues: plan.AllowedMultithreadedBootstrapContinues,
+	}
 	supervisorErrCh := make(chan error, 1)
 	go func() {
-		supervisorErrCh <- runLinuxArgvExecSupervisor(listenerFD, plan.Config, plan.Debug)
+		supervisorErrCh <- runLinuxArgvExecSupervisor(listenerFD, plan.Config, plan.Debug, supervisorState)
 	}()
 
 	select {
@@ -450,11 +457,12 @@ func installLinuxArgvExecNotifyFilter() (int, error) {
 	return int(listenerFD), nil
 }
 
-func runLinuxArgvExecSupervisor(listenerFD int, cfg *config.Config, debug bool) error {
-	state := &linuxArgvExecSupervisorState{
-		allowOneMultithreadedBootstrapContinue: true,
-	}
-
+func runLinuxArgvExecSupervisor(
+	listenerFD int,
+	cfg *config.Config,
+	debug bool,
+	state *linuxArgvExecSupervisorState,
+) error {
 	for {
 		req := &linuxSeccompNotif{}
 		if err := linuxRecvSeccompNotif(listenerFD, req); err != nil {
@@ -606,11 +614,19 @@ func verifyLinuxRuntimeExecSafeToContinue(
 }
 
 func consumeLinuxMultithreadedBootstrapContinue(state *linuxArgvExecSupervisorState, execPath string) bool {
-	if state == nil || !state.allowOneMultithreadedBootstrapContinue || !isLinuxBootstrapExecPath(execPath) {
+	if state == nil || state.remainingMultithreadedBootstrapContinues <= 0 || !isLinuxBootstrapExecPath(execPath) {
 		return false
 	}
-	state.allowOneMultithreadedBootstrapContinue = false
+	state.remainingMultithreadedBootstrapContinues--
 	return true
+}
+
+func linuxArgvExecMultithreadedBootstrapContinueBudget(useLandlockWrapper bool) int {
+	budget := 1 // shim -> staged shell
+	if useLandlockWrapper {
+		budget++ // landlock wrapper -> staged shell
+	}
+	return budget
 }
 
 func linuxRecvSeccompNotif(listenerFD int, req *linuxSeccompNotif) error {
