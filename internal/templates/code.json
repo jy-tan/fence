@@ -36,7 +36,15 @@
       "catwalk.charm.sh",
 
       // Copilot
-      "api.individual.githubcopilot.com",
+      "copilot-telemetry.githubusercontent.com",
+      "collector.github.com",
+      "default.exp-tas.com",
+      "copilot-proxy.githubusercontent.com",
+      "origin-tracker.githubusercontent.com",
+      "*.githubcopilot.com",
+      "*.individual.githubcopilot.com",
+      "*.business.githubcopilot.com",
+      "*.enterprise.githubcopilot.com",
 
       // Git hosting
       "github.com",
@@ -116,6 +124,7 @@
 
       // Package manager caches
       "~/.npm/_cacache",
+      "~/.npm/_npx",
       "~/.cache",
       "~/.bun/**",
 
@@ -160,9 +169,6 @@
 
       // Docker config (may contain registry auth)
       "~/.docker/**",
-
-      // GitHub CLI auth
-      "~/.config/gh/**",
 
       // Package manager auth tokens
       "~/.pypirc",
