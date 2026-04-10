@@ -36,15 +36,7 @@
       "catwalk.charm.sh",
 
       // Copilot
-      "copilot-telemetry.githubusercontent.com",
-      "collector.github.com",
-      "default.exp-tas.com",
-      "copilot-proxy.githubusercontent.com",
-      "origin-tracker.githubusercontent.com",
       "*.githubcopilot.com",
-      "*.individual.githubcopilot.com",
-      "*.business.githubcopilot.com",
-      "*.enterprise.githubcopilot.com",
 
       // Git hosting
       "github.com",
