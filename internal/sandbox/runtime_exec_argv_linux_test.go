@@ -69,6 +69,24 @@ func TestMatchesRuntimeArgvPrefix(t *testing.T) {
 			want:   true,
 		},
 		{
+			name:   "single short option value before subcommand is skipped",
+			actual: []string{"git", "-C", "/tmp", "push"},
+			rule:   "git push",
+			want:   true,
+		},
+		{
+			name:   "single short option without value still allows subcommand",
+			actual: []string{"git", "-p", "push"},
+			rule:   "git push",
+			want:   true,
+		},
+		{
+			name:   "path qualified rule is normalized",
+			actual: []string{"git", "push", "origin", "main"},
+			rule:   "/usr/bin/git push",
+			want:   true,
+		},
+		{
 			name:   "non equals tokens after subcommand stay positional",
 			actual: []string{"docker", "run", "--name", "test", "--privileged"},
 			rule:   "docker run --privileged",

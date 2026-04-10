@@ -843,12 +843,7 @@ func normalizeRuntimeExecArgv(execPath string, argv []string) []string {
 }
 
 func matchesRuntimeArgvPrefix(actual []string, rule string) bool {
-	rule = strings.TrimSpace(rule)
-	if rule == "" {
-		return false
-	}
-
-	ruleTokens := tokenizeCommand(rule)
+	ruleTokens := normalizeCommandTokens(rule)
 	return matchesTokenizedCommandRule(actual, ruleTokens)
 }
 

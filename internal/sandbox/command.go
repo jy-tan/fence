@@ -362,10 +362,10 @@ func skipLeadingGlobalFlagTokens(actualTokens []string, positionalIndex int, fir
 
 		positionalIndex++
 
-		// Long options commonly accept a separate value. If the next token is a
-		// non-flag and is not the subcommand we're trying to match, treat it as
+		// Some leading global flags accept a separate value. If the next token is
+		// a non-flag and is not the subcommand we're trying to match, treat it as
 		// an option value and continue scanning for the first subcommand token.
-		if strings.HasPrefix(token, "--") && !strings.Contains(token, "=") && positionalIndex < len(actualTokens) {
+		if leadingGlobalFlagConsumesNextToken(token) && positionalIndex < len(actualTokens) {
 			next := actualTokens[positionalIndex]
 			if next != "--" && !strings.HasPrefix(next, "-") && next != firstSubcommandToken {
 				positionalIndex++
@@ -374,6 +374,19 @@ func skipLeadingGlobalFlagTokens(actualTokens []string, positionalIndex int, fir
 	}
 
 	return positionalIndex
+}
+
+func leadingGlobalFlagConsumesNextToken(token string) bool {
+	switch {
+	case strings.HasPrefix(token, "--"):
+		return !strings.Contains(token, "=")
+	case len(token) == 2 && strings.HasPrefix(token, "-"):
+		// Single short options (e.g. -C /path, -c key=value) often take a
+		// separate value. Deliberately skip collapsed bundles like -abc.
+		return true
+	default:
+		return false
+	}
 }
 
 // SSHBlockedError is returned when an SSH command is blocked by policy.

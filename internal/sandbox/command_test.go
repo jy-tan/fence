@@ -453,10 +453,15 @@ func TestMatchesPrefix(t *testing.T) {
 		{"docker --debug run --privileged", "docker run --privileged", true},
 		{"docker --context=prod run --privileged", "docker run --privileged", true},
 		{"docker --context prod run --privileged", "docker run --privileged", true},
+		{"git -C /tmp push", "git push", true},
+		{"git -c color.ui=always push", "git push", true},
+		{"git -p push", "git push", true},
 
 		// We intentionally do not make all arguments order-insensitive.
 		{"docker run --name test --privileged", "docker run --privileged", false},
 		{"docker foo run --privileged", "docker run --privileged", false},
+		{"git /tmp push", "git push", false},
+		{"/usr/bin/git push", "/usr/bin/git push", true},
 
 		// False negatives for equals suffix
 		{"dd if /dev/zero", "dd if=", false},      // space instead of equals
