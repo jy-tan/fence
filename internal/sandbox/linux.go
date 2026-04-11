@@ -899,6 +899,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	}
 
 	defaultDenyRead := cfg != nil && cfg.Filesystem.DefaultDenyRead
+	strictDenyRead := cfg != nil && cfg.Filesystem.StrictDenyRead
 
 	if defaultDenyRead {
 		// In defaultDenyRead mode, we only bind essential system paths read-only
@@ -909,13 +910,15 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 
 		// Bind essential system paths read-only
 		// Skip /dev, /proc, /tmp as they're mounted with special options below
-		for _, systemPath := range GetDefaultReadablePaths() {
-			if systemPath == "/dev" || systemPath == "/proc" || systemPath == "/tmp" ||
-				systemPath == "/private/tmp" {
-				continue
-			}
-			if fileExists(systemPath) {
-				bwrapArgs = append(bwrapArgs, "--ro-bind", systemPath, systemPath)
+		if !strictDenyRead {
+			for _, systemPath := range GetDefaultReadablePaths() {
+				if systemPath == "/dev" || systemPath == "/proc" || systemPath == "/tmp" ||
+					systemPath == "/private/tmp" {
+					continue
+				}
+				if fileExists(systemPath) {
+					bwrapArgs = append(bwrapArgs, "--ro-bind", systemPath, systemPath)
+				}
 			}
 		}
 
@@ -1005,7 +1008,12 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	// reachable after --ro-bind / / (non-recursive bind). When the target
 	// is on a different filesystem, we create intermediate directories and
 	// bind the real file at its original location so the symlink resolves.
-	if target, err := filepath.EvalSymlinks("/etc/resolv.conf"); err == nil && target != "/etc/resolv.conf" {
+	//
+	// Skipped in strictDenyRead mode: the user controls all readable paths
+	// explicitly, so auto-exposing a cross-mount tree would violate the
+	// strict isolation policy. Users who need DNS can add the resolv.conf
+	// target to allowRead.
+	if target, err := filepath.EvalSymlinks("/etc/resolv.conf"); err == nil && target != "/etc/resolv.conf" && !strictDenyRead {
 		// Skip targets under specially-mounted dirs - a --tmpfs there would
 		// overwrite the /dev or /proc mounts established above.
 		targetUnderSpecialMount := strings.HasPrefix(target, "/dev/") ||

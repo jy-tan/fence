@@ -29,6 +29,7 @@ type cleanNetworkConfig struct {
 // cleanFilesystemConfig is used for JSON output with omitempty to skip empty fields.
 type cleanFilesystemConfig struct {
 	DefaultDenyRead bool     `json:"defaultDenyRead,omitempty"`
+	StrictDenyRead  bool     `json:"strictDenyRead,omitempty"`
 	WSLInterop      *bool    `json:"wslInterop,omitempty"`
 	AllowRead       []string `json:"allowRead,omitempty"`
 	AllowExecute    []string `json:"allowExecute,omitempty"`
@@ -102,6 +103,7 @@ func MarshalConfigJSON(cfg *Config) ([]byte, error) {
 	// Filesystem config - only include if non-empty
 	filesystem := cleanFilesystemConfig{
 		DefaultDenyRead: cfg.Filesystem.DefaultDenyRead,
+		StrictDenyRead:  cfg.Filesystem.StrictDenyRead,
 		WSLInterop:      cfg.Filesystem.WSLInterop,
 		AllowRead:       cfg.Filesystem.AllowRead,
 		AllowExecute:    cfg.Filesystem.AllowExecute,
@@ -164,6 +166,7 @@ func isNetworkEmpty(n cleanNetworkConfig) bool {
 
 func isFilesystemEmpty(f cleanFilesystemConfig) bool {
 	return !f.DefaultDenyRead &&
+		!f.StrictDenyRead &&
 		f.WSLInterop == nil &&
 		len(f.AllowRead) == 0 &&
 		len(f.AllowExecute) == 0 &&

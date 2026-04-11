@@ -149,7 +149,9 @@ type Config struct {
 #### Filesystem Policy
 
 - Reads can run in either the normal "read mostly" mode or the stricter
-  `defaultDenyRead` mode.
+  `defaultDenyRead` mode. Within `defaultDenyRead`, the `strictDenyRead`
+  flag suppresses the default readable system paths, leaving only explicit
+  `allowRead` entries.
 - Fence exposes three read/write tiers:
   - `allowExecute` for tightly scoped executable paths
   - `allowRead` for readable/listable paths
@@ -267,8 +269,8 @@ Seatbelt profiles are generated per command and encode:
 - Proxy-only outbound mode by default, or relaxed direct-network mode when
   `allowedDomains` contains `*`
 - `allowLocalBinding`, `allowLocalOutbound`, and optional Unix socket policy
-- Filesystem rules derived from `defaultDenyRead`, `allowRead`, `allowWrite`,
-  `denyRead`, `denyWrite`, and mandatory dangerous-path protection
+- Filesystem rules derived from `defaultDenyRead`, `strictDenyRead`, `allowRead`,
+  `allowWrite`, `denyRead`, `denyWrite`, and mandatory dangerous-path protection
 - `process-fork`, `process-exec`, runtime executable deny rules, and optional
   PTY access
 

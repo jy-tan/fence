@@ -35,6 +35,7 @@ type MacOSSandboxParams struct {
 	AllowLocalBinding       bool
 	AllowLocalOutbound      bool
 	DefaultDenyRead         bool
+	StrictDenyRead          bool
 	ReadAllowPaths          []string
 	ReadDenyPaths           []string
 	WriteAllowPaths         []string
@@ -171,7 +172,7 @@ func getTmpdirParent() []string {
 }
 
 // generateReadRules generates filesystem read rules for the sandbox profile.
-func generateReadRules(defaultDenyRead bool, allowPaths, denyPaths []string, logTag string) []string {
+func generateReadRules(defaultDenyRead, strictDenyRead bool, allowPaths, denyPaths []string, logTag string) []string {
 	builder := newSeatbeltRuleBuilder()
 
 	if defaultDenyRead {
@@ -185,11 +186,13 @@ func generateReadRules(defaultDenyRead bool, allowPaths, denyPaths []string, log
 		builder.addRule(`(allow file-read-data (literal "/"))`)
 
 		// Allow reading data from essential system paths
-		for _, systemPath := range GetDefaultReadablePaths() {
-			builder.addRule(
-				"(allow file-read-data",
-				fmt.Sprintf("  (subpath %s))", escapePath(systemPath)),
-			)
+		if !strictDenyRead {
+			for _, systemPath := range GetDefaultReadablePaths() {
+				builder.addRule(
+					"(allow file-read-data",
+					fmt.Sprintf("  (subpath %s))", escapePath(systemPath)),
+				)
+			}
 		}
 
 		// Allow reading data from user-specified paths
@@ -575,7 +578,7 @@ func GenerateSandboxProfile(params MacOSSandboxParams) string {
 
 	// Read rules
 	profile.WriteString("; File read\n")
-	for _, rule := range generateReadRules(params.DefaultDenyRead, params.ReadAllowPaths, params.ReadDenyPaths, logTag) {
+	for _, rule := range generateReadRules(params.DefaultDenyRead, params.StrictDenyRead, params.ReadAllowPaths, params.ReadDenyPaths, logTag) {
 		profile.WriteString(rule + "\n")
 	}
 	profile.WriteString("\n")
@@ -665,6 +668,7 @@ func WrapCommandMacOS(cfg *config.Config, command string, httpPort, socksPort in
 		AllowLocalBinding:       allowLocalBinding,
 		AllowLocalOutbound:      allowLocalOutbound,
 		DefaultDenyRead:         cfg.Filesystem.DefaultDenyRead,
+		StrictDenyRead:          cfg.Filesystem.StrictDenyRead,
 		ReadAllowPaths:          cfg.Filesystem.AllowRead,
 		ReadDenyPaths:           cfg.Filesystem.DenyRead,
 		WriteAllowPaths:         allowPaths,

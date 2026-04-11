@@ -117,6 +117,7 @@ func buildMacOSParamsForTest(cfg *config.Config) MacOSSandboxParams {
 		AllowLocalBinding:       allowLocalBinding,
 		AllowLocalOutbound:      allowLocalOutbound,
 		DefaultDenyRead:         cfg.Filesystem.DefaultDenyRead,
+		StrictDenyRead:          cfg.Filesystem.StrictDenyRead,
 		ReadAllowPaths:          cfg.Filesystem.AllowRead,
 		ReadDenyPaths:           cfg.Filesystem.DenyRead,
 		WriteAllowPaths:         allowPaths,

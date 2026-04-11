@@ -126,6 +126,10 @@
           },
           "type": "array"
         },
+        "strictDenyRead": {
+          "description": "If true, suppress the default readable system paths that are normally added when defaultDenyRead is enabled. Only paths in allowRead will be readable. Requires defaultDenyRead to be true.",
+          "type": "boolean"
+        },
         "wslInterop": {
           "description": "Controls access to the WSL interop binary on Windows Subsystem for Linux. If omitted, auto-detected: WSL environments allow /init, non-WSL environments do not.",
           "type": [

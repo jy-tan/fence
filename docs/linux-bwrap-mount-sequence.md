@@ -118,7 +118,7 @@ That creates a broad read-only view of the outer filesystem. Later phases then:
 When `filesystem.defaultDenyRead` is **true**, Fence does *not* bind `/` at all.
 Instead, it builds a narrower base out of explicit read-only binds:
 
-- essential system paths from `GetDefaultReadablePaths()`
+- essential system paths from `GetDefaultReadablePaths()` (unless `strictDenyRead` is also set)
 - expanded `allowRead` paths
 - expanded `allowExecute` paths
 - optional `/init` on WSL when `wslInterop` is active
@@ -184,6 +184,11 @@ If so, Fence:
 2. inserts `--tmpfs` at the first mount boundary
 3. creates deeper directories with `--dir`
 4. finally `--ro-bind`s the real target at its original path
+
+This phase is skipped entirely when `strictDenyRead` is enabled: the user
+controls all readable paths explicitly, so auto-exposing a cross-mount tree
+would violate the strict isolation policy. Users who need DNS in that mode
+can add the resolv.conf target to `allowRead`.
 
 Why this is needed:
 

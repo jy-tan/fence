@@ -56,6 +56,7 @@ type DevicesConfig struct {
 // FilesystemConfig defines filesystem restrictions.
 type FilesystemConfig struct {
 	DefaultDenyRead bool     `json:"defaultDenyRead,omitempty" description:"If true, deny all filesystem reads by default. Only paths listed in allowRead (and essential system paths) remain readable. Use for strict read isolation."`
+	StrictDenyRead  bool     `json:"strictDenyRead,omitempty" description:"If true, suppress the default readable system paths that are normally added when defaultDenyRead is enabled. Only paths in allowRead will be readable. Requires defaultDenyRead to be true."`
 	WSLInterop      *bool    `json:"wslInterop,omitempty" description:"Controls access to the WSL interop binary on Windows Subsystem for Linux. If omitted, auto-detected: WSL environments allow /init, non-WSL environments do not."`
 	AllowRead       []string `json:"allowRead" description:"Additional filesystem paths the sandbox may read. Accepts absolute paths and glob patterns."`
 	AllowExecute    []string `json:"allowExecute" description:"Paths the sandbox may execute (grants read and execute permission, but not directory listing). Use for binaries that must be reachable but whose parent directories should not be browsable."`
@@ -626,6 +627,7 @@ func Merge(base, override *Config) *Config {
 		Filesystem: FilesystemConfig{
 			// Boolean fields: true if either enables it
 			DefaultDenyRead: base.Filesystem.DefaultDenyRead || override.Filesystem.DefaultDenyRead,
+			StrictDenyRead:  base.Filesystem.StrictDenyRead || override.Filesystem.StrictDenyRead,
 
 			// Pointer fields: override wins if set
 			WSLInterop: mergeOptionalBool(base.Filesystem.WSLInterop, override.Filesystem.WSLInterop),
