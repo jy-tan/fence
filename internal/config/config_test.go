@@ -1083,6 +1083,20 @@ func TestMerge(t *testing.T) {
 		}
 	})
 
+	t.Run("merge strictDenyRead implies defaultDenyRead", func(t *testing.T) {
+		base := &Config{}
+		override := &Config{
+			Filesystem: FilesystemConfig{
+				StrictDenyRead: true,
+			},
+		}
+		result := Merge(base, override)
+
+		if !result.Filesystem.DefaultDenyRead {
+			t.Error("expected DefaultDenyRead to be true when StrictDenyRead is set via merge")
+		}
+	})
+
 	t.Run("merge allowExecute", func(t *testing.T) {
 		base := &Config{
 			Filesystem: FilesystemConfig{

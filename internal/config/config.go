@@ -631,7 +631,8 @@ func Merge(base, override *Config) *Config {
 
 		Filesystem: FilesystemConfig{
 			// Boolean fields: true if either enables it
-			DefaultDenyRead: base.Filesystem.DefaultDenyRead || override.Filesystem.DefaultDenyRead,
+			// strictDenyRead implies defaultDenyRead
+			DefaultDenyRead: base.Filesystem.DefaultDenyRead || override.Filesystem.DefaultDenyRead || base.Filesystem.StrictDenyRead || override.Filesystem.StrictDenyRead,
 			StrictDenyRead:  base.Filesystem.StrictDenyRead || override.Filesystem.StrictDenyRead,
 
 			// Pointer fields: override wins if set
