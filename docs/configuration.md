@@ -177,6 +177,8 @@ Use this when you need to support apps that don't respect proxy environment vari
 | `wslInterop` | WSL interop support. `null` (default) = auto-detect, `true` = force on, `false` = force off. When active, auto-allows execute on `/init`. |
 | `allowRead` | Paths to allow reading and directory listing (Landlock: `READ_FILE + READ_DIR + EXECUTE`) |
 | `allowExecute` | Paths to allow executing only (Landlock: `READ_FILE + EXECUTE`, no directory listing) |
+| `defaultDenyRead` | If true, deny all filesystem reads by default. Only paths listed in `allowRead` (and essential system paths) remain readable. Use for strict read isolation. |
+| `strictDenyRead` | If true, suppress the default readable system paths that are normally added when `defaultDenyRead` is enabled. Only paths in `allowRead` will be readable. Implies `defaultDenyRead`. |
 | `denyRead` | Paths to deny reading (deny-only pattern) |
 | `allowWrite` | Paths to allow writing (also grants read and execute) |
 | `denyWrite` | Paths to deny writing (takes precedence) |
@@ -197,7 +199,7 @@ Fence provides three levels of filesystem access, from most restrictive to least
 > [!TIP]
 > **Best practice**: prefer pointing `allowExecute` at specific files (e.g., `/mnt/c/.../powershell.exe`) rather than directories. When Landlock is not active (kernel < 5.13 or wrapper skipped), directory-scoped `allowExecute` behaves like `allowRead` because bwrap only enforces read-only mounts without distinguishing execute from read permissions.
 
-System paths like `/usr`, `/lib`, `/bin`, `/etc` are always readable — you don't need to add them.
+System paths like `/usr`, `/lib`, `/bin`, `/etc` are always readable — you don't need to add them. When `defaultDenyRead` is enabled, these system paths are still added automatically. To suppress them entirely, enable `strictDenyRead` — only paths in `allowRead` will be readable.
 
 Device exposure under `/dev` is configured separately via [`devices`](#device-configuration), not via `filesystem.allowRead`/`allowWrite`.
 
