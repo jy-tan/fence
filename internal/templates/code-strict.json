@@ -21,6 +21,9 @@
       "~/.gemini",
       "~/.factory",
 
+      // Kiro CLI
+      "~/.kiro",
+
       // XDG config directory
       "~/.config",
 
