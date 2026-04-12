@@ -114,6 +114,9 @@
       // Copilot
       "~/.copilot/**",
 
+      // Kiro CLI
+      "~/.kiro/**",
+
       // Package manager caches
       "~/.npm/_cacache",
       "~/.npm/_npx",
