@@ -690,26 +690,26 @@ func appendLinuxBootstrapWrapperArgs(
 	reverseBridge *ReverseBridge,
 	cfg *config.Config,
 	debug bool,
-) []string {
-	// Ensure fence binary is accessible inside sandbox
-	// Resolve symlinks to avoid bwrap failures on usr-merged distros where /bin -> /usr/bin
-	if fenceExePath != "" {
-		if resolved, ok := resolvePathForMount(fenceExePath); ok {
-			bwrapArgs = append(bwrapArgs, "--ro-bind", resolved, resolved)
-		}
+) ([]string, error) {
+	// Use staged bootstrap paths (e.g. /tmp/fence/bin/shell, /tmp/fence/bin/fence)
+	// instead of binding host paths directly. This mirrors the shell-based bootstrap
+	// pattern and ensures executables are accessible at known locations inside the sandbox.
+	// Always mount fence (pass true) since the Go-based bootstrap always needs it
+	// for the --linux-bootstrap command, regardless of whether Landlock is used.
+	needsSocat := bridge != nil || (reverseBridge != nil && len(reverseBridge.Ports) > 0)
+	bootstrapMounts, bootstrapExecs, err := planLinuxBootstrapExecutables(
+		shellPath,
+		fenceExePath,
+		true,
+		needsSocat,
+	)
+	if err != nil {
+		return nil, err
 	}
+	bwrapArgs = appendLinuxBootstrapExecutableMounts(bwrapArgs, bootstrapMounts)
 
-	// Ensure shell binary is accessible inside sandbox
-	// This is needed because the shell may be in /nix/store or other non-standard locations
-	// Resolve symlinks to avoid bwrap failures on usr-merged distros where /bin -> /usr/bin
-	if shellPath != "" {
-		if resolved, ok := resolvePathForMount(shellPath); ok {
-			bwrapArgs = append(bwrapArgs, "--ro-bind", resolved, resolved)
-		}
-	}
-
-	// Build the linux-bootstrap command line
-	bootstrapCmd := []string{fenceExePath, "--linux-bootstrap"}
+	// Build the linux-bootstrap command line using staged paths
+	bootstrapCmd := []string{bootstrapExecs.Fence, "--linux-bootstrap"}
 	if debug {
 		bootstrapCmd = append(bootstrapCmd, "--debug")
 	}
@@ -726,7 +726,7 @@ func appendLinuxBootstrapWrapperArgs(
 			)
 		}
 	}
-	bootstrapCmd = append(bootstrapCmd, "--", shellPath, shellFlag, command)
+	bootstrapCmd = append(bootstrapCmd, "--", bootstrapExecs.Shell, shellFlag, command)
 
 	// Set FENCE_SANDBOX=1 from outside the sandbox via bwrap --setenv so it is structurally
 	// guaranteed to be present regardless of any in-sandbox code paths.
@@ -741,7 +741,7 @@ func appendLinuxBootstrapWrapperArgs(
 	}
 
 	// Execute the bootstrap command directly (no shell wrapper needed)
-	return append(bwrapArgs, bootstrapCmd...)
+	return append(bwrapArgs, bootstrapCmd...), nil
 }
 
 func buildLinuxBootstrapScript(
@@ -1508,7 +1508,10 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	}
 
 	if useLinuxBootstrapWrapper {
-		bwrapArgs = appendLinuxBootstrapWrapperArgs(bwrapArgs, fenceExePath, shellPath, shellFlag, command, bridge, reverseBridge, cfg, opts.Debug)
+		bwrapArgs, err = appendLinuxBootstrapWrapperArgs(bwrapArgs, fenceExePath, shellPath, shellFlag, command, bridge, reverseBridge, cfg, opts.Debug)
+		if err != nil {
+			return "", err
+		}
 	} else {
 		bootstrapMounts, bootstrapExecs, err := planLinuxBootstrapExecutables(
 			shellPath,
