@@ -1038,3 +1038,95 @@ func TestExitError(t *testing.T) {
 		}
 	})
 }
+
+func TestStartBridgesAndSetEnv_SetsNoProxy(t *testing.T) {
+	t.Run("sets NO_PROXY and no_proxy when http socket is configured", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		httpSocketPath := tmpDir + "/http.sock"
+
+		httpListener, err := net.Listen("unix", httpSocketPath)
+		if err != nil {
+			t.Fatalf("failed to listen on http socket: %v", err)
+		}
+		defer httpListener.Close()
+		go func() {
+			for {
+				conn, err := httpListener.Accept()
+				if err != nil {
+					return
+				}
+				conn.Close()
+			}
+		}()
+
+		t.Setenv("NO_PROXY", "")
+		t.Setenv("no_proxy", "")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		opts := bootstrapOptions{
+			httpSocket: httpSocketPath,
+			command:    []string{"echo", "hello"},
+		}
+
+		_, err = startBridgesAndSetEnv(ctx, opts)
+		if err != nil {
+			t.Fatalf("startBridgesAndSetEnv failed: %v", err)
+		}
+
+		noProxy := os.Getenv("NO_PROXY")
+		if noProxy != "localhost,127.0.0.1" {
+			t.Errorf("expected NO_PROXY=localhost,127.0.0.1, got %q", noProxy)
+		}
+		noProxyLower := os.Getenv("no_proxy")
+		if noProxyLower != "localhost,127.0.0.1" {
+			t.Errorf("expected no_proxy=localhost,127.0.0.1, got %q", noProxyLower)
+		}
+	})
+
+	t.Run("sets NO_PROXY and no_proxy when socks socket is configured", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		socksSocketPath := tmpDir + "/socks.sock"
+
+		socksListener, err := net.Listen("unix", socksSocketPath)
+		if err != nil {
+			t.Fatalf("failed to listen on socks socket: %v", err)
+		}
+		defer socksListener.Close()
+		go func() {
+			for {
+				conn, err := socksListener.Accept()
+				if err != nil {
+					return
+				}
+				conn.Close()
+			}
+		}()
+
+		t.Setenv("NO_PROXY", "")
+		t.Setenv("no_proxy", "")
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		opts := bootstrapOptions{
+			socksSocket: socksSocketPath,
+			command:     []string{"echo", "hello"},
+		}
+
+		_, err = startBridgesAndSetEnv(ctx, opts)
+		if err != nil {
+			t.Fatalf("startBridgesAndSetEnv failed: %v", err)
+		}
+
+		noProxy := os.Getenv("NO_PROXY")
+		if noProxy != "localhost,127.0.0.1" {
+			t.Errorf("expected NO_PROXY=localhost,127.0.0.1, got %q", noProxy)
+		}
+		noProxyLower := os.Getenv("no_proxy")
+		if noProxyLower != "localhost,127.0.0.1" {
+			t.Errorf("expected no_proxy=localhost,127.0.0.1, got %q", noProxyLower)
+		}
+	})
+}

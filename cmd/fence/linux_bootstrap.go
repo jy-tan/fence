@@ -96,56 +96,69 @@ func parseFlagsAndArgs() (bootstrapOptions, error) {
 	}, nil
 }
 
+type envGroup struct {
+	keys  []string
+	value string
+}
+
+func setEnvVars(g envGroup) error {
+	for _, key := range g.keys {
+		if err := os.Setenv(key, g.value); err != nil {
+			return fmt.Errorf("failed to set %s: %w", key, err)
+		}
+	}
+	return nil
+}
+
+func startTCPBridge(ctx context.Context, port int, socketPath, label string) error {
+	startErrCh := make(chan struct {
+		port int
+		err  error
+	}, 1)
+	go func() {
+		if _, err := bridgeTCPToUnix(ctx, port, socketPath, startErrCh); err != nil && err != context.Canceled {
+			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] %s bridge error: %v\n", label, err)
+		}
+	}()
+	result := <-startErrCh
+	return result.err
+}
+
 func startBridgesAndSetEnv(ctx context.Context, opts bootstrapOptions) ([]string, error) {
 	var socketPaths []string
 
 	if opts.httpSocket != "" {
 		socketPaths = append(socketPaths, opts.httpSocket)
-		startErrCh := make(chan struct {
-			port int
-			err  error
-		}, 1)
-		go func() {
-			if _, err := bridgeTCPToUnix(ctx, 3128, opts.httpSocket, startErrCh); err != nil && err != context.Canceled {
-				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] HTTP bridge error: %v\n", err)
-			}
-		}()
-		if result := <-startErrCh; result.err != nil {
-			return nil, fatalError(ExitWrapperSetupFailed, "failed to start HTTP bridge: %v", result.err)
+		if err := startTCPBridge(ctx, 3128, opts.httpSocket, "HTTP"); err != nil {
+			return nil, fatalError(ExitWrapperSetupFailed, "failed to start HTTP bridge: %v", err)
 		}
-		if err := os.Setenv("HTTP_PROXY", "http://127.0.0.1:3128"); err != nil {
-			return nil, fatalError(ExitWrapperSetupFailed, "failed to set HTTP_PROXY: %v", err)
-		}
-		if err := os.Setenv("HTTPS_PROXY", "http://127.0.0.1:3128"); err != nil {
-			return nil, fatalError(ExitWrapperSetupFailed, "failed to set HTTPS_PROXY: %v", err)
-		}
-		if err := os.Setenv("http_proxy", "http://127.0.0.1:3128"); err != nil {
-			return nil, fatalError(ExitWrapperSetupFailed, "failed to set http_proxy: %v", err)
-		}
-		if err := os.Setenv("https_proxy", "http://127.0.0.1:3128"); err != nil {
-			return nil, fatalError(ExitWrapperSetupFailed, "failed to set https_proxy: %v", err)
+		if err := setEnvVars(envGroup{
+			keys:  []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"},
+			value: "http://127.0.0.1:3128",
+		}); err != nil {
+			return nil, fatalError(ExitWrapperSetupFailed, "failed to set proxy env vars: %v", err)
 		}
 	}
 
 	if opts.socksSocket != "" {
 		socketPaths = append(socketPaths, opts.socksSocket)
-		startErrCh := make(chan struct {
-			port int
-			err  error
-		}, 1)
-		go func() {
-			if _, err := bridgeTCPToUnix(ctx, 1080, opts.socksSocket, startErrCh); err != nil && err != context.Canceled {
-				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] SOCKS bridge error: %v\n", err)
-			}
-		}()
-		if result := <-startErrCh; result.err != nil {
-			return nil, fatalError(ExitWrapperSetupFailed, "failed to start SOCKS bridge: %v", result.err)
+		if err := startTCPBridge(ctx, 1080, opts.socksSocket, "SOCKS"); err != nil {
+			return nil, fatalError(ExitWrapperSetupFailed, "failed to start SOCKS bridge: %v", err)
 		}
-		if err := os.Setenv("ALL_PROXY", "socks5h://127.0.0.1:1080"); err != nil {
-			return nil, fatalError(ExitWrapperSetupFailed, "failed to set ALL_PROXY: %v", err)
+		if err := setEnvVars(envGroup{
+			keys:  []string{"ALL_PROXY", "all_proxy"},
+			value: "socks5h://127.0.0.1:1080",
+		}); err != nil {
+			return nil, fatalError(ExitWrapperSetupFailed, "failed to set proxy env vars: %v", err)
 		}
-		if err := os.Setenv("all_proxy", "socks5h://127.0.0.1:1080"); err != nil {
-			return nil, fatalError(ExitWrapperSetupFailed, "failed to set all_proxy: %v", err)
+	}
+
+	if opts.httpSocket != "" || opts.socksSocket != "" {
+		if err := setEnvVars(envGroup{
+			keys:  []string{"NO_PROXY", "no_proxy"},
+			value: "localhost,127.0.0.1",
+		}); err != nil {
+			return nil, fatalError(ExitWrapperSetupFailed, "failed to set no_proxy env vars: %v", err)
 		}
 	}
 
