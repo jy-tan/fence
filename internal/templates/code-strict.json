@@ -23,6 +23,7 @@
 
       // Kiro CLI
       "~/.kiro",
+      "~/Library/Application Support/kiro-cli",
 
       // XDG config directory
       "~/.config",

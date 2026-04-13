@@ -116,6 +116,7 @@
 
       // Kiro CLI
       "~/.kiro/**",
+      "~/Library/Application Support/kiro-cli/**",
 
       // Package manager caches
       "~/.npm/_cacache",
