@@ -4,6 +4,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -67,6 +68,20 @@ func main() {
 			fmt.Fprintf(os.Stderr, "[fence:linux] %v\n", err)
 		}
 		os.Exit(exitCode)
+	}
+	if len(os.Args) >= 2 && os.Args[1] == claudePreToolUseMode {
+		if err := runClaudePreToolUseMode(); err != nil {
+			fmt.Fprintf(os.Stderr, "[fence:hooks] %v\n", err)
+			os.Exit(2)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == cursorPreToolUseMode {
+		if err := runCursorPreToolUseMode(); err != nil {
+			fmt.Fprintf(os.Stderr, "[fence:hooks] %v\n", err)
+			os.Exit(2)
+		}
+		return
 	}
 
 	rootCmd := &cobra.Command{
@@ -132,6 +147,7 @@ Configuration file format:
 
 	rootCmd.AddCommand(newImportCmd())
 	rootCmd.AddCommand(newConfigCmd())
+	rootCmd.AddCommand(newHooksCmd())
 	rootCmd.AddCommand(newCompletionCmd(rootCmd))
 
 	if err := rootCmd.Execute(); err != nil {
@@ -234,7 +250,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 
 	sandboxedCommand, err := manager.WrapCommand(command)
 	if err != nil {
-		return fmt.Errorf("failed to wrap command: %w", err)
+		return presentWrapCommandError(err)
 	}
 
 	if debug {
@@ -345,6 +361,20 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func presentWrapCommandError(err error) error {
+	var commandBlockedErr *sandbox.CommandBlockedError
+	if errors.As(err, &commandBlockedErr) {
+		return err
+	}
+
+	var sshBlockedErr *sandbox.SSHBlockedError
+	if errors.As(err, &sshBlockedErr) {
+		return err
+	}
+
+	return fmt.Errorf("failed to wrap command: %w", err)
 }
 
 func applyCLIConfigOverrides(cmd *cobra.Command, cfg *config.Config, forceNewSessionValue bool) *config.Config {

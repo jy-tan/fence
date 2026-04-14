@@ -1,11 +1,44 @@
 package main
 
 import (
+	"errors"
 	"os/exec"
 	"testing"
 
+	"github.com/Use-Tusk/fence/internal/sandbox"
 	"github.com/spf13/cobra"
 )
+
+func TestPresentWrapCommandError_PreservesCommandBlockedError(t *testing.T) {
+	err := presentWrapCommandError(&sandbox.CommandBlockedError{
+		Command:       "ls",
+		BlockedPrefix: "ls",
+	})
+
+	if got, want := err.Error(), `command blocked by sandbox command policy: "ls" matches "ls"`; got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestPresentWrapCommandError_PreservesSSHBlockedError(t *testing.T) {
+	err := presentWrapCommandError(&sandbox.SSHBlockedError{
+		Host:          "example.com",
+		RemoteCommand: "rm -rf /",
+		Reason:        "host matches denied pattern \"example.com\"",
+	})
+
+	if got, want := err.Error(), `SSH command blocked: host matches denied pattern "example.com" (host: example.com, command: rm -rf /)`; got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestPresentWrapCommandError_WrapsNonPolicyError(t *testing.T) {
+	err := presentWrapCommandError(errors.New("boom"))
+
+	if got, want := err.Error(), "failed to wrap command: boom"; got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
 
 func TestStartCommandWithSignalProxy_CleanupIsIdempotent(t *testing.T) {
 	execCmd := exec.Command("sh", "-c", "exit 0")
