@@ -433,6 +433,10 @@ func validateDomainPattern(pattern string) error {
 	}
 
 	// Handle wildcard patterns
+	if pattern == "*" {
+		return nil
+	}
+
 	if strings.HasPrefix(pattern, "*.") {
 		domain := pattern[2:]
 		// Must have at least one more dot after the wildcard

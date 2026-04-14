@@ -16,8 +16,9 @@ func TestValidateDomainPattern(t *testing.T) {
 		// Valid patterns
 		{"valid domain", "example.com", false},
 		{"valid subdomain", "api.example.com", false},
-		{"valid wildcard", "*.example.com", false},
-		{"valid wildcard subdomain", "*.api.example.com", false},
+		{"valid wildcard", "*", false},
+		{"valid wildcard 2 label domain", "*.example.com", false},
+		{"valid wildcard 3 label domain", "*.api.example.com", false},
 		{"localhost", "localhost", false},
 
 		// Invalid patterns

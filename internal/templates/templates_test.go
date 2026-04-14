@@ -35,6 +35,8 @@ func TestLoad(t *testing.T) {
 		name    string
 		wantErr bool
 	}{
+		{"code-strict", false},
+		{"code-relaxed", false},
 		{"code", false},
 		{"disable-telemetry", false},
 		{"git-readonly", false},

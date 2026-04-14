@@ -96,6 +96,10 @@ func loadRaw(name string) (*config.Config, error) {
 		return nil, fmt.Errorf("failed to parse template %q: %w", name, err)
 	}
 
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid config in template %q: %w", name, err)
+	}
+
 	return &cfg, nil
 }
 
