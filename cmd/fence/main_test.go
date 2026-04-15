@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"os/exec"
+	"slices"
 	"testing"
 
 	"github.com/Use-Tusk/fence/internal/sandbox"
@@ -95,4 +96,27 @@ func TestApplyCLIConfigOverrides_NilConfigWithForceNewSessionFlag(t *testing.T) 
 	if cfg.ForceNewSession == nil || !*cfg.ForceNewSession {
 		t.Fatal("expected ForceNewSession override to be applied")
 	}
+}
+
+func TestUpsertEnv(t *testing.T) {
+	t.Run("replaces existing value", func(t *testing.T) {
+		env := []string{"A=1", "FENCE_LOG_FILE=/tmp/old.log"}
+		updated := upsertEnv(env, "FENCE_LOG_FILE", "/tmp/new.log")
+
+		if !slices.Contains(updated, "FENCE_LOG_FILE=/tmp/new.log") {
+			t.Fatalf("expected updated env entry, got %v", updated)
+		}
+		if slices.Contains(updated, "FENCE_LOG_FILE=/tmp/old.log") {
+			t.Fatalf("expected old env entry to be replaced, got %v", updated)
+		}
+	})
+
+	t.Run("appends missing value", func(t *testing.T) {
+		env := []string{"A=1"}
+		updated := upsertEnv(env, "FENCE_LOG_FILE", "/tmp/fence.log")
+
+		if !slices.Contains(updated, "FENCE_LOG_FILE=/tmp/fence.log") {
+			t.Fatalf("expected appended env entry, got %v", updated)
+		}
+	})
 }

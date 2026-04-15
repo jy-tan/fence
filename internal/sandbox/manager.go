@@ -2,9 +2,9 @@ package sandbox
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/Use-Tusk/fence/internal/fencelog"
 	"github.com/Use-Tusk/fence/internal/platform"
 	"github.com/Use-Tusk/fence/internal/proxy"
 )
@@ -164,7 +164,7 @@ func (m *Manager) Cleanup() {
 
 func (m *Manager) logDebug(format string, args ...interface{}) {
 	if m.debug {
-		fmt.Fprintf(os.Stderr, "[fence] "+format+"\n", args...)
+		fencelog.Printf("[fence] "+format+"\n", args...)
 	}
 }
 

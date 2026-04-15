@@ -8,13 +8,13 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/Use-Tusk/fence/internal/fencelog"
 )
 
 // FilterFunc determines if a connection to host:port should be allowed.
@@ -241,7 +241,7 @@ func (p *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (p *HTTPProxy) logDebug(format string, args ...interface{}) {
 	if p.debug {
-		fmt.Fprintf(os.Stderr, "[fence:http] "+format+"\n", args...)
+		fencelog.Printf("[fence:http] "+format+"\n", args...)
 	}
 }
 
@@ -267,7 +267,7 @@ func (p *HTTPProxy) logRequest(method, url, host string, status int, action stri
 	case "ERROR":
 		statusIcon = "!"
 	}
-	fmt.Fprintf(os.Stderr, "[fence:http] %s %s %-7s %d %s %s (%v)\n", timestamp, statusIcon, method, status, host, truncateURL(url, 60), duration.Round(time.Millisecond))
+	fencelog.Printf("[fence:http] %s %s %-7s %d %s %s (%v)\n", timestamp, statusIcon, method, status, host, truncateURL(url, 60), duration.Round(time.Millisecond))
 }
 
 // truncateURL shortens a URL for display.
@@ -285,7 +285,7 @@ func CreateDomainFilter(cfg *config.Config, debug bool) FilterFunc {
 		if cfg == nil {
 			// No config = deny all
 			if debug {
-				fmt.Fprintf(os.Stderr, "[fence:filter] No config, denying: %s:%d\n", host, port)
+				fencelog.Printf("[fence:filter] No config, denying: %s:%d\n", host, port)
 			}
 			return false
 		}
@@ -294,7 +294,7 @@ func CreateDomainFilter(cfg *config.Config, debug bool) FilterFunc {
 		for _, denied := range cfg.Network.DeniedDomains {
 			if config.MatchesDomain(host, denied) {
 				if debug {
-					fmt.Fprintf(os.Stderr, "[fence:filter] Denied by rule: %s:%d (matched %s)\n", host, port, denied)
+					fencelog.Printf("[fence:filter] Denied by rule: %s:%d (matched %s)\n", host, port, denied)
 				}
 				return false
 			}
@@ -304,14 +304,14 @@ func CreateDomainFilter(cfg *config.Config, debug bool) FilterFunc {
 		for _, allowed := range cfg.Network.AllowedDomains {
 			if config.MatchesDomain(host, allowed) {
 				if debug {
-					fmt.Fprintf(os.Stderr, "[fence:filter] Allowed by rule: %s:%d (matched %s)\n", host, port, allowed)
+					fencelog.Printf("[fence:filter] Allowed by rule: %s:%d (matched %s)\n", host, port, allowed)
 				}
 				return true
 			}
 		}
 
 		if debug {
-			fmt.Fprintf(os.Stderr, "[fence:filter] No matching rule, denying: %s:%d\n", host, port)
+			fencelog.Printf("[fence:filter] No matching rule, denying: %s:%d\n", host, port)
 		}
 		return false
 	}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Use-Tusk/fence/internal/fencelog"
 	"golang.org/x/sys/unix"
 )
 
@@ -83,7 +84,7 @@ func (s *SeccompFilter) GenerateBPFFilter() (string, error) {
 	}
 
 	if s.debug {
-		fmt.Fprintf(os.Stderr, "[fence:seccomp] Generated BPF filter at %s\n", filterPath)
+		fencelog.Printf("[fence:seccomp] Generated BPF filter at %s\n", filterPath)
 	}
 
 	return filterPath, nil

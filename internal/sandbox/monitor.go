@@ -4,12 +4,12 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/Use-Tusk/fence/internal/fencelog"
 	"github.com/Use-Tusk/fence/internal/platform"
 )
 
@@ -66,7 +66,7 @@ func (m *LogMonitor) Start() error {
 		for scanner.Scan() {
 			line := scanner.Text()
 			if violation := parseViolation(line); violation != "" {
-				fmt.Fprintf(os.Stderr, "%s\n", violation)
+				fencelog.Printf("%s\n", violation)
 			}
 		}
 	}()

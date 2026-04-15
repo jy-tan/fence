@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
 	"time"
 
+	"github.com/Use-Tusk/fence/internal/fencelog"
 	"github.com/things-go/go-socks5"
 )
 
@@ -51,9 +51,9 @@ func (r *fenceRuleSet) Allow(ctx context.Context, req *socks5.Request) (context.
 	if shouldLog {
 		timestamp := time.Now().Format("15:04:05")
 		if allowed {
-			fmt.Fprintf(os.Stderr, "[fence:socks] %s ✓ CONNECT %s:%d ALLOWED\n", timestamp, host, port)
+			fencelog.Printf("[fence:socks] %s ✓ CONNECT %s:%d ALLOWED\n", timestamp, host, port)
 		} else {
-			fmt.Fprintf(os.Stderr, "[fence:socks] %s ✗ CONNECT %s:%d BLOCKED\n", timestamp, host, port)
+			fencelog.Printf("[fence:socks] %s ✗ CONNECT %s:%d BLOCKED\n", timestamp, host, port)
 		}
 	}
 	return ctx, allowed
@@ -81,13 +81,13 @@ func (p *SOCKSProxy) Start() (int, error) {
 	go func() {
 		if err := p.server.Serve(p.listener); err != nil {
 			if p.debug {
-				fmt.Fprintf(os.Stderr, "[fence:socks] Server error: %v\n", err)
+				fencelog.Printf("[fence:socks] Server error: %v\n", err)
 			}
 		}
 	}()
 
 	if p.debug {
-		fmt.Fprintf(os.Stderr, "[fence:socks] SOCKS5 proxy listening on localhost:%d\n", p.port)
+		fencelog.Printf("[fence:socks] SOCKS5 proxy listening on localhost:%d\n", p.port)
 	}
 	return p.port, nil
 }

@@ -22,6 +22,7 @@ import (
 	"unsafe"
 
 	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/Use-Tusk/fence/internal/fencelog"
 	"golang.org/x/sys/unix"
 )
 
@@ -366,7 +367,7 @@ func RunLinuxArgvExecShim(args []string) (int, error) {
 	}
 
 	if debug {
-		fmt.Fprintf(os.Stderr, "[fence:linux] argv exec shim installed, execing %s\n", ShellQuote(command))
+		fencelog.Printf("[fence:linux] argv exec shim installed, execing %s\n", ShellQuote(command))
 	}
 
 	err = syscall.Exec(execPath, command, FilterDangerousEnv(os.Environ())) //nolint:gosec // execing trusted argv slice
@@ -488,12 +489,12 @@ func runLinuxArgvExecSupervisor(
 		} else {
 			resp.Error = -int32(unix.EPERM)
 			if decision.Message != "" {
-				fmt.Fprintln(os.Stderr, decision.Message)
+				fencelog.Println(decision.Message)
 			}
 		}
 
 		if debug && decision.Allow {
-			fmt.Fprintf(os.Stderr, "[fence:linux] argv exec allowed for pid=%d\n", req.PID)
+			fencelog.Printf("[fence:linux] argv exec allowed for pid=%d\n", req.PID)
 		}
 
 		if err := linuxSendSeccompNotifResp(listenerFD, resp); err != nil {

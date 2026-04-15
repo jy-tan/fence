@@ -11,6 +11,7 @@ import (
 	"unsafe"
 
 	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/Use-Tusk/fence/internal/fencelog"
 	"github.com/bmatcuk/doublestar/v4"
 	"golang.org/x/sys/unix"
 )
@@ -22,7 +23,7 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 	features := DetectLinuxFeatures()
 	if !features.CanUseLandlock() {
 		if debug {
-			fmt.Fprintf(os.Stderr, "[fence:landlock] Not available (kernel %d.%d < 5.13), skipping\n",
+			fencelog.Printf("[fence:landlock] Not available (kernel %d.%d < 5.13), skipping\n",
 				features.KernelMajor, features.KernelMinor)
 		}
 		return nil // Graceful fallback - Landlock not available
@@ -31,7 +32,7 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 	ruleset, err := NewLandlockRuleset(debug)
 	if err != nil {
 		if debug {
-			fmt.Fprintf(os.Stderr, "[fence:landlock] Failed to create ruleset: %v\n", err)
+			fencelog.Printf("[fence:landlock] Failed to create ruleset: %v\n", err)
 		}
 		return nil // Graceful fallback
 	}
@@ -39,7 +40,7 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 
 	if err := ruleset.Initialize(); err != nil {
 		if debug {
-			fmt.Fprintf(os.Stderr, "[fence:landlock] Failed to initialize: %v\n", err)
+			fencelog.Printf("[fence:landlock] Failed to initialize: %v\n", err)
 		}
 		return nil // Graceful fallback
 	}
@@ -66,7 +67,7 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 		if err := ruleset.AllowRead(p); err != nil && debug {
 			// Ignore errors for paths that don't exist
 			if !os.IsNotExist(err) {
-				fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add read path %s: %v\n", p, err)
+				fencelog.Printf("[fence:landlock] Warning: failed to add read path %s: %v\n", p, err)
 			}
 		}
 	}
@@ -77,7 +78,7 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 	if target, err := filepath.EvalSymlinks("/etc/resolv.conf"); err == nil && target != "/etc/resolv.conf" {
 		targetDir := filepath.Dir(target)
 		if err := ruleset.AllowRead(targetDir); err != nil && debug {
-			fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add resolv.conf target dir %s: %v\n", targetDir, err)
+			fencelog.Printf("[fence:landlock] Warning: failed to add resolv.conf target dir %s: %v\n", targetDir, err)
 		}
 	}
 
@@ -91,45 +92,45 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 	if wslInterop {
 		if err := ruleset.AllowExecute("/init"); err != nil && debug {
 			if !os.IsNotExist(err) {
-				fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add WSL interop path /init: %v\n", err)
+				fencelog.Printf("[fence:landlock] Warning: failed to add WSL interop path /init: %v\n", err)
 			}
 		}
 		if debug {
-			fmt.Fprintf(os.Stderr, "[fence:landlock] WSL interop enabled (auto-allowing /init)\n")
+			fencelog.Printf("[fence:landlock] WSL interop enabled (auto-allowing /init)\n")
 		}
 	}
 
 	// Current working directory - read access (may be upgraded to write below)
 	if cwd != "" {
 		if err := ruleset.AllowRead(cwd); err != nil && debug {
-			fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add cwd read path: %v\n", err)
+			fencelog.Printf("[fence:landlock] Warning: failed to add cwd read path: %v\n", err)
 		}
 	}
 
 	// Home directory - read access
 	if home, err := os.UserHomeDir(); err == nil {
 		if err := ruleset.AllowRead(home); err != nil && debug {
-			fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add home read path: %v\n", err)
+			fencelog.Printf("[fence:landlock] Warning: failed to add home read path: %v\n", err)
 		}
 	}
 
 	// /tmp - allow read+write (many programs need this)
 	if err := ruleset.AllowReadWrite("/tmp"); err != nil && debug {
-		fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add /tmp write path: %v\n", err)
+		fencelog.Printf("[fence:landlock] Warning: failed to add /tmp write path: %v\n", err)
 	}
 
 	// /dev needs read+write for /dev/null, /dev/zero, /dev/tty, etc. PTY setup
 	// also relies on device ioctls, so include IOCTL_DEV when the kernel supports it.
 	// Landlock doesn't support rules on device files directly, so we allow the whole /dev.
 	if err := ruleset.AllowDeviceAccess("/dev"); err != nil && debug {
-		fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add /dev write path: %v\n", err)
+		fencelog.Printf("[fence:landlock] Warning: failed to add /dev write path: %v\n", err)
 	}
 
 	// Socket paths for proxy communication
 	for _, p := range socketPaths {
 		dir := filepath.Dir(p)
 		if err := ruleset.AllowReadWrite(dir); err != nil && debug {
-			fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add socket path %s: %v\n", dir, err)
+			fencelog.Printf("[fence:landlock] Warning: failed to add socket path %s: %v\n", dir, err)
 		}
 	}
 
@@ -138,7 +139,7 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 		expandedPaths := ExpandGlobPatterns(cfg.Filesystem.AllowRead)
 		for _, p := range expandedPaths {
 			if err := ruleset.AllowRead(p); err != nil && debug {
-				fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add read path %s: %v\n", p, err)
+				fencelog.Printf("[fence:landlock] Warning: failed to add read path %s: %v\n", p, err)
 			}
 		}
 		// Also add non-glob paths directly
@@ -146,7 +147,7 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 			if !ContainsGlobChars(p) {
 				normalized := NormalizePath(p)
 				if err := ruleset.AllowRead(normalized); err != nil && debug {
-					fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add read path %s: %v\n", normalized, err)
+					fencelog.Printf("[fence:landlock] Warning: failed to add read path %s: %v\n", normalized, err)
 				}
 			}
 		}
@@ -157,7 +158,7 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 		expandedPaths := ExpandGlobPatterns(cfg.Filesystem.AllowExecute)
 		for _, p := range expandedPaths {
 			if err := ruleset.AllowExecute(p); err != nil && debug {
-				fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add execute path %s: %v\n", p, err)
+				fencelog.Printf("[fence:landlock] Warning: failed to add execute path %s: %v\n", p, err)
 			}
 		}
 		// Also add non-glob paths directly
@@ -165,7 +166,7 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 			if !ContainsGlobChars(p) {
 				normalized := NormalizePath(p)
 				if err := ruleset.AllowExecute(normalized); err != nil && debug {
-					fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add execute path %s: %v\n", normalized, err)
+					fencelog.Printf("[fence:landlock] Warning: failed to add execute path %s: %v\n", normalized, err)
 				}
 			}
 		}
@@ -176,7 +177,7 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 		expandedPaths := ExpandGlobPatterns(cfg.Filesystem.AllowWrite)
 		for _, p := range expandedPaths {
 			if err := ruleset.AllowReadWrite(p); err != nil && debug {
-				fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add write path %s: %v\n", p, err)
+				fencelog.Printf("[fence:landlock] Warning: failed to add write path %s: %v\n", p, err)
 			}
 		}
 		// Also add non-glob paths directly
@@ -184,7 +185,7 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 			if !ContainsGlobChars(p) {
 				normalized := NormalizePath(p)
 				if err := ruleset.AllowReadWrite(normalized); err != nil && debug {
-					fmt.Fprintf(os.Stderr, "[fence:landlock] Warning: failed to add write path %s: %v\n", normalized, err)
+					fencelog.Printf("[fence:landlock] Warning: failed to add write path %s: %v\n", normalized, err)
 				}
 			}
 		}
@@ -193,13 +194,13 @@ func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []strin
 	// Apply the ruleset
 	if err := ruleset.Apply(); err != nil {
 		if debug {
-			fmt.Fprintf(os.Stderr, "[fence:landlock] Failed to apply: %v\n", err)
+			fencelog.Printf("[fence:landlock] Failed to apply: %v\n", err)
 		}
 		return nil // Graceful fallback
 	}
 
 	if debug {
-		fmt.Fprintf(os.Stderr, "[fence:landlock] Applied restrictions (ABI v%d)\n", features.LandlockABI)
+		fencelog.Printf("[fence:landlock] Applied restrictions (ABI v%d)\n", features.LandlockABI)
 	}
 
 	return nil
@@ -269,7 +270,7 @@ func (l *LandlockRuleset) Initialize() error {
 	l.initialized = true
 
 	if l.debug {
-		fmt.Fprintf(os.Stderr, "[fence:landlock] Created ruleset (ABI v%d, fd=%d)\n", l.abiVersion, l.rulesetFd)
+		fencelog.Printf("[fence:landlock] Created ruleset (ABI v%d, fd=%d)\n", l.abiVersion, l.rulesetFd)
 	}
 
 	return nil
@@ -388,7 +389,7 @@ func (l *LandlockRuleset) addPathRule(path string, access uint64) error {
 	// Check if path exists
 	if _, err := os.Stat(absPath); os.IsNotExist(err) {
 		if l.debug {
-			fmt.Fprintf(os.Stderr, "[fence:landlock] Skipping non-existent path: %s\n", absPath)
+			fencelog.Printf("[fence:landlock] Skipping non-existent path: %s\n", absPath)
 		}
 		return nil
 	}
@@ -397,7 +398,7 @@ func (l *LandlockRuleset) addPathRule(path string, access uint64) error {
 	fd, err := unix.Open(absPath, unix.O_PATH|unix.O_CLOEXEC, 0)
 	if err != nil {
 		if l.debug {
-			fmt.Fprintf(os.Stderr, "[fence:landlock] Failed to open path %s: %v\n", absPath, err)
+			fencelog.Printf("[fence:landlock] Failed to open path %s: %v\n", absPath, err)
 		}
 		return nil // Don't fail on paths we can't access
 	}
@@ -407,7 +408,7 @@ func (l *LandlockRuleset) addPathRule(path string, access uint64) error {
 	var stat unix.Stat_t
 	if err := unix.Fstat(fd, &stat); err != nil {
 		if l.debug {
-			fmt.Fprintf(os.Stderr, "[fence:landlock] Failed to fstat path %s: %v\n", absPath, err)
+			fencelog.Printf("[fence:landlock] Failed to fstat path %s: %v\n", absPath, err)
 		}
 		return nil
 	}
@@ -440,7 +441,7 @@ func (l *LandlockRuleset) addPathRule(path string, access uint64) error {
 
 	if access == 0 {
 		if l.debug {
-			fmt.Fprintf(os.Stderr, "[fence:landlock] Skipping %s: no applicable access rights\n", absPath)
+			fencelog.Printf("[fence:landlock] Skipping %s: no applicable access rights\n", absPath)
 		}
 		return nil
 	}
@@ -461,7 +462,7 @@ func (l *LandlockRuleset) addPathRule(path string, access uint64) error {
 	}
 
 	if l.debug {
-		fmt.Fprintf(os.Stderr, "[fence:landlock] Added rule: %s (access=0x%x)\n", absPath, access)
+		fencelog.Printf("[fence:landlock] Added rule: %s (access=0x%x)\n", absPath, access)
 	}
 
 	return nil
@@ -490,7 +491,7 @@ func (l *LandlockRuleset) Apply() error {
 	}
 
 	if l.debug {
-		fmt.Fprintf(os.Stderr, "[fence:landlock] Ruleset applied to process\n")
+		fencelog.Printf("[fence:landlock] Ruleset applied to process\n")
 	}
 
 	return nil

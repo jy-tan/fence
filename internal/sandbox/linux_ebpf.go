@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Use-Tusk/fence/internal/fencelog"
 )
 
 // EBPFMonitor monitors sandbox violations using eBPF tracing.
@@ -39,7 +41,7 @@ func (m *EBPFMonitor) Start() error {
 	features := DetectLinuxFeatures()
 	if !features.HasEBPF {
 		if m.debug {
-			fmt.Fprintf(os.Stderr, "[fence:ebpf] eBPF monitoring not available (need CAP_BPF or root)\n")
+			fencelog.Printf("[fence:ebpf] eBPF monitoring not available (need CAP_BPF or root)\n")
 		}
 		return nil
 	}
@@ -51,14 +53,14 @@ func (m *EBPFMonitor) Start() error {
 	// Try multiple eBPF tracing approaches
 	if err := m.tryBpftrace(ctx); err != nil {
 		if m.debug {
-			fmt.Fprintf(os.Stderr, "[fence:ebpf] bpftrace not available: %v\n", err)
+			fencelog.Printf("[fence:ebpf] bpftrace not available: %v\n", err)
 		}
 		// Fall back to other methods
 		go m.traceWithPerfEvents()
 	}
 
 	if m.debug {
-		fmt.Fprintf(os.Stderr, "[fence:ebpf] Started eBPF monitoring for PID %d\n", m.pid)
+		fencelog.Printf("[fence:ebpf] Started eBPF monitoring for PID %d\n", m.pid)
 	}
 
 	return nil
@@ -136,10 +138,10 @@ func (m *EBPFMonitor) tryBpftrace(ctx context.Context) error {
 		for scanner.Scan() {
 			line := scanner.Text()
 			if m.debug {
-				fmt.Fprintf(os.Stderr, "[fence:ebpf:trace] %s\n", line)
+				fencelog.Printf("[fence:ebpf:trace] %s\n", line)
 			}
 			if violation := m.parseBpftraceOutput(line); violation != "" {
-				fmt.Fprintf(os.Stderr, "%s\n", violation)
+				fencelog.Printf("%s\n", violation)
 			}
 		}
 	}()
@@ -150,7 +152,7 @@ func (m *EBPFMonitor) tryBpftrace(ctx context.Context) error {
 			scanner := bufio.NewScanner(stderr)
 			for scanner.Scan() {
 				line := scanner.Text()
-				fmt.Fprintf(os.Stderr, "[fence:ebpf:err] %s\n", line)
+				fencelog.Printf("[fence:ebpf:err] %s\n", line)
 			}
 		}()
 	}
@@ -239,7 +241,7 @@ func (m *EBPFMonitor) traceWithPerfEvents() {
 	tracePipe := "/sys/kernel/debug/tracing/trace_pipe"
 	if _, err := os.Stat(tracePipe); err != nil {
 		if m.debug {
-			fmt.Fprintf(os.Stderr, "[fence:ebpf] trace_pipe not available\n")
+			fencelog.Printf("[fence:ebpf] trace_pipe not available\n")
 		}
 		return
 	}
@@ -247,7 +249,7 @@ func (m *EBPFMonitor) traceWithPerfEvents() {
 	f, err := os.Open(tracePipe)
 	if err != nil {
 		if m.debug {
-			fmt.Fprintf(os.Stderr, "[fence:ebpf] Failed to open trace_pipe: %v\n", err)
+			fencelog.Printf("[fence:ebpf] Failed to open trace_pipe: %v\n", err)
 		}
 		return
 	}

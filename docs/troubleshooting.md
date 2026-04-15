@@ -110,6 +110,8 @@ Start with:
 
 - `fence -m <command>` to see what's being denied
 - `fence -d <command>` to see full proxy and sandbox detail
+- `fence -m --fence-log-file /tmp/fence.log <command>` if a fullscreen TUI redraws over Fence's own logs
+- `tail -f /tmp/fence.log` in another terminal to watch those logs live
 
 Common causes:
 

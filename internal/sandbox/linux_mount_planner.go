@@ -3,13 +3,12 @@
 package sandbox
 
 import (
-	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/Use-Tusk/fence/internal/fencelog"
 )
 
 type linuxLateMountKind int
@@ -239,7 +238,7 @@ func appendLinuxLatePolicyMounts(
 		mountPath, ok := resolvePathForMount(path)
 		if !ok {
 			if debug {
-				fmt.Fprintf(os.Stderr, "[fence:linux] Skipping runtime exec deny mount for %s (unmountable)\n", path)
+				fencelog.Printf("[fence:linux] Skipping runtime exec deny mount for %s (unmountable)\n", path)
 			}
 			continue
 		}

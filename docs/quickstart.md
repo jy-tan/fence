@@ -141,6 +141,14 @@ Use `-m` to see only violations and blocked requests:
 fence -m npm install
 ```
 
+For fullscreen TUIs, send Fence's own monitor/debug logs to a file and watch
+them in another terminal:
+
+```bash
+fence -m --fence-log-file /tmp/fence.log claude
+tail -f /tmp/fence.log
+```
+
 This is useful for:
 
 - Auditing what a command tries to access

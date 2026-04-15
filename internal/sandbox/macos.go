@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/Use-Tusk/fence/internal/fencelog"
 )
 
 // sessionSuffix is a unique identifier for this process session.
@@ -673,8 +674,8 @@ func WrapCommandMacOS(cfg *config.Config, command string, workingDir string, htt
 	needsNetworkRestriction := !hasWildcardAllow && (needsNetwork || len(cfg.Network.AllowedDomains) == 0)
 
 	if debug && hasWildcardAllow {
-		fmt.Fprintf(os.Stderr, "[fence:macos] Wildcard allowedDomains detected - allowing direct network connections\n")
-		fmt.Fprintf(os.Stderr, "[fence:macos] Note: deniedDomains only enforced for apps that respect HTTP_PROXY\n")
+		fencelog.Printf("[fence:macos] Wildcard allowedDomains detected - allowing direct network connections\n")
+		fencelog.Printf("[fence:macos] Note: deniedDomains only enforced for apps that respect HTTP_PROXY\n")
 	}
 
 	shellPath, shellFlag, err := ResolveExecutionShell(shellMode, shellLogin)
@@ -684,7 +685,7 @@ func WrapCommandMacOS(cfg *config.Config, command string, workingDir string, htt
 
 	deniedExecPaths, runtimeExecDenyDiagnostics := GetRuntimeDeniedExecutablePathsWithDiagnostics(cfg, debug)
 	for _, msg := range runtimeExecDenyDiagnostics {
-		fmt.Fprintf(os.Stderr, "[fence:macos] %s\n", msg)
+		fencelog.Printf("[fence:macos] %s\n", msg)
 	}
 	if resolvedShellPath, err := filepath.EvalSymlinks(shellPath); err == nil {
 		deniedExecPaths = slices.DeleteFunc(deniedExecPaths, func(p string) bool {
@@ -720,10 +721,10 @@ func WrapCommandMacOS(cfg *config.Config, command string, workingDir string, htt
 	}
 
 	if debug && len(exposedPorts) > 0 {
-		fmt.Fprintf(os.Stderr, "[fence:macos] Enabling local binding for exposed ports: %v\n", exposedPorts)
+		fencelog.Printf("[fence:macos] Enabling local binding for exposed ports: %v\n", exposedPorts)
 	}
 	if debug && allowLocalBinding && !allowLocalOutbound {
-		fmt.Fprintf(os.Stderr, "[fence:macos] Blocking localhost outbound (AllowLocalOutbound=false)\n")
+		fencelog.Printf("[fence:macos] Blocking localhost outbound (AllowLocalOutbound=false)\n")
 	}
 
 	profile := GenerateSandboxProfile(params)

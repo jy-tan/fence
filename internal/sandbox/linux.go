@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/Use-Tusk/fence/internal/fencelog"
 	"golang.org/x/term"
 )
 
@@ -139,7 +140,7 @@ func NewLinuxBridge(httpProxyPort, socksProxyPort int, debug bool) (*LinuxBridge
 	}
 	bridge.httpProcess = exec.Command("socat", httpArgs...) //nolint:gosec // args constructed from trusted input
 	if debug {
-		fmt.Fprintf(os.Stderr, "[fence:linux] Starting HTTP bridge: socat %s\n", strings.Join(httpArgs, " "))
+		fencelog.Printf("[fence:linux] Starting HTTP bridge: socat %s\n", strings.Join(httpArgs, " "))
 	}
 	if err := bridge.httpProcess.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start HTTP bridge: %w", err)
@@ -152,7 +153,7 @@ func NewLinuxBridge(httpProxyPort, socksProxyPort int, debug bool) (*LinuxBridge
 	}
 	bridge.socksProcess = exec.Command("socat", socksArgs...) //nolint:gosec // args constructed from trusted input
 	if debug {
-		fmt.Fprintf(os.Stderr, "[fence:linux] Starting SOCKS bridge: socat %s\n", strings.Join(socksArgs, " "))
+		fencelog.Printf("[fence:linux] Starting SOCKS bridge: socat %s\n", strings.Join(socksArgs, " "))
 	}
 	if err := bridge.socksProcess.Start(); err != nil {
 		bridge.Cleanup()
@@ -165,7 +166,7 @@ func NewLinuxBridge(httpProxyPort, socksProxyPort int, debug bool) (*LinuxBridge
 		socksExists := fileExists(socksSocketPath)
 		if httpExists && socksExists {
 			if debug {
-				fmt.Fprintf(os.Stderr, "[fence:linux] Bridges ready (HTTP: %s, SOCKS: %s)\n", httpSocketPath, socksSocketPath)
+				fencelog.Printf("[fence:linux] Bridges ready (HTTP: %s, SOCKS: %s)\n", httpSocketPath, socksSocketPath)
 			}
 			return bridge, nil
 		}
@@ -192,7 +193,7 @@ func (b *LinuxBridge) Cleanup() {
 	_ = os.Remove(b.SOCKSSocketPath)
 
 	if b.debug {
-		fmt.Fprintf(os.Stderr, "[fence:linux] Bridges cleaned up\n")
+		fencelog.Printf("[fence:linux] Bridges cleaned up\n")
 	}
 }
 
@@ -232,7 +233,7 @@ func NewReverseBridge(ports []int, debug bool) (*ReverseBridge, error) {
 		}
 		proc := exec.Command("socat", args...) //nolint:gosec // args constructed from trusted input
 		if debug {
-			fmt.Fprintf(os.Stderr, "[fence:linux] Starting reverse bridge for port %d: socat %s\n", port, strings.Join(args, " "))
+			fencelog.Printf("[fence:linux] Starting reverse bridge for port %d: socat %s\n", port, strings.Join(args, " "))
 		}
 		if err := proc.Start(); err != nil {
 			bridge.Cleanup()
@@ -242,7 +243,7 @@ func NewReverseBridge(ports []int, debug bool) (*ReverseBridge, error) {
 	}
 
 	if debug {
-		fmt.Fprintf(os.Stderr, "[fence:linux] Reverse bridges ready for ports: %v\n", ports)
+		fencelog.Printf("[fence:linux] Reverse bridges ready for ports: %v\n", ports)
 	}
 
 	return bridge, nil
@@ -263,7 +264,7 @@ func (b *ReverseBridge) Cleanup() {
 	}
 
 	if b.debug {
-		fmt.Fprintf(os.Stderr, "[fence:linux] Reverse bridges cleaned up\n")
+		fencelog.Printf("[fence:linux] Reverse bridges cleaned up\n")
 	}
 }
 
@@ -282,7 +283,7 @@ func appendLinuxDevicePassthrough(bwrapArgs []string, path string, bound map[str
 		return append(bwrapArgs, "--dev-bind", normalized, normalized)
 	}
 	if debug {
-		fmt.Fprintf(os.Stderr, "[fence:linux] Skipping missing %s device passthrough: %s\n", reason, normalized)
+		fencelog.Printf("[fence:linux] Skipping missing %s device passthrough: %s\n", reason, normalized)
 	}
 	return bwrapArgs
 }
@@ -812,7 +813,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		var runtimeExecDenyDiagnostics []string
 		deniedExecPaths, runtimeExecDenyDiagnostics = GetRuntimeDeniedExecutablePathsWithDiagnostics(cfg, opts.Debug)
 		for _, msg := range runtimeExecDenyDiagnostics {
-			fmt.Fprintf(os.Stderr, "[fence:linux] %s\n", msg)
+			fencelog.Printf("[fence:linux] %s\n", msg)
 		}
 		if resolvedShellPath, err := filepath.EvalSymlinks(shellPath); err == nil {
 			deniedExecPaths = slices.DeleteFunc(deniedExecPaths, func(p string) bool {
@@ -826,7 +827,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	}
 
 	if opts.Debug {
-		fmt.Fprintf(os.Stderr, "[fence:linux] Available features: %s\n", features.Summary())
+		fencelog.Printf("[fence:linux] Available features: %s\n", features.Summary())
 	}
 
 	fenceExePath, _ := os.Executable()
@@ -847,7 +848,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 
 	deviceMode := effectiveLinuxDeviceMode(cfg, bwrapPath)
 	if opts.Debug {
-		fmt.Fprintf(os.Stderr, "[fence:linux] Device mode: %s\n", deviceMode)
+		fencelog.Printf("[fence:linux] Device mode: %s\n", deviceMode)
 	}
 
 	// In wildcard mode ("*"), skip network namespace isolation so apps that
@@ -855,8 +856,8 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	hasWildcardAllow := hasWildcardAllowedDomain(cfg)
 
 	if opts.Debug && hasWildcardAllow {
-		fmt.Fprintf(os.Stderr, "[fence:linux] Wildcard allowedDomains detected - allowing direct network connections\n")
-		fmt.Fprintf(os.Stderr, "[fence:linux] Note: deniedDomains only enforced for apps that respect HTTP_PROXY\n")
+		fencelog.Printf("[fence:linux] Wildcard allowedDomains detected - allowing direct network connections\n")
+		fencelog.Printf("[fence:linux] Note: deniedDomains only enforced for apps that respect HTTP_PROXY\n")
 	}
 
 	// Build bwrap args with filesystem restrictions
@@ -867,7 +868,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	if forceNewSession {
 		bwrapArgs = append(bwrapArgs, "--new-session")
 	} else if opts.Debug {
-		fmt.Fprintf(os.Stderr, "[fence:linux] Interactive PTY session detected - skipping --new-session and relying on seccomp TIOCSTI filtering\n")
+		fencelog.Printf("[fence:linux] Interactive PTY session detected - skipping --new-session and relying on seccomp TIOCSTI filtering\n")
 	}
 
 	// Only use --unshare-net if:
@@ -877,7 +878,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	if features.CanUnshareNet && !hasWildcardAllow {
 		bwrapArgs = append(bwrapArgs, "--unshare-net") // Network namespace isolation
 	} else if opts.Debug && !features.CanUnshareNet {
-		fmt.Fprintf(os.Stderr, "[fence:linux] Skipping --unshare-net (network namespace unavailable in this environment)\n")
+		fencelog.Printf("[fence:linux] Skipping --unshare-net (network namespace unavailable in this environment)\n")
 	}
 
 	bwrapArgs = append(bwrapArgs, "--unshare-pid") // PID namespace isolation
@@ -889,12 +890,12 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		filterPath, err := filter.GenerateBPFFilter()
 		if err != nil {
 			if opts.Debug {
-				fmt.Fprintf(os.Stderr, "[fence:linux] Seccomp filter generation failed: %v\n", err)
+				fencelog.Printf("[fence:linux] Seccomp filter generation failed: %v\n", err)
 			}
 		} else {
 			seccompFilterPath = filterPath
 			if opts.Debug {
-				fmt.Fprintf(os.Stderr, "[fence:linux] Seccomp filter enabled (blocking dangerous syscalls and ioctl(TIOCSTI))\n")
+				fencelog.Printf("[fence:linux] Seccomp filter enabled (blocking dangerous syscalls and ioctl(TIOCSTI))\n")
 			}
 			// Add seccomp filter via fd 3 (will be set up via shell redirection)
 			bwrapArgs = append(bwrapArgs, "--seccomp", "3")
@@ -908,7 +909,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		// In defaultDenyRead mode, we only bind essential system paths read-only
 		// and user-specified allowRead paths. Everything else is inaccessible.
 		if opts.Debug {
-			fmt.Fprintf(os.Stderr, "[fence:linux] DefaultDenyRead mode enabled - binding only essential system paths\n")
+			fencelog.Printf("[fence:linux] DefaultDenyRead mode enabled - binding only essential system paths\n")
 		}
 
 		// Bind essential system paths read-only
@@ -1058,7 +1059,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 				bwrapArgs = append(bwrapArgs, "--ro-bind", target, target)
 			}
 			if opts.Debug {
-				fmt.Fprintf(os.Stderr, "[fence:linux] Resolved /etc/resolv.conf symlink -> %s (cross-mount)\n", target)
+				fencelog.Printf("[fence:linux] Resolved /etc/resolv.conf symlink -> %s (cross-mount)\n", target)
 			}
 		}
 	}
@@ -1187,7 +1188,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 					bwrapArgs = append(bwrapArgs, "--ro-bind", p, p)
 				}
 				if opts.Debug {
-					fmt.Fprintf(os.Stderr, "[fence:linux] Cross-mount bind: %s (writable=%v)\n", p, crossMountWritable[p])
+					fencelog.Printf("[fence:linux] Cross-mount bind: %s (writable=%v)\n", p, crossMountWritable[p])
 				}
 			}
 		}
@@ -1217,10 +1218,10 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	useLandlockWrapper := opts.UseLandlock && features.CanUseLandlock() && fenceExePath != "" && !executableInTmp && executableIsFence
 
 	if opts.Debug && executableInTmp {
-		fmt.Fprintf(os.Stderr, "[fence:linux] Skipping Landlock wrapper (executable in /tmp, likely a test)\n")
+		fencelog.Printf("[fence:linux] Skipping Landlock wrapper (executable in /tmp, likely a test)\n")
 	}
 	if opts.Debug && !executableIsFence {
-		fmt.Fprintf(os.Stderr, "[fence:linux] Skipping Landlock wrapper (running as library, not fence CLI)\n")
+		fencelog.Printf("[fence:linux] Skipping Landlock wrapper (running as library, not fence CLI)\n")
 	}
 
 	bootstrapMounts, bootstrapExecs, err := planLinuxBootstrapExecutables(
@@ -1268,7 +1269,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		if reverseBridge != nil && len(reverseBridge.Ports) > 0 {
 			featureList = append(featureList, fmt.Sprintf("inbound:%v", reverseBridge.Ports))
 		}
-		fmt.Fprintf(os.Stderr, "[fence:linux] Sandbox: %s\n", strings.Join(featureList, ", "))
+		fencelog.Printf("[fence:linux] Sandbox: %s\n", strings.Join(featureList, ", "))
 	}
 
 	// Build the final command
@@ -1308,7 +1309,7 @@ func StartLinuxMonitor(pid int, opts LinuxSandboxOptions) (*LinuxMonitors, error
 	// or SECCOMP_RET_KILL (logs but kills process) or SECCOMP_RET_USER_NOTIF (complex).
 	// For now, we rely on the eBPF monitor to detect syscall failures.
 	if opts.Debug && opts.Monitor && features.SeccompLogLevel >= 1 {
-		fmt.Fprintf(os.Stderr, "[fence:linux] Note: seccomp violations are blocked but not logged (SECCOMP_RET_ERRNO is silent)\n")
+		fencelog.Printf("[fence:linux] Note: seccomp violations are blocked but not logged (SECCOMP_RET_ERRNO is silent)\n")
 	}
 
 	// Start eBPF monitor if available and requested
@@ -1317,17 +1318,17 @@ func StartLinuxMonitor(pid int, opts LinuxSandboxOptions) (*LinuxMonitors, error
 		ebpfMon := NewEBPFMonitor(pid, opts.Debug)
 		if err := ebpfMon.Start(); err != nil {
 			if opts.Debug {
-				fmt.Fprintf(os.Stderr, "[fence:linux] Failed to start eBPF monitor: %v\n", err)
+				fencelog.Printf("[fence:linux] Failed to start eBPF monitor: %v\n", err)
 			}
 		} else {
 			monitors.EBPFMonitor = ebpfMon
 			if opts.Debug {
-				fmt.Fprintf(os.Stderr, "[fence:linux] eBPF monitor started for PID %d\n", pid)
+				fencelog.Printf("[fence:linux] eBPF monitor started for PID %d\n", pid)
 			}
 		}
 	} else if opts.Monitor && opts.Debug {
 		if !features.HasEBPF {
-			fmt.Fprintf(os.Stderr, "[fence:linux] eBPF monitoring not available (need CAP_BPF or root)\n")
+			fencelog.Printf("[fence:linux] eBPF monitoring not available (need CAP_BPF or root)\n")
 		}
 	}
 
