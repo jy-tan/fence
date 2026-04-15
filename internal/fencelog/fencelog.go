@@ -54,7 +54,16 @@ func Println(args ...interface{}) {
 
 // SetLogFile truncates or creates the log file and mirrors future writes to it.
 func (l *Logger) SetLogFile(path string) error {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // path comes from an explicit user-provided CLI flag/env var
+	return l.openLogFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+}
+
+// AppendLogFile reopens an existing log file without truncating prior content.
+func (l *Logger) AppendLogFile(path string) error {
+	return l.openLogFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND)
+}
+
+func (l *Logger) openLogFile(path string, flags int) error {
+	file, err := os.OpenFile(path, flags, 0o600) //nolint:gosec // path comes from an explicit user-provided CLI flag/env var
 	if err != nil {
 		return err
 	}
@@ -95,6 +104,11 @@ func Stderr() io.Writer {
 // SetLogFile configures the shared Fence log file.
 func SetLogFile(path string) error {
 	return defaultLogger.SetLogFile(path)
+}
+
+// AppendLogFile reopens the shared Fence log file without truncating it.
+func AppendLogFile(path string) error {
+	return defaultLogger.AppendLogFile(path)
 }
 
 // CloseLogFile closes the shared Fence log file.

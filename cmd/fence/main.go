@@ -52,7 +52,7 @@ var (
 
 func main() {
 	if path := strings.TrimSpace(os.Getenv(fencelog.EnvVar)); path != "" {
-		if err := fencelog.SetLogFile(path); err != nil {
+		if err := fencelog.AppendLogFile(path); err != nil {
 			fmt.Fprintf(os.Stderr, "[fence] Warning: failed to open fence log file %q: %v\n", path, err)
 		}
 	}

@@ -53,6 +53,38 @@ func TestLoggerWithoutLogFileWritesToStderr(t *testing.T) {
 	}
 }
 
+func TestLoggerAppendLogFilePreservesExistingContents(t *testing.T) {
+	var stderr bytes.Buffer
+	logger := New(&stderr)
+
+	logPath := filepath.Join(t.TempDir(), "fence.log")
+	if err := os.WriteFile(logPath, []byte("existing\n"), 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	if err := logger.AppendLogFile(logPath); err != nil {
+		t.Fatalf("AppendLogFile() error = %v", err)
+	}
+	defer func() {
+		if err := logger.CloseLogFile(); err != nil {
+			t.Fatalf("CloseLogFile() error = %v", err)
+		}
+	}()
+
+	msg := []byte("next\n")
+	if _, err := logger.Write(msg); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+
+	data, err := os.ReadFile(logPath) //nolint:gosec // reading a temp test file created by this test
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	if string(data) != "existing\nnext\n" {
+		t.Fatalf("log file = %q, want %q", string(data), "existing\nnext\n")
+	}
+}
+
 func TestLoggerCloseLogFileRestoresStderr(t *testing.T) {
 	var stderr bytes.Buffer
 	logger := New(&stderr)
