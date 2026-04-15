@@ -27,6 +27,7 @@ func generateSessionSuffix() string {
 // MacOSSandboxParams contains parameters for macOS sandbox wrapping.
 type MacOSSandboxParams struct {
 	Command                 string
+	WorkingDirectory        string
 	NeedsNetworkRestriction bool
 	HTTPProxyPort           int
 	SOCKSProxyPort          int
@@ -274,7 +275,7 @@ func generateReadRules(defaultDenyRead, strictDenyRead bool, allowPaths, denyPat
 }
 
 // generateWriteRules generates filesystem write rules for the sandbox profile.
-func generateWriteRules(allowPaths, denyPaths []string, allowGitConfig bool, logTag string) []string {
+func generateWriteRules(allowPaths, denyPaths []string, allowGitConfig bool, workingDir, logTag string) []string {
 	builder := newSeatbeltRuleBuilder()
 
 	// Allow TMPDIR parent on macOS
@@ -308,7 +309,7 @@ func generateWriteRules(allowPaths, denyPaths []string, allowGitConfig bool, log
 	}
 
 	// Combine user-specified and mandatory deny patterns
-	cwd, _ := os.Getwd()
+	cwd := ResolveSandboxWorkingDir(workingDir)
 	mandatoryDeny := GetMandatoryDenyPatterns(cwd, allowGitConfig)
 	allDenyPaths := make([]string, 0, len(denyPaths)+len(mandatoryDeny))
 	allDenyPaths = append(allDenyPaths, denyPaths...)
@@ -622,7 +623,7 @@ func GenerateSandboxProfile(params MacOSSandboxParams) string {
 
 	// Write rules
 	profile.WriteString("; File write\n")
-	for _, rule := range generateWriteRules(params.WriteAllowPaths, params.WriteDenyPaths, params.AllowGitConfig, logTag) {
+	for _, rule := range generateWriteRules(params.WriteAllowPaths, params.WriteDenyPaths, params.AllowGitConfig, params.WorkingDirectory, logTag) {
 		profile.WriteString(rule + "\n")
 	}
 
@@ -646,7 +647,7 @@ func GenerateSandboxProfile(params MacOSSandboxParams) string {
 }
 
 // WrapCommandMacOS wraps a command with macOS sandbox restrictions.
-func WrapCommandMacOS(cfg *config.Config, command string, httpPort, socksPort int, exposedPorts []int, debug bool, shellMode string, shellLogin bool) (string, error) {
+func WrapCommandMacOS(cfg *config.Config, command string, workingDir string, httpPort, socksPort int, exposedPorts []int, debug bool, shellMode string, shellLogin bool) (string, error) {
 	// In wildcard mode ("*"), still run the proxy for apps that respect
 	// HTTP_PROXY, but allow direct connections for apps that don't.
 	hasWildcardAllow := hasWildcardAllowedDomain(cfg)
@@ -697,6 +698,7 @@ func WrapCommandMacOS(cfg *config.Config, command string, httpPort, socksPort in
 
 	params := MacOSSandboxParams{
 		Command:                 command,
+		WorkingDirectory:        ResolveSandboxWorkingDir(workingDir),
 		NeedsNetworkRestriction: needsNetworkRestriction,
 		HTTPProxyPort:           httpPort,
 		SOCKSProxyPort:          socksPort,

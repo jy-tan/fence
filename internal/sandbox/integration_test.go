@@ -182,7 +182,7 @@ func runUnderSandbox(t *testing.T, cfg *config.Config, command string, workDir s
 		return &SandboxTestResult{Error: err}
 	}
 
-	wrappedCmd, err := manager.WrapCommand(command)
+	wrappedCmd, err := manager.WrapCommandInDir(command, workDir)
 	if err != nil {
 		// Command was blocked before execution
 		return &SandboxTestResult{
@@ -215,7 +215,7 @@ func runUnderSandboxWithTimeout(t *testing.T, cfg *config.Config, command string
 		return &SandboxTestResult{Error: err}
 	}
 
-	wrappedCmd, err := manager.WrapCommand(command)
+	wrappedCmd, err := manager.WrapCommandInDir(command, workDir)
 	if err != nil {
 		return &SandboxTestResult{
 			ExitCode: 1,

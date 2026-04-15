@@ -482,7 +482,7 @@ func TestGenerateWriteRules_DeduplicatesSharedAncestorMoveRules(t *testing.T) {
 	rules := generateWriteRules(nil, []string{
 		"/fence-issue-74-home/.pypirc",
 		"/fence-issue-74-home/.netrc",
-	}, false, logTag)
+	}, false, "", logTag)
 
 	tests := []struct {
 		name  string
@@ -526,7 +526,7 @@ func TestGenerateWriteRules_DeduplicatesExactDuplicateRules(t *testing.T) {
 	rules := generateWriteRules(nil, []string{
 		"/fence-issue-74-dup/.pypirc",
 		"/fence-issue-74-dup/.pypirc",
-	}, false, logTag)
+	}, false, "", logTag)
 
 	tests := []struct {
 		name  string
@@ -579,15 +579,10 @@ func TestGenerateWriteRules_UsesWorkspaceScopedMandatoryDenyPatterns(t *testing.
 		_ = os.Chdir(originalWD)
 	}()
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to read cwd after chdir: %v", err)
-	}
-
-	rules := generateWriteRules([]string{workspace}, nil, false, "test-log")
+	rules := generateWriteRules([]string{workspace}, nil, false, workspace, "test-log")
 	joinedRules := strings.Join(rules, "\n")
 
-	scopedRegex := escapePath(GlobToRegex(filepath.Join(cwd, "**", ".idea", "**")))
+	scopedRegex := escapePath(GlobToRegex(filepath.Join(ResolveSandboxWorkingDir(workspace), "**", ".idea", "**")))
 	if !strings.Contains(joinedRules, "(regex "+scopedRegex+")") {
 		t.Fatalf("expected scoped .idea deny regex in rules, got:\n%s", joinedRules)
 	}
