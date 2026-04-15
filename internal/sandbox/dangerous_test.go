@@ -3,8 +3,8 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -26,6 +26,7 @@ func TestGetDefaultWritePaths(t *testing.T) {
 
 func TestGetMandatoryDenyPatterns(t *testing.T) {
 	cwd := "/home/user/project"
+	home, _ := os.UserHomeDir()
 
 	tests := []struct {
 		name             string
@@ -44,6 +45,13 @@ func TestGetMandatoryDenyPatterns(t *testing.T) {
 				filepath.Join(cwd, ".zshrc"),
 				filepath.Join(cwd, ".git/hooks"),
 				filepath.Join(cwd, ".git/config"),
+				filepath.Join(cwd, "**", ".gitconfig"),
+				filepath.Join(cwd, "**", ".bashrc"),
+				filepath.Join(cwd, "**", ".git", "hooks"),
+				filepath.Join(cwd, "**", ".git", "hooks", "**"),
+				filepath.Join(cwd, "**", ".git", "config"),
+			},
+			shouldNotContain: []string{
 				"**/.gitconfig",
 				"**/.bashrc",
 				"**/.git/hooks/**",
@@ -57,12 +65,20 @@ func TestGetMandatoryDenyPatterns(t *testing.T) {
 			shouldContain: []string{
 				filepath.Join(cwd, ".gitconfig"),
 				filepath.Join(cwd, ".git/hooks"),
-				"**/.git/hooks/**",
+				filepath.Join(cwd, "**", ".git", "hooks"),
+				filepath.Join(cwd, "**", ".git", "hooks", "**"),
 			},
 			shouldNotContain: []string{
 				filepath.Join(cwd, ".git/config"),
+				filepath.Join(cwd, "**", ".git", "config"),
 			},
 		},
+	}
+
+	if home != "" {
+		for i := range tests {
+			tests[i].shouldContain = append(tests[i].shouldContain, filepath.Join(home, ".gitconfig"))
+		}
 	}
 
 	for _, tt := range tests {
@@ -88,30 +104,40 @@ func TestGetMandatoryDenyPatterns(t *testing.T) {
 
 func TestGetMandatoryDenyPatternsContainsDangerousFiles(t *testing.T) {
 	cwd := "/test/project"
+	home, _ := os.UserHomeDir()
 	patterns := GetMandatoryDenyPatterns(cwd, false)
 
-	// Each dangerous file should appear both as a cwd-relative path and as a glob pattern
+	// Each dangerous file should appear in the workspace root, throughout the
+	// workspace subtree, and in the user's home directory.
 	for _, file := range DangerousFiles {
 		cwdPath := filepath.Join(cwd, file)
-		globPattern := "**/" + file
+		workspacePattern := filepath.Join(cwd, "**", file)
+		homePath := filepath.Join(home, file)
 
 		foundCwd := false
-		foundGlob := false
+		foundWorkspacePattern := false
+		foundHome := home == ""
 
 		for _, p := range patterns {
 			if p == cwdPath {
 				foundCwd = true
 			}
-			if p == globPattern {
-				foundGlob = true
+			if p == workspacePattern {
+				foundWorkspacePattern = true
+			}
+			if p == homePath {
+				foundHome = true
 			}
 		}
 
 		if !foundCwd {
 			t.Errorf("Missing cwd-relative pattern for dangerous file %q", file)
 		}
-		if !foundGlob {
-			t.Errorf("Missing glob pattern for dangerous file %q", file)
+		if !foundWorkspacePattern {
+			t.Errorf("Missing workspace-scoped pattern for dangerous file %q", file)
+		}
+		if !foundHome {
+			t.Errorf("Missing home-directory pattern for dangerous file %q", file)
 		}
 	}
 }
@@ -122,25 +148,33 @@ func TestGetMandatoryDenyPatternsContainsDangerousDirectories(t *testing.T) {
 
 	for _, dir := range DangerousDirectories {
 		cwdPath := filepath.Join(cwd, dir)
-		globPattern := "**/" + dir + "/**"
+		workspacePattern := filepath.Join(cwd, "**", dir)
+		descendantPattern := filepath.Join(cwd, "**", dir, "**")
 
 		foundCwd := false
-		foundGlob := false
+		foundWorkspacePattern := false
+		foundDescendantPattern := false
 
 		for _, p := range patterns {
 			if p == cwdPath {
 				foundCwd = true
 			}
-			if p == globPattern {
-				foundGlob = true
+			if p == workspacePattern {
+				foundWorkspacePattern = true
+			}
+			if p == descendantPattern {
+				foundDescendantPattern = true
 			}
 		}
 
 		if !foundCwd {
 			t.Errorf("Missing cwd-relative pattern for dangerous directory %q", dir)
 		}
-		if !foundGlob {
-			t.Errorf("Missing glob pattern for dangerous directory %q", dir)
+		if !foundWorkspacePattern {
+			t.Errorf("Missing workspace-scoped directory pattern for dangerous directory %q", dir)
+		}
+		if !foundDescendantPattern {
+			t.Errorf("Missing descendant pattern for dangerous directory %q", dir)
 		}
 	}
 }
@@ -153,20 +187,51 @@ func TestGetMandatoryDenyPatternsGitHooksAlwaysBlocked(t *testing.T) {
 		patterns := GetMandatoryDenyPatterns(cwd, allowGitConfig)
 
 		foundHooksPath := false
-		foundHooksGlob := false
+		foundHooksDirPattern := false
+		foundHooksDescPattern := false
 
 		for _, p := range patterns {
 			if p == filepath.Join(cwd, ".git/hooks") {
 				foundHooksPath = true
 			}
-			if strings.Contains(p, ".git/hooks") && strings.HasPrefix(p, "**") {
-				foundHooksGlob = true
+			if p == filepath.Join(cwd, "**", ".git", "hooks") {
+				foundHooksDirPattern = true
+			}
+			if p == filepath.Join(cwd, "**", ".git", "hooks", "**") {
+				foundHooksDescPattern = true
 			}
 		}
 
-		if !foundHooksPath || !foundHooksGlob {
+		if !foundHooksPath || !foundHooksDirPattern || !foundHooksDescPattern {
 			t.Errorf("Git hooks should always be blocked (allowGitConfig=%v)", allowGitConfig)
 		}
+	}
+}
+
+func TestGetMandatoryDenyPatternsAreWorkspaceScoped(t *testing.T) {
+	cwd := "/workspace/project"
+	patterns := GetMandatoryDenyPatterns(cwd, false)
+
+	unscoped := []string{
+		"**/.gitconfig",
+		"**/.idea",
+		"**/.idea/**",
+		"**/.git/hooks",
+		"**/.git/hooks/**",
+	}
+	for _, pattern := range unscoped {
+		if slices.Contains(patterns, pattern) {
+			t.Fatalf("GetMandatoryDenyPatterns() should not contain unscoped pattern %q", pattern)
+		}
+	}
+
+	ideaDescPattern := filepath.Join(cwd, "**", ".idea", "**")
+	regex := regexp.MustCompile(GlobToRegex(ideaDescPattern))
+	if !regex.MatchString(filepath.Join(cwd, "pkg", ".idea", "workspace.xml")) {
+		t.Fatalf("workspace-scoped pattern %q should match nested workspace path", ideaDescPattern)
+	}
+	if regex.MatchString("/Users/jy/.pnpm-store/v3/files/pkg/.idea/workspace.xml") {
+		t.Fatalf("workspace-scoped pattern %q should not match outside-workspace path", ideaDescPattern)
 	}
 }
 
