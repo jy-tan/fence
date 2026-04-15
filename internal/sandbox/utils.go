@@ -53,6 +53,25 @@ func NormalizePath(pathPattern string) string {
 	return normalized
 }
 
+// ResolveSandboxWorkingDir returns the directory that sandbox policy should use
+// as its workspace root. When a caller provides an explicit working directory,
+// prefer that over the process cwd so wrapping matches the command's exec dir.
+func ResolveSandboxWorkingDir(workingDir string) string {
+	if workingDir == "" {
+		cwd, err := os.Getwd()
+		if err == nil {
+			return cwd
+		}
+		return "."
+	}
+
+	if abs, err := filepath.Abs(workingDir); err == nil {
+		return filepath.Clean(abs)
+	}
+
+	return filepath.Clean(workingDir)
+}
+
 // GenerateProxyEnvVars creates environment variables for proxy configuration.
 func GenerateProxyEnvVars(httpPort, socksPort int) []string {
 	tmpDir := ensureSandboxTMPDIR()

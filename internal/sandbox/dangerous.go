@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -292,30 +293,61 @@ func FindDangerousFiles(root string, maxDepth int) []string {
 	return results
 }
 
-// GetMandatoryDenyPatterns returns glob patterns for paths that must always be protected.
+func appendUniquePatterns(patterns []string, values ...string) []string {
+	for _, value := range values {
+		if value == "" || slices.Contains(patterns, value) {
+			continue
+		}
+		patterns = append(patterns, value)
+	}
+	return patterns
+}
+
+func appendWorkspaceRecursiveFilePatterns(patterns []string, root, relativePath string) []string {
+	return appendUniquePatterns(
+		patterns,
+		filepath.Join(root, relativePath),
+		filepath.Join(root, "**", relativePath),
+	)
+}
+
+func appendWorkspaceRecursiveDirectoryPatterns(patterns []string, root, relativePath string) []string {
+	return appendUniquePatterns(
+		patterns,
+		filepath.Join(root, relativePath),
+		filepath.Join(root, "**", relativePath),
+		filepath.Join(root, "**", relativePath, "**"),
+	)
+}
+
+// GetMandatoryDenyPatterns returns absolute and workspace-scoped glob patterns
+// for paths that must always be protected on macOS.
 func GetMandatoryDenyPatterns(cwd string, allowGitConfig bool) []string {
+	cwd = filepath.Clean(cwd)
 	var patterns []string
+	home, _ := os.UserHomeDir()
 
-	// Dangerous files - in CWD and all subdirectories
+	// Dangerous files are protected in the workspace subtree and explicitly in
+	// the user's home directory, so shell/profile files stay protected without
+	// denying matching filenames everywhere on the filesystem.
 	for _, f := range DangerousFiles {
-		patterns = append(patterns, filepath.Join(cwd, f))
-		patterns = append(patterns, "**/"+f)
+		patterns = appendWorkspaceRecursiveFilePatterns(patterns, cwd, f)
+		if home != "" {
+			patterns = appendUniquePatterns(patterns, filepath.Join(home, f))
+		}
 	}
 
-	// Dangerous directories
+	// Dangerous directories are only scoped to the current workspace tree.
 	for _, d := range DangerousDirectories {
-		patterns = append(patterns, filepath.Join(cwd, d))
-		patterns = append(patterns, "**/"+d+"/**")
+		patterns = appendWorkspaceRecursiveDirectoryPatterns(patterns, cwd, d)
 	}
 
-	// Git hooks are always blocked
-	patterns = append(patterns, filepath.Join(cwd, ".git/hooks"))
-	patterns = append(patterns, "**/.git/hooks/**")
+	// Git hooks are always blocked throughout the workspace tree.
+	patterns = appendWorkspaceRecursiveDirectoryPatterns(patterns, cwd, filepath.Join(".git", "hooks"))
 
-	// Git config is conditionally blocked
+	// Git config is conditionally blocked throughout the workspace tree.
 	if !allowGitConfig {
-		patterns = append(patterns, filepath.Join(cwd, ".git/config"))
-		patterns = append(patterns, "**/.git/config")
+		patterns = appendWorkspaceRecursiveFilePatterns(patterns, cwd, filepath.Join(".git", "config"))
 	}
 
 	return patterns

@@ -52,6 +52,8 @@ type LinuxSandboxOptions struct {
 	ShellMode string
 	// Whether to run shell as login shell.
 	ShellLogin bool
+	// Working directory the sandbox policy should treat as the workspace root.
+	WorkDir string
 }
 
 const (
@@ -432,7 +434,7 @@ func WrapCommandLinux(cfg *config.Config, command string, bridge *LinuxBridge, r
 }
 
 // WrapCommandLinuxWithShell wraps a command with configurable shell selection.
-func WrapCommandLinuxWithShell(cfg *config.Config, command string, bridge *LinuxBridge, reverseBridge *ReverseBridge, debug bool, shellMode string, shellLogin bool) (string, error) {
+func WrapCommandLinuxWithShell(cfg *config.Config, command string, workingDir string, bridge *LinuxBridge, reverseBridge *ReverseBridge, debug bool, shellMode string, shellLogin bool) (string, error) {
 	return WrapCommandLinuxWithOptions(cfg, command, bridge, reverseBridge, LinuxSandboxOptions{
 		UseLandlock: true,
 		UseSeccomp:  true,
@@ -440,6 +442,7 @@ func WrapCommandLinuxWithShell(cfg *config.Config, command string, bridge *Linux
 		Debug:       debug,
 		ShellMode:   shellMode,
 		ShellLogin:  shellLogin,
+		WorkDir:     workingDir,
 	})
 }
 
@@ -799,7 +802,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		return "", err
 	}
 
-	cwd, _ := os.Getwd()
+	cwd := ResolveSandboxWorkingDir(opts.WorkDir)
 	features := DetectLinuxFeatures()
 	runtimeExecPolicy := effectiveRuntimeExecPolicy(cfg)
 	useArgvRuntimeExecPolicy := runtimeExecPolicy == config.RuntimeExecPolicyArgv

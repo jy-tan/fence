@@ -1,6 +1,8 @@
 package sandbox
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -480,7 +482,7 @@ func TestGenerateWriteRules_DeduplicatesSharedAncestorMoveRules(t *testing.T) {
 	rules := generateWriteRules(nil, []string{
 		"/fence-issue-74-home/.pypirc",
 		"/fence-issue-74-home/.netrc",
-	}, false, logTag)
+	}, false, "", logTag)
 
 	tests := []struct {
 		name  string
@@ -524,7 +526,7 @@ func TestGenerateWriteRules_DeduplicatesExactDuplicateRules(t *testing.T) {
 	rules := generateWriteRules(nil, []string{
 		"/fence-issue-74-dup/.pypirc",
 		"/fence-issue-74-dup/.pypirc",
-	}, false, logTag)
+	}, false, "", logTag)
 
 	tests := []struct {
 		name  string
@@ -560,5 +562,33 @@ func TestGenerateWriteRules_DeduplicatesExactDuplicateRules(t *testing.T) {
 		if got := countRuleBlockOccurrences(rules, tt.lines...); got != 1 {
 			t.Fatalf("%s count = %d, want 1\nRules:\n%s", tt.name, got, strings.Join(rules, "\n"))
 		}
+	}
+}
+
+func TestGenerateWriteRules_UsesWorkspaceScopedMandatoryDenyPatterns(t *testing.T) {
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+
+	workspace := t.TempDir()
+	if err := os.Chdir(workspace); err != nil {
+		t.Fatalf("failed to chdir to workspace: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(originalWD)
+	}()
+
+	rules := generateWriteRules([]string{workspace}, nil, false, workspace, "test-log")
+	joinedRules := strings.Join(rules, "\n")
+
+	scopedRegex := escapePath(GlobToRegex(filepath.Join(ResolveSandboxWorkingDir(workspace), "**", ".idea", "**")))
+	if !strings.Contains(joinedRules, "(regex "+scopedRegex+")") {
+		t.Fatalf("expected scoped .idea deny regex in rules, got:\n%s", joinedRules)
+	}
+
+	unscopedRegex := escapePath(GlobToRegex("**/.idea/**"))
+	if strings.Contains(joinedRules, "(regex "+unscopedRegex+")") {
+		t.Fatalf("unexpected unscoped .idea deny regex in rules:\n%s", joinedRules)
 	}
 }

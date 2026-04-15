@@ -112,6 +112,12 @@ func (m *Manager) Initialize() error {
 // WrapCommand wraps a command with sandbox restrictions.
 // Returns an error if the command is blocked by policy.
 func (m *Manager) WrapCommand(command string) (string, error) {
+	return m.WrapCommandInDir(command, "")
+}
+
+// WrapCommandInDir wraps a command with sandbox restrictions using the given
+// working directory as the workspace root for mandatory path protection.
+func (m *Manager) WrapCommandInDir(command string, workingDir string) (string, error) {
 	if !m.initialized {
 		if err := m.Initialize(); err != nil {
 			return "", err
@@ -127,11 +133,13 @@ func (m *Manager) WrapCommand(command string) (string, error) {
 	if effectiveRuntimeExecPolicy(m.config) == config.RuntimeExecPolicyArgv && plat != platform.Linux {
 		return "", fmt.Errorf("command.runtimeExecPolicy=%q is only supported on Linux", config.RuntimeExecPolicyArgv)
 	}
+
+	workingDir = ResolveSandboxWorkingDir(workingDir)
 	switch plat {
 	case platform.MacOS:
-		return WrapCommandMacOS(m.config, command, m.httpPort, m.socksPort, m.exposedPorts, m.debug, m.shellMode, m.shellLogin)
+		return WrapCommandMacOS(m.config, command, workingDir, m.httpPort, m.socksPort, m.exposedPorts, m.debug, m.shellMode, m.shellLogin)
 	case platform.Linux:
-		return WrapCommandLinuxWithShell(m.config, command, m.linuxBridge, m.reverseBridge, m.debug, m.shellMode, m.shellLogin)
+		return WrapCommandLinuxWithShell(m.config, command, workingDir, m.linuxBridge, m.reverseBridge, m.debug, m.shellMode, m.shellLogin)
 	default:
 		return "", fmt.Errorf("unsupported platform: %s", plat)
 	}

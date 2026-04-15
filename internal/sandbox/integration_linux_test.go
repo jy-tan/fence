@@ -74,6 +74,7 @@ func runUnderLinuxSandboxDirect(t *testing.T, cfg *config.Config, command string
 		UseSeccomp:  false,
 		UseEBPF:     false,
 		ShellMode:   ShellModeDefault,
+		WorkDir:     workDir,
 	})
 	if err != nil {
 		return &SandboxTestResult{
@@ -756,7 +757,7 @@ func TestLinux_ExposedPortAllowsHostReachability(t *testing.T) {
 			}
 
 			command := "python3 -m http.server " + strconv.Itoa(port) + " --bind 127.0.0.1"
-			wrappedCmd, err := manager.WrapCommand(command)
+			wrappedCmd, err := manager.WrapCommandInDir(command, workspace)
 			if err != nil {
 				return fmt.Errorf("wrap command: %w", err)
 			}
