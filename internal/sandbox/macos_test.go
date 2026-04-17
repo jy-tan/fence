@@ -145,11 +145,24 @@ func TestMacOS_MachLookupRules(t *testing.T) {
 		{
 			name:         "wildcard mach lookup",
 			lookup:       []string{"org.chromium.*"},
-			wantContains: []string{`(allow mach-lookup (global-name-regex #"^org\\.chromium\\."))`},
+			wantContains: []string{`(allow mach-lookup (global-name-regex #"^org\.chromium\."))`},
 		},
 		{
 			name:         "allow all mach lookup",
 			lookup:       []string{"*"},
+			wantContains: []string{`(allow mach-lookup)`},
+		},
+		{
+			name:   "mixed exact and wildcard",
+			lookup: []string{"com.apple.SecurityServer", "com.apple.*"},
+			wantContains: []string{
+				`(allow mach-lookup (global-name "com.apple.SecurityServer"))`,
+				`(allow mach-lookup (global-name-regex #"^com\.apple\."))`,
+			},
+		},
+		{
+			name:         "wildcard with star takes precedence",
+			lookup:       []string{"com.apple.*", "*"},
 			wantContains: []string{`(allow mach-lookup)`},
 		},
 	}
@@ -185,11 +198,24 @@ func TestMacOS_MachRegisterRules(t *testing.T) {
 		{
 			name:         "wildcard mach register",
 			register:     []string{"org.chromium.*"},
-			wantContains: []string{`(allow mach-register (global-name-regex #"^org\\.chromium\\."))`},
+			wantContains: []string{`(allow mach-register (global-name-regex #"^org\.chromium\."))`},
 		},
 		{
 			name:         "allow all mach register",
 			register:     []string{"*"},
+			wantContains: []string{`(allow mach-register)`},
+		},
+		{
+			name:     "mixed exact and wildcard",
+			register: []string{"md.obsidian.MachPortRendezvousServer", "md.obsidian.*"},
+			wantContains: []string{
+				`(allow mach-register (global-name "md.obsidian.MachPortRendezvousServer"))`,
+				`(allow mach-register (global-name-regex #"^md\.obsidian\."))`,
+			},
+		},
+		{
+			name:         "wildcard with star takes precedence",
+			register:     []string{"md.obsidian.*", "*"},
 			wantContains: []string{`(allow mach-register)`},
 		},
 	}
