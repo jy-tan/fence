@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -403,4 +404,97 @@ func TestMacOS_MultipleWritableRoots(t *testing.T) {
 	defer func() { _ = os.Remove(outsideFile) }()
 	result = runUnderSandbox(t, cfg, "echo 'test' > "+outsideFile, workspace1)
 	assertBlocked(t, result)
+}
+
+// ============================================================================
+// Mach IPC Policy Tests (regression coverage for the wildcard regex bug #127)
+// ============================================================================
+
+// mdlsBaselineFailureMarker is what `mdls` prints when the Spotlight metadata
+// daemon (com.apple.metadata.mds) is unreachable because mach-lookup is
+// denied. The exact string is empirically stable across recent macOS
+// versions.
+const mdlsBaselineFailureMarker = "could not find"
+
+// probeMdlsWorksUnsandboxed verifies that `mdls <path>` returns real Spotlight
+// metadata on the current machine. If Spotlight indexing is disabled (e.g., in
+// some CI environments), the probe can't differentiate allowed vs. blocked so
+// we skip the tests that rely on it.
+func probeMdlsWorksUnsandboxed(t *testing.T, path string) {
+	t.Helper()
+	out, err := exec.Command("/usr/bin/mdls", path).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "kMDItem") {
+		t.Skipf("skipping: unsandboxed `mdls %s` does not return metadata (Spotlight disabled?): err=%v out=%s", path, err, string(out))
+	}
+}
+
+// TestMacOS_MachWildcardAuthorizesNonBaselineService verifies that a wildcard
+// mach.lookup pattern (e.g., "com.apple.metadata.*") actually authorizes mach
+// lookups to services matching that prefix - specifically services that are
+// not already in the baseline allowlist.
+//
+// Probe: `mdls /etc/hosts`. This requires talking to `com.apple.metadata.mds`
+// (Spotlight metadata daemon), which is not in the fence baseline mach-lookup
+// list. When mds is unreachable, mdls prints "could not find <path>" and
+// exits non-zero. When mds is reachable, mdls prints kMDItem* attributes.
+func TestMacOS_MachWildcardAuthorizesNonBaselineService(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+	skipIfCommandNotFound(t, "mdls")
+
+	probePath := "/etc/hosts"
+	probeMdlsWorksUnsandboxed(t, probePath)
+
+	workspace := createTempWorkspace(t)
+
+	t.Run("baseline_denies_mds", func(t *testing.T) {
+		// Sanity check: without any user-supplied mach.lookup rules, the
+		// baseline doesn't authorize com.apple.metadata.mds, so the probe
+		// must fail. If it doesn't, the probe is no longer a reliable
+		// differentiator and the sibling test below is meaningless.
+		cfg := testConfigWithWorkspace(workspace)
+		result := runUnderSandbox(t, cfg, "/usr/bin/mdls "+probePath, workspace)
+
+		combined := result.Stdout + result.Stderr
+		if !strings.Contains(combined, mdlsBaselineFailureMarker) {
+			t.Skipf("probe not differentiating on this system: mdls unexpectedly succeeded under baseline\nstdout=%q\nstderr=%q\nexit=%d",
+				result.Stdout, result.Stderr, result.ExitCode)
+		}
+	})
+
+	t.Run("wildcard_allows_mds", func(t *testing.T) {
+		// With a wildcard that covers com.apple.metadata.*, mdls should
+		// reach the daemon and print real metadata. Pre-fix, the wildcard
+		// rule was a no-op and this would still fail.
+		cfg := testConfigWithWorkspace(workspace)
+		cfg.MacOS.Mach.Lookup = []string{"com.apple.metadata.*"}
+
+		result := runUnderSandboxWithTimeout(t, cfg, "/usr/bin/mdls "+probePath, workspace, 10*time.Second)
+
+		assertAllowed(t, result)
+		if !strings.Contains(result.Stdout, "kMDItem") {
+			t.Errorf("wildcard com.apple.metadata.* did not authorize mdls to reach mds\nstdout=%q\nstderr=%q\nexit=%d",
+				result.Stdout, result.Stderr, result.ExitCode)
+		}
+		if strings.Contains(result.Stdout+result.Stderr, mdlsBaselineFailureMarker) {
+			t.Errorf("wildcard rule appears to be a no-op — mdls still reports %q\nstdout=%q\nstderr=%q",
+				mdlsBaselineFailureMarker, result.Stdout, result.Stderr)
+		}
+	})
+
+	t.Run("exact_match_allows_mds", func(t *testing.T) {
+		// Control: an exact match for com.apple.metadata.mds should also
+		// authorize mdls. This isolates whether a failure in the wildcard
+		// case is regex-specific (bug) vs. an environmental issue (e.g.,
+		// mds needs additional services we're not allowing).
+		cfg := testConfigWithWorkspace(workspace)
+		cfg.MacOS.Mach.Lookup = []string{"com.apple.metadata.mds"}
+
+		result := runUnderSandboxWithTimeout(t, cfg, "/usr/bin/mdls "+probePath, workspace, 10*time.Second)
+
+		assertAllowed(t, result)
+		if !strings.Contains(result.Stdout, "kMDItem") {
+			t.Errorf("exact-match com.apple.metadata.mds did not authorize mdls\nstdout=%q\nstderr=%q\nexit=%d",
+				result.Stdout, result.Stderr, result.ExitCode)
+		}
+	})
 }

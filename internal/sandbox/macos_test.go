@@ -237,6 +237,126 @@ func TestMacOS_MachRegisterRules(t *testing.T) {
 	}
 }
 
+// machRegexLineRE extracts the raw regex body from a line shaped like:
+//
+//	(allow mach-<op> (global-name-regex #"<pattern>"))
+//
+// The #"..." form in SBPL is a raw regex literal: backslashes are passed
+// through verbatim to the regex engine, with the sole exception that \" is
+// an escaped closing quote (so the literal can contain a double-quote).
+var machRegexLineRE = regexp.MustCompile(`\(allow mach-(?:lookup|register) \(global-name-regex #"((?:[^"\\]|\\.)*)"\)\)`)
+
+// extractMachRegexes parses a generated SBPL profile and returns the list of
+// regex patterns emitted for (global-name-regex #"...") rules, in order.
+// The returned patterns are the actual regex strings (with \" unescaped) that
+// the regex engine would see.
+func extractMachRegexes(t *testing.T, profile string) []string {
+	t.Helper()
+	var patterns []string
+	for _, m := range machRegexLineRE.FindAllStringSubmatch(profile, -1) {
+		// Only \" is an SBPL-level escape inside #"..."; every other
+		// backslash is literal input to the regex engine.
+		patterns = append(patterns, strings.ReplaceAll(m[1], `\"`, `"`))
+	}
+	return patterns
+}
+
+// TestMacOS_MachWildcardRegexSemantics verifies that wildcard mach patterns
+// emit regexes that actually match intended service names and reject unrelated
+// ones. This catches the class of bug where the emitted rule parses fine but
+// the regex pattern is subtly wrong (e.g., double-escaped backslashes turning
+// `\.` into `\\.` which means "literal-backslash + any-char" in SBPL regex).
+func TestMacOS_MachWildcardRegexSemantics(t *testing.T) {
+	tests := []struct {
+		name           string
+		lookup         []string
+		register       []string
+		shouldMatch    []string
+		shouldNotMatch []string
+	}{
+		{
+			name:           "com.apple wildcard lookup",
+			lookup:         []string{"com.apple.*"},
+			shouldMatch:    []string{"com.apple.diagnosticd", "com.apple.fonts", "com.apple."},
+			shouldNotMatch: []string{"com.other.thing", "zzcom.apple.x", "comxapplex"},
+		},
+		{
+			name:           "md.obsidian wildcard register",
+			register:       []string{"md.obsidian.*"},
+			shouldMatch:    []string{"md.obsidian.MachPortRendezvousServer", "md.obsidian.helper"},
+			shouldNotMatch: []string{"md.other.thing", "mdxobsidianxfoo", "com.apple.foo"},
+		},
+		{
+			name:           "multi-segment prefix",
+			lookup:         []string{"com.apple.security.*"},
+			shouldMatch:    []string{"com.apple.security.cryptoTokenKit", "com.apple.security.agent"},
+			shouldNotMatch: []string{"com.apple.Security.Agent", "com.apple.securityd", "com.apple.other"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			profile := GenerateSandboxProfile(MacOSSandboxParams{
+				Command:      "echo test",
+				MachLookup:   tt.lookup,
+				MachRegister: tt.register,
+			})
+
+			patterns := extractMachRegexes(t, profile)
+			if len(patterns) == 0 {
+				t.Fatalf("no global-name-regex rules emitted in profile:\n%s", profile)
+			}
+
+			for _, pat := range patterns {
+				re, err := regexp.Compile(pat)
+				if err != nil {
+					t.Fatalf("emitted regex %q does not compile: %v", pat, err)
+				}
+
+				for _, name := range tt.shouldMatch {
+					if !re.MatchString(name) {
+						t.Errorf("regex %q should match service name %q (profile excerpt: %s)", pat, name, pat)
+					}
+				}
+				for _, name := range tt.shouldNotMatch {
+					if re.MatchString(name) {
+						t.Errorf("regex %q should NOT match service name %q", pat, name)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestMacOS_MachWildcardRegexWithStrangeChars verifies that service name
+// patterns containing regex metacharacters are escaped correctly in the
+// emitted SBPL. This protects against user-supplied patterns like
+// "com.foo+bar.*" silently over-matching.
+func TestMacOS_MachWildcardRegexMetacharsEscaped(t *testing.T) {
+	profile := GenerateSandboxProfile(MacOSSandboxParams{
+		Command:    "echo test",
+		MachLookup: []string{"com.foo+bar.*"},
+	})
+
+	patterns := extractMachRegexes(t, profile)
+	if len(patterns) != 1 {
+		t.Fatalf("expected exactly one regex, got %d: %v", len(patterns), patterns)
+	}
+
+	re, err := regexp.Compile(patterns[0])
+	if err != nil {
+		t.Fatalf("emitted regex %q does not compile: %v", patterns[0], err)
+	}
+
+	// Literal "+" must be required, not treated as "one or more of o".
+	if !re.MatchString("com.foo+bar.baz") {
+		t.Errorf("regex %q should match %q", patterns[0], "com.foo+bar.baz")
+	}
+	if re.MatchString("com.foobar.baz") {
+		t.Errorf("regex %q should NOT match %q (plus was not escaped)", patterns[0], "com.foobar.baz")
+	}
+}
+
 // TestMacOS_ProfileNetworkSection verifies the network section of generated profiles.
 func TestMacOS_ProfileNetworkSection(t *testing.T) {
 	tests := []struct {
