@@ -11,19 +11,20 @@ import (
 
 // Manager handles sandbox initialization and command wrapping.
 type Manager struct {
-	config        *config.Config
-	httpProxy     *proxy.HTTPProxy
-	socksProxy    *proxy.SOCKSProxy
-	linuxBridge   *LinuxBridge
-	reverseBridge *ReverseBridge
-	httpPort      int
-	socksPort     int
-	exposedPorts  []int
-	shellMode     string
-	shellLogin    bool
-	debug         bool
-	monitor       bool
-	initialized   bool
+	config              *config.Config
+	httpProxy           *proxy.HTTPProxy
+	socksProxy          *proxy.SOCKSProxy
+	linuxBridge         *LinuxBridge
+	reverseBridge       *ReverseBridge
+	localOutboundBridge *LocalOutboundBridge
+	httpPort            int
+	socksPort           int
+	exposedPorts        []int
+	shellMode           string
+	shellLogin          bool
+	debug               bool
+	monitor             bool
+	initialized         bool
 }
 
 // NewManager creates a new sandbox manager.
@@ -102,6 +103,34 @@ func (m *Manager) Initialize() error {
 		} else if len(m.exposedPorts) > 0 && m.debug {
 			m.logDebug("Skipping reverse bridge (no network namespace, ports accessible directly)")
 		}
+
+		// Set up the localhost-outbound bridge when the user opted into
+		// host-loopback access. The bridge is only meaningful when we also
+		// unshare the network namespace (otherwise sandbox 127.0.0.1 already
+		// is the host's 127.0.0.1 and no forwarding is needed). Wildcard
+		// relaxed mode drops --unshare-net too, so skip there.
+		if m.config != nil && m.config.Network.EffectiveAllowLocalOutbound() && features.CanUnshareNet && !hasWildcardAllowedDomain(m.config) {
+			ports := m.config.Network.AllowLocalOutboundPorts
+			if len(ports) > 0 {
+				loBridge, err := NewLocalOutboundBridge(ports, m.debug)
+				if err != nil {
+					if m.reverseBridge != nil {
+						m.reverseBridge.Cleanup()
+					}
+					m.linuxBridge.Cleanup()
+					_ = m.httpProxy.Stop()
+					_ = m.socksProxy.Stop()
+					return fmt.Errorf("failed to initialize localhost-outbound bridge: %w", err)
+				}
+				m.localOutboundBridge = loBridge
+			} else {
+				// Surface the Linux-specific limitation once at startup so
+				// users do not silently get the pre-fix broken behavior.
+				fencelog.Printf(
+					"[fence] network.allowLocalOutbound=true on Linux requires network.allowLocalOutboundPorts to list the host loopback ports to bridge (e.g. [5432, 6379]). Without it, sandbox connections to 127.0.0.1 stay isolated inside the sandbox network namespace.\n",
+				)
+			}
+		}
 	}
 
 	m.initialized = true
@@ -139,7 +168,17 @@ func (m *Manager) WrapCommandInDir(command string, workingDir string) (string, e
 	case platform.MacOS:
 		return WrapCommandMacOS(m.config, command, workingDir, m.httpPort, m.socksPort, m.exposedPorts, m.debug, m.shellMode, m.shellLogin)
 	case platform.Linux:
-		return WrapCommandLinuxWithShell(m.config, command, workingDir, m.linuxBridge, m.reverseBridge, m.debug, m.shellMode, m.shellLogin)
+		return WrapCommandLinuxWithOptions(m.config, command, m.linuxBridge, m.reverseBridge, LinuxSandboxOptions{
+			UseLandlock:         true,
+			UseSeccomp:          true,
+			UseEBPF:             true,
+			Monitor:             m.monitor,
+			Debug:               m.debug,
+			ShellMode:           m.shellMode,
+			ShellLogin:          m.shellLogin,
+			WorkDir:             workingDir,
+			LocalOutboundBridge: m.localOutboundBridge,
+		})
 	default:
 		return "", fmt.Errorf("unsupported platform: %s", plat)
 	}
@@ -147,6 +186,9 @@ func (m *Manager) WrapCommandInDir(command string, workingDir string) (string, e
 
 // Cleanup stops the proxies and cleans up resources.
 func (m *Manager) Cleanup() {
+	if m.localOutboundBridge != nil {
+		m.localOutboundBridge.Cleanup()
+	}
 	if m.reverseBridge != nil {
 		m.reverseBridge.Cleanup()
 	}

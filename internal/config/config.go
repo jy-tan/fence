@@ -35,8 +35,24 @@ type NetworkConfig struct {
 	AllowAllUnixSockets bool     `json:"allowAllUnixSockets,omitempty" description:"If true, allow connections to any Unix socket path. Overrides allowUnixSockets."`
 	AllowLocalBinding   bool     `json:"allowLocalBinding,omitempty" description:"Allow the sandbox to bind to local network ports. Enable this when the sandboxed process needs to run a local server."`
 	AllowLocalOutbound  *bool    `json:"allowLocalOutbound,omitempty" description:"Allow outbound connections to localhost and loopback addresses. If omitted, inherits the value of allowLocalBinding."`
-	HTTPProxyPort       int      `json:"httpProxyPort,omitempty" description:"Port for the internal HTTP proxy used to enforce domain filtering. Set automatically by fence; only override for advanced configurations."`
-	SOCKSProxyPort      int      `json:"socksProxyPort,omitempty" description:"Port for the internal SOCKS proxy used to enforce domain filtering. Set automatically by fence; only override for advanced configurations."`
+	// AllowLocalOutboundPorts is required on Linux for host-loopback access.
+	// macOS reaches any localhost port when allowLocalOutbound is true; Linux
+	// keeps --unshare-net so the sandbox's loopback is isolated from the
+	// host's, and each listed port is bridged back to host 127.0.0.1:<port>.
+	AllowLocalOutboundPorts []int `json:"allowLocalOutboundPorts,omitempty" description:"Linux-only. TCP ports on the host's 127.0.0.1 that the sandbox may connect to when allowLocalOutbound is true. Each listed port is forwarded from sandbox loopback to host loopback via a per-port bridge. Ignored on macOS (which allows arbitrary localhost ports when allowLocalOutbound is true)."`
+	HTTPProxyPort           int   `json:"httpProxyPort,omitempty" description:"Port for the internal HTTP proxy used to enforce domain filtering. Set automatically by fence; only override for advanced configurations."`
+	SOCKSProxyPort          int   `json:"socksProxyPort,omitempty" description:"Port for the internal SOCKS proxy used to enforce domain filtering. Set automatically by fence; only override for advanced configurations."`
+}
+
+// EffectiveAllowLocalOutbound returns whether outbound connections to
+// localhost/loopback should be permitted. When AllowLocalOutbound is unset,
+// it defaults to AllowLocalBinding (documented behavior on both macOS and
+// Linux).
+func (n NetworkConfig) EffectiveAllowLocalOutbound() bool {
+	if n.AllowLocalOutbound != nil {
+		return *n.AllowLocalOutbound
+	}
+	return n.AllowLocalBinding
 }
 
 // DeviceMode controls how /dev is set up inside Linux sandboxes.
@@ -376,6 +392,11 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("invalid denied domain %q: %w", domain, err)
 		}
 	}
+	for _, port := range c.Network.AllowLocalOutboundPorts {
+		if port < 1 || port > 65535 {
+			return fmt.Errorf("invalid network.allowLocalOutboundPorts entry %d (expected 1-65535)", port)
+		}
+	}
 	for _, name := range c.MacOS.Mach.Lookup {
 		if err := validateMachServicePattern(name); err != nil {
 			return fmt.Errorf("invalid macos.mach.lookup entry %q: %w", name, err)
@@ -696,6 +717,9 @@ func Merge(base, override *Config) *Config {
 			// Pointer fields: override wins if set, otherwise base
 			AllowLocalOutbound: mergeOptionalBool(base.Network.AllowLocalOutbound, override.Network.AllowLocalOutbound),
 
+			// Append int slices (base first, then override additions), deduped
+			AllowLocalOutboundPorts: mergeInts(base.Network.AllowLocalOutboundPorts, override.Network.AllowLocalOutboundPorts),
+
 			// Port fields: override wins if non-zero
 			HTTPProxyPort:  mergeInt(base.Network.HTTPProxyPort, override.Network.HTTPProxyPort),
 			SOCKSProxyPort: mergeInt(base.Network.SOCKSProxyPort, override.Network.SOCKSProxyPort),
@@ -819,4 +843,31 @@ func mergeInt(base, override int) int {
 		return override
 	}
 	return base
+}
+
+// mergeInts appends two int slices, removing duplicates while preserving order.
+func mergeInts(base, override []int) []int {
+	if len(base) == 0 {
+		return override
+	}
+	if len(override) == 0 {
+		return base
+	}
+
+	seen := make(map[int]bool, len(base)+len(override))
+	result := make([]int, 0, len(base)+len(override))
+
+	for _, v := range base {
+		if !seen[v] {
+			seen[v] = true
+			result = append(result, v)
+		}
+	}
+	for _, v := range override {
+		if !seen[v] {
+			seen[v] = true
+			result = append(result, v)
+		}
+	}
+	return result
 }

@@ -139,7 +139,10 @@ type Config struct {
 - Domain matching supports exact values such as `example.com` and wildcard
   prefixes such as `*.example.com`.
 - `allowLocalBinding` and `allowLocalOutbound` are separate controls: binding
-  to localhost is not the same as connecting out to localhost services.
+  to localhost is not the same as connecting out to localhost services. On
+  Linux, outbound localhost access additionally requires
+  `allowLocalOutboundPorts` because the sandbox runs in its own network
+  namespace (see [Outbound Connections to Host Loopback](#outbound-connections-to-host-loopback-localhost-bridge)).
 - On macOS, Unix socket access can be allowlisted with `allowUnixSockets` or
   fully opened with `allowAllUnixSockets`.
 - On macOS, additional Mach/XPC permissions can be granted with
@@ -387,6 +390,52 @@ Flow:
 
 If there is no isolated network namespace, a reverse bridge is unnecessary
 because the sandbox shares the host network directly.
+
+## Outbound Connections to Host Loopback (Localhost Bridge)
+
+On Linux, `--unshare-net` gives the sandbox its own loopback, so
+`127.0.0.1:<port>` inside the sandbox is **not** the host's `127.0.0.1:<port>`.
+When `network.allowLocalOutbound` is true and
+`network.allowLocalOutboundPorts` lists a set of host loopback ports, Fence
+brings up a per-port bidirectional bridge — the mirror image of the reverse
+bridge — so the sandbox can talk to host services like Redis or Postgres
+without giving up external network isolation.
+
+```mermaid
+flowchart TB
+    subgraph Host
+        SVC["Host service<br/>127.0.0.1:6379"]
+        HSOCAT["socat<br/>UNIX-LISTEN"]
+        USOCK["Unix Socket<br/>/tmp/fence-lo-6379-*.sock"]
+    end
+
+    subgraph Sandbox ["Sandbox (bwrap --unshare-net)"]
+        ISOCAT["socat<br/>TCP-LISTEN 127.0.0.1:6379"]
+        APP["User Command"]
+    end
+
+    APP --> ISOCAT
+    ISOCAT -->|UNIX-CONNECT| USOCK
+    USOCK <-->|shared via bind mount| HSOCAT
+    HSOCAT --> SVC
+```
+
+Flow:
+
+1. Sandbox `socat` binds sandbox `127.0.0.1:<port>` and forwards to a shared
+   Unix socket
+2. Host `socat` listens on that Unix socket and forwards to host
+   `127.0.0.1:<port>`
+3. `NO_PROXY=localhost,127.0.0.1` continues to direct clients straight at the
+   sandbox loopback; the bridge makes that loopback resolve to the host
+
+Because the bridge is explicit per port, the list in
+`allowLocalOutboundPorts` acts as a clear allowlist of host loopback services
+the sandbox is permitted to reach. macOS does not need this field: Seatbelt
+rules allow arbitrary localhost ports when `allowLocalOutbound` is true.
+
+In wildcard-`allowedDomains` relaxed mode `--unshare-net` is dropped and the
+sandbox already shares the host network, so the localhost bridge is skipped.
 
 ## Execution Flow
 

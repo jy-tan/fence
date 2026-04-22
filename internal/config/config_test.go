@@ -138,6 +138,33 @@ func TestConfigValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "valid allowLocalOutboundPorts",
+			config: Config{
+				Network: NetworkConfig{
+					AllowLocalOutboundPorts: []int{1, 5432, 65535},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid allowLocalOutboundPorts zero",
+			config: Config{
+				Network: NetworkConfig{
+					AllowLocalOutboundPorts: []int{0, 5432},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid allowLocalOutboundPorts out of range",
+			config: Config{
+				Network: NetworkConfig{
+					AllowLocalOutboundPorts: []int{70000},
+				},
+			},
+			wantErr: true,
+		},
+		{
 			name: "valid macos mach config",
 			config: Config{
 				MacOS: MacOSConfig{
@@ -1124,6 +1151,31 @@ func TestMerge(t *testing.T) {
 		}
 	})
 
+	t.Run("merge allowLocalOutboundPorts dedup", func(t *testing.T) {
+		base := &Config{
+			Network: NetworkConfig{
+				AllowLocalOutboundPorts: []int{5432, 6379},
+			},
+		}
+		override := &Config{
+			Network: NetworkConfig{
+				AllowLocalOutboundPorts: []int{6379, 8080},
+			},
+		}
+		result := Merge(base, override)
+
+		got := result.Network.AllowLocalOutboundPorts
+		want := []int{5432, 6379, 8080}
+		if len(got) != len(want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("expected allowLocalOutboundPorts[%d]=%d, got %d (full: %v)", i, want[i], got[i], got)
+			}
+		}
+	})
+
 	t.Run("merge macos mach config", func(t *testing.T) {
 		base := &Config{
 			MacOS: MacOSConfig{
@@ -1780,6 +1832,33 @@ func TestMergeSSHConfig(t *testing.T) {
 		}
 		if !result.SSH.InheritDeny {
 			t.Error("expected InheritDeny to be true (OR logic)")
+		}
+	})
+}
+
+func TestNetworkConfig_EffectiveAllowLocalOutbound(t *testing.T) {
+	t.Run("explicit true", func(t *testing.T) {
+		n := NetworkConfig{AllowLocalOutbound: boolPtr(true), AllowLocalBinding: false}
+		if !n.EffectiveAllowLocalOutbound() {
+			t.Fatal("expected true when AllowLocalOutbound=true")
+		}
+	})
+	t.Run("explicit false beats binding", func(t *testing.T) {
+		n := NetworkConfig{AllowLocalOutbound: boolPtr(false), AllowLocalBinding: true}
+		if n.EffectiveAllowLocalOutbound() {
+			t.Fatal("expected false when AllowLocalOutbound=false even if AllowLocalBinding=true")
+		}
+	})
+	t.Run("inherits binding when unset", func(t *testing.T) {
+		n := NetworkConfig{AllowLocalBinding: true}
+		if !n.EffectiveAllowLocalOutbound() {
+			t.Fatal("expected true by inheritance from AllowLocalBinding")
+		}
+	})
+	t.Run("defaults to false", func(t *testing.T) {
+		n := NetworkConfig{}
+		if n.EffectiveAllowLocalOutbound() {
+			t.Fatal("expected false when neither set")
 		}
 	})
 }

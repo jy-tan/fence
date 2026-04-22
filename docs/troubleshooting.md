@@ -157,13 +157,28 @@ Fence's OS-level sandbox should still block direct connections; the above makes 
 
 ## Local services (Redis/Postgres/etc.) fail inside the sandbox
 
-If your process needs to connect to `localhost` services, set:
+If your process needs to connect to `localhost` services, set `allowLocalOutbound`.
+
+**macOS:** a boolean alone is enough; the sandbox can reach any host loopback port.
 
 ```json
 {
   "network": { "allowLocalOutbound": true }
 }
 ```
+
+**Linux:** the sandbox runs in its own network namespace, so its `127.0.0.1` is not the host's `127.0.0.1`. You must also list the exact host loopback ports to bridge. Fence starts per-port socat forwarders that relay sandbox `127.0.0.1:<port>` back to host `127.0.0.1:<port>`:
+
+```json
+{
+  "network": {
+    "allowLocalOutbound": true,
+    "allowLocalOutboundPorts": [5432, 6379]
+  }
+}
+```
+
+If `allowLocalOutbound` is true on Linux but `allowLocalOutboundPorts` is empty, Fence logs a warning and connections to `127.0.0.1` still fail with `Connection refused` — this is by design, so the boolean alone never silently exposes arbitrary host services.
 
 If you're running a server inside the sandbox that must accept connections:
 

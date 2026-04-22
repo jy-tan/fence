@@ -16,14 +16,15 @@ type FileWriteOptions struct {
 
 // cleanNetworkConfig is used for JSON output with omitempty to skip empty fields.
 type cleanNetworkConfig struct {
-	AllowedDomains      []string `json:"allowedDomains,omitempty"`
-	DeniedDomains       []string `json:"deniedDomains,omitempty"`
-	AllowUnixSockets    []string `json:"allowUnixSockets,omitempty"`
-	AllowAllUnixSockets bool     `json:"allowAllUnixSockets,omitempty"`
-	AllowLocalBinding   bool     `json:"allowLocalBinding,omitempty"`
-	AllowLocalOutbound  *bool    `json:"allowLocalOutbound,omitempty"`
-	HTTPProxyPort       int      `json:"httpProxyPort,omitempty"`
-	SOCKSProxyPort      int      `json:"socksProxyPort,omitempty"`
+	AllowedDomains          []string `json:"allowedDomains,omitempty"`
+	DeniedDomains           []string `json:"deniedDomains,omitempty"`
+	AllowUnixSockets        []string `json:"allowUnixSockets,omitempty"`
+	AllowAllUnixSockets     bool     `json:"allowAllUnixSockets,omitempty"`
+	AllowLocalBinding       bool     `json:"allowLocalBinding,omitempty"`
+	AllowLocalOutbound      *bool    `json:"allowLocalOutbound,omitempty"`
+	AllowLocalOutboundPorts []int    `json:"allowLocalOutboundPorts,omitempty"`
+	HTTPProxyPort           int      `json:"httpProxyPort,omitempty"`
+	SOCKSProxyPort          int      `json:"socksProxyPort,omitempty"`
 }
 
 // cleanFilesystemConfig is used for JSON output with omitempty to skip empty fields.
@@ -99,14 +100,15 @@ func MarshalConfigJSON(cfg *Config) ([]byte, error) {
 
 	// Network config - only include if non-empty
 	network := cleanNetworkConfig{
-		AllowedDomains:      cfg.Network.AllowedDomains,
-		DeniedDomains:       cfg.Network.DeniedDomains,
-		AllowUnixSockets:    cfg.Network.AllowUnixSockets,
-		AllowAllUnixSockets: cfg.Network.AllowAllUnixSockets,
-		AllowLocalBinding:   cfg.Network.AllowLocalBinding,
-		AllowLocalOutbound:  cfg.Network.AllowLocalOutbound,
-		HTTPProxyPort:       cfg.Network.HTTPProxyPort,
-		SOCKSProxyPort:      cfg.Network.SOCKSProxyPort,
+		AllowedDomains:          cfg.Network.AllowedDomains,
+		DeniedDomains:           cfg.Network.DeniedDomains,
+		AllowUnixSockets:        cfg.Network.AllowUnixSockets,
+		AllowAllUnixSockets:     cfg.Network.AllowAllUnixSockets,
+		AllowLocalBinding:       cfg.Network.AllowLocalBinding,
+		AllowLocalOutbound:      cfg.Network.AllowLocalOutbound,
+		AllowLocalOutboundPorts: cfg.Network.AllowLocalOutboundPorts,
+		HTTPProxyPort:           cfg.Network.HTTPProxyPort,
+		SOCKSProxyPort:          cfg.Network.SOCKSProxyPort,
 	}
 	if !isNetworkEmpty(network) {
 		clean.Network = &network
@@ -183,6 +185,7 @@ func isNetworkEmpty(n cleanNetworkConfig) bool {
 		!n.AllowAllUnixSockets &&
 		!n.AllowLocalBinding &&
 		n.AllowLocalOutbound == nil &&
+		len(n.AllowLocalOutboundPorts) == 0 &&
 		n.HTTPProxyPort == 0 &&
 		n.SOCKSProxyPort == 0
 }

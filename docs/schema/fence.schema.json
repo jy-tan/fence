@@ -195,6 +195,13 @@
             "null"
           ]
         },
+        "allowLocalOutboundPorts": {
+          "description": "Linux-only. TCP ports on the host's 127.0.0.1 that the sandbox may connect to when allowLocalOutbound is true. Each listed port is forwarded from sandbox loopback to host loopback via a per-port bridge. Ignored on macOS (which allows arbitrary localhost ports when allowLocalOutbound is true).",
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
         "allowUnixSockets": {
           "description": "Unix socket paths the sandbox may connect to (e.g. /var/run/docker.sock).",
           "items": {

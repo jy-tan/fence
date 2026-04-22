@@ -20,16 +20,23 @@ type ReverseBridge struct {
 	SocketPaths []string
 }
 
+// LocalOutboundBridge is a stub for non-Linux platforms.
+type LocalOutboundBridge struct {
+	Ports       []int
+	SocketPaths []string
+}
+
 // LinuxSandboxOptions is a stub for non-Linux platforms.
 type LinuxSandboxOptions struct {
-	UseLandlock bool
-	UseSeccomp  bool
-	UseEBPF     bool
-	Monitor     bool
-	Debug       bool
-	ShellMode   string
-	ShellLogin  bool
-	WorkDir     string
+	UseLandlock         bool
+	UseSeccomp          bool
+	UseEBPF             bool
+	Monitor             bool
+	Debug               bool
+	ShellMode           string
+	ShellLogin          bool
+	WorkDir             string
+	LocalOutboundBridge *LocalOutboundBridge
 }
 
 // NewLinuxBridge returns an error on non-Linux platforms.
@@ -47,6 +54,17 @@ func NewReverseBridge(ports []int, debug bool) (*ReverseBridge, error) {
 
 // Cleanup is a no-op on non-Linux platforms.
 func (b *ReverseBridge) Cleanup() {}
+
+// NewLocalOutboundBridge returns an error on non-Linux platforms.
+// The localhost-outbound bridge exists to relay sandbox loopback to host
+// loopback across --unshare-net; macOS Seatbelt handles localhost access
+// declaratively and never invokes this path.
+func NewLocalOutboundBridge(ports []int, debug bool) (*LocalOutboundBridge, error) {
+	return nil, fmt.Errorf("local outbound bridge not available on this platform")
+}
+
+// Cleanup is a no-op on non-Linux platforms.
+func (b *LocalOutboundBridge) Cleanup() {}
 
 // WrapCommandLinux returns an error on non-Linux platforms.
 func WrapCommandLinux(cfg *config.Config, command string, bridge *LinuxBridge, reverseBridge *ReverseBridge, debug bool) (string, error) {

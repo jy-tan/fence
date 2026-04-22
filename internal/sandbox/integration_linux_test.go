@@ -815,6 +815,98 @@ func TestLinux_ExposedPortAllowsHostReachability(t *testing.T) {
 	t.Fatalf("failed to reach sandboxed server after retries: %v", lastErr)
 }
 
+// TestLinux_AllowLocalOutboundReachesHost verifies that with
+// network.allowLocalOutbound=true and network.allowLocalOutboundPorts listing
+// the service port, a sandboxed process can talk to a host loopback service
+// while --unshare-net is still in force (i.e. external network remains
+// blocked).
+func TestLinux_AllowLocalOutboundReachesHost(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+	skipIfCommandNotFound(t, "curl")
+
+	features := DetectLinuxFeatures()
+	if !features.CanUnshareNet {
+		t.Skip("skipping: localhost-outbound bridge requires network namespace support")
+	}
+
+	// Start a real HTTP server on the host's 127.0.0.1 so we can prove the
+	// sandbox actually reaches the host loopback (not its own).
+	const markerBody = "localhost-outbound bridge reached the host"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(markerBody))
+	})
+	server := &http.Server{Handler: mux, ReadHeaderTimeout: 2 * time.Second}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to allocate test port: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	go func() { _ = server.Serve(listener) }()
+	defer func() { _ = server.Close() }()
+
+	workspace := createTempWorkspace(t)
+	cfg := testConfigWithWorkspace(workspace)
+	trueVal := true
+	cfg.Network.AllowLocalOutbound = &trueVal
+	cfg.Network.AllowLocalOutboundPorts = []int{port}
+
+	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/"
+	// -sS: silent but show errors; --max-time bounds the overall request.
+	result := runUnderSandboxWithTimeout(t, cfg, "curl -sS --max-time 5 "+url, workspace, 15*time.Second)
+
+	if result.Failed() {
+		t.Fatalf("expected curl to succeed reaching host loopback via bridge; exit=%d\nstdout: %s\nstderr: %s",
+			result.ExitCode, result.Stdout, result.Stderr)
+	}
+	if !strings.Contains(result.Stdout, markerBody) {
+		t.Fatalf("expected response body %q; got stdout=%q stderr=%q",
+			markerBody, result.Stdout, result.Stderr)
+	}
+}
+
+// TestLinux_AllowLocalOutboundWithoutPortsBlocked verifies the negative case:
+// setting allowLocalOutbound=true but leaving allowLocalOutboundPorts empty
+// does NOT grant access (since Linux needs explicit ports to bridge). This
+// guards the security property: the boolean alone must never silently expose
+// arbitrary host loopback services.
+func TestLinux_AllowLocalOutboundWithoutPortsBlocked(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+	skipIfCommandNotFound(t, "curl")
+
+	features := DetectLinuxFeatures()
+	if !features.CanUnshareNet {
+		t.Skip("skipping: test relies on network namespace isolation")
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("should-not-be-reached"))
+	})
+	server := &http.Server{Handler: mux, ReadHeaderTimeout: 2 * time.Second}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to allocate test port: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	go func() { _ = server.Serve(listener) }()
+	defer func() { _ = server.Close() }()
+
+	workspace := createTempWorkspace(t)
+	cfg := testConfigWithWorkspace(workspace)
+	trueVal := true
+	cfg.Network.AllowLocalOutbound = &trueVal
+	// Intentionally leave AllowLocalOutboundPorts empty.
+
+	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/"
+	result := runUnderSandboxWithTimeout(t, cfg, "curl -sS --max-time 3 "+url, workspace, 10*time.Second)
+
+	if !result.Failed() && strings.Contains(result.Stdout, "should-not-be-reached") {
+		t.Fatalf("expected connection to host loopback to stay blocked without allowLocalOutboundPorts, but curl succeeded\nstdout: %s\nstderr: %s",
+			result.Stdout, result.Stderr)
+	}
+}
+
 // TestLinux_ProxyAllowsAllowedDomains verifies the proxy allows configured domains.
 func TestLinux_ProxyAllowsAllowedDomains(t *testing.T) {
 	skipIfAlreadySandboxed(t)

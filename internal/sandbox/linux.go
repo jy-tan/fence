@@ -37,6 +37,26 @@ type ReverseBridge struct {
 	debug       bool
 }
 
+// LocalOutboundBridge forwards sandbox-loopback connections to host-loopback
+// on a fixed list of TCP ports. It exists because Fence runs the Linux sandbox
+// with --unshare-net, which isolates loopback: sandbox 127.0.0.1 is not the
+// host's 127.0.0.1. This bridge lets the user opt specific host services
+// (Redis, Postgres, local dev servers) into the sandbox without giving up
+// external network isolation.
+//
+// The pattern mirrors LinuxBridge / ReverseBridge: host-side socat listens on
+// a bind-mounted Unix socket and forwards to host 127.0.0.1:<port>, and the
+// sandbox-side socat (started inside the sandbox bootstrap) listens on
+// 127.0.0.1:<port> and forwards to the shared socket. It is only activated
+// when network.allowLocalOutbound is true AND the user has listed the ports
+// in network.allowLocalOutboundPorts.
+type LocalOutboundBridge struct {
+	Ports       []int
+	SocketPaths []string
+	processes   []*exec.Cmd
+	debug       bool
+}
+
 // LinuxSandboxOptions contains options for the Linux sandbox.
 type LinuxSandboxOptions struct {
 	// Enable Landlock filesystem restrictions (requires kernel 5.13+)
@@ -55,6 +75,11 @@ type LinuxSandboxOptions struct {
 	ShellLogin bool
 	// Working directory the sandbox policy should treat as the workspace root.
 	WorkDir string
+	// Optional host-side forwarder for host-loopback access when
+	// network.allowLocalOutbound is true. When non-nil, the sandbox bootstrap
+	// brings up matching sandbox-side socat listeners bound to 127.0.0.1
+	// on each of the bridge's ports.
+	LocalOutboundBridge *LocalOutboundBridge
 }
 
 const (
@@ -265,6 +290,98 @@ func (b *ReverseBridge) Cleanup() {
 
 	if b.debug {
 		fencelog.Printf("[fence:linux] Reverse bridges cleaned up\n")
+	}
+}
+
+// NewLocalOutboundBridge starts host-side socat forwarders that relay
+// connections arriving on per-port Unix sockets to host 127.0.0.1:<port>.
+// The matching sandbox-side socat listeners (which bind sandbox 127.0.0.1
+// and connect into these sockets) are started by the sandbox bootstrap
+// script. Returns nil if the port list is empty.
+func NewLocalOutboundBridge(ports []int, debug bool) (*LocalOutboundBridge, error) {
+	if len(ports) == 0 {
+		return nil, nil
+	}
+
+	if _, err := exec.LookPath("socat"); err != nil {
+		return nil, fmt.Errorf("socat is required on Linux but not found: %w", err)
+	}
+
+	id := make([]byte, 8)
+	if _, err := rand.Read(id); err != nil {
+		return nil, fmt.Errorf("failed to generate socket ID: %w", err)
+	}
+	socketID := hex.EncodeToString(id)
+
+	tmpDir := os.TempDir()
+	bridge := &LocalOutboundBridge{
+		Ports: ports,
+		debug: debug,
+	}
+
+	for _, port := range ports {
+		socketPath := filepath.Join(tmpDir, fmt.Sprintf("fence-lo-%d-%s.sock", port, socketID))
+		// Socket must not exist yet (socat UNIX-LISTEN refuses to overwrite).
+		_ = os.Remove(socketPath)
+		bridge.SocketPaths = append(bridge.SocketPaths, socketPath)
+
+		// Host side: listen on the shared Unix socket, forward to host loopback.
+		// Use mode=0600 to keep the bridge restricted to the sandbox owner.
+		args := []string{
+			fmt.Sprintf("UNIX-LISTEN:%s,fork,reuseaddr,mode=0600", socketPath),
+			fmt.Sprintf("TCP:127.0.0.1:%d", port),
+		}
+		proc := exec.Command("socat", args...) //nolint:gosec // args constructed from trusted input
+		if debug {
+			fencelog.Printf("[fence:linux] Starting localhost-outbound bridge for port %d: socat %s\n", port, strings.Join(args, " "))
+		}
+		if err := proc.Start(); err != nil {
+			bridge.Cleanup()
+			return nil, fmt.Errorf("failed to start localhost-outbound bridge for port %d: %w", port, err)
+		}
+		bridge.processes = append(bridge.processes, proc)
+	}
+
+	// Wait briefly for all Unix sockets to appear so the sandbox side can bind
+	// into them unconditionally. Matches the LinuxBridge 5s cap.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		allReady := true
+		for _, p := range bridge.SocketPaths {
+			if !fileExists(p) {
+				allReady = false
+				break
+			}
+		}
+		if allReady {
+			if debug {
+				fencelog.Printf("[fence:linux] Localhost-outbound bridges ready for ports: %v\n", ports)
+			}
+			return bridge, nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	bridge.Cleanup()
+	return nil, fmt.Errorf("timeout waiting for localhost-outbound bridge sockets to be created")
+}
+
+// Cleanup stops the local-outbound bridge processes and removes socket files.
+func (b *LocalOutboundBridge) Cleanup() {
+	if b == nil {
+		return
+	}
+	for _, proc := range b.processes {
+		if proc != nil && proc.Process != nil {
+			_ = proc.Process.Kill()
+			_ = proc.Wait()
+		}
+	}
+	for _, socketPath := range b.SocketPaths {
+		_ = os.Remove(socketPath)
+	}
+	if b.debug {
+		fencelog.Printf("[fence:linux] Localhost-outbound bridges cleaned up\n")
 	}
 }
 
@@ -588,7 +705,7 @@ fence_wait_for_helpers() {
         all_alive=1
 `, ShellQuoteSingle(linuxBootstrapDir), ShellQuoteSingle(linuxBootstrapInputPath), ShellQuoteSingle(linuxBootstrapLogPath))
 
-	for _, pidVar := range bootstrapPIDVars(bridge, reverseBridge) {
+	for _, pidVar := range bootstrapPIDVars(bridge, reverseBridge, opts.LocalOutboundBridge) {
 		_, _ = fmt.Fprintf(&script, `        if ! kill -0 "$%s" >>"$fence_bootstrap_log" 2>&1; then
             all_alive=0
         fi
@@ -675,7 +792,23 @@ export FENCE_SANDBOX=1
 		script.WriteString("\n")
 	}
 
-	if len(bootstrapPIDVars(bridge, reverseBridge)) > 0 {
+	if opts.LocalOutboundBridge != nil && len(opts.LocalOutboundBridge.Ports) > 0 {
+		script.WriteString("\n# Start localhost-outbound bridge listeners so sandbox 127.0.0.1:<port> reaches host 127.0.0.1:<port>\n")
+		for i, port := range opts.LocalOutboundBridge.Ports {
+			socketPath := opts.LocalOutboundBridge.SocketPaths[i]
+			_, _ = fmt.Fprintf(&script, "fence_start_helper %s\n",
+				ShellQuote([]string{
+					bootstrapExecs.Socat,
+					fmt.Sprintf("TCP-LISTEN:%d,bind=127.0.0.1,fork,reuseaddr", port),
+					fmt.Sprintf("UNIX-CONNECT:%s", socketPath),
+				}),
+			)
+			_, _ = fmt.Fprintf(&script, "LO_%d_PID=$!\n", port)
+		}
+		script.WriteString("\n")
+	}
+
+	if len(bootstrapPIDVars(bridge, reverseBridge, opts.LocalOutboundBridge)) > 0 {
 		script.WriteString("fence_wait_for_helpers || exit 1\n\n")
 	}
 
@@ -701,7 +834,7 @@ export FENCE_SANDBOX=1
 	return script.String(), nil
 }
 
-func bootstrapPIDVars(bridge *LinuxBridge, reverseBridge *ReverseBridge) []string {
+func bootstrapPIDVars(bridge *LinuxBridge, reverseBridge *ReverseBridge, localOutboundBridge *LocalOutboundBridge) []string {
 	var pidVars []string
 	if bridge != nil {
 		pidVars = append(pidVars, "HTTP_PID", "SOCKS_PID")
@@ -709,6 +842,11 @@ func bootstrapPIDVars(bridge *LinuxBridge, reverseBridge *ReverseBridge) []strin
 	if reverseBridge != nil {
 		for _, port := range reverseBridge.Ports {
 			pidVars = append(pidVars, fmt.Sprintf("REV_%d_PID", port))
+		}
+	}
+	if localOutboundBridge != nil {
+		for _, port := range localOutboundBridge.Ports {
+			pidVars = append(pidVars, fmt.Sprintf("LO_%d_PID", port))
 		}
 	}
 	return pidVars
@@ -1211,6 +1349,15 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		bwrapArgs = append(bwrapArgs, "--bind", tmpDir, tmpDir)
 	}
 
+	// Bind each localhost-outbound Unix socket into the sandbox so the
+	// bootstrap-spawned socat listeners can connect back to the host-side
+	// forwarders. Sockets are created on the host before bwrap starts.
+	if opts.LocalOutboundBridge != nil {
+		for _, socketPath := range opts.LocalOutboundBridge.SocketPaths {
+			bwrapArgs = append(bwrapArgs, "--bind", socketPath, socketPath)
+		}
+	}
+
 	// Skip Landlock wrapper if executable is in /tmp (test binaries are built there)
 	// The wrapper won't work because --tmpfs /tmp hides the test binary
 	// Skip Landlock wrapper if fence is being used as a library (executable is not fence)
@@ -1228,7 +1375,9 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		shellPath,
 		fenceExePath,
 		useLandlockWrapper || useArgvRuntimeExecPolicy,
-		bridge != nil || (reverseBridge != nil && len(reverseBridge.Ports) > 0),
+		bridge != nil ||
+			(reverseBridge != nil && len(reverseBridge.Ports) > 0) ||
+			(opts.LocalOutboundBridge != nil && len(opts.LocalOutboundBridge.Ports) > 0),
 	)
 	if err != nil {
 		return "", err
@@ -1268,6 +1417,9 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		}
 		if reverseBridge != nil && len(reverseBridge.Ports) > 0 {
 			featureList = append(featureList, fmt.Sprintf("inbound:%v", reverseBridge.Ports))
+		}
+		if opts.LocalOutboundBridge != nil && len(opts.LocalOutboundBridge.Ports) > 0 {
+			featureList = append(featureList, fmt.Sprintf("local-outbound:%v", opts.LocalOutboundBridge.Ports))
 		}
 		fencelog.Printf("[fence:linux] Sandbox: %s\n", strings.Join(featureList, ", "))
 	}
