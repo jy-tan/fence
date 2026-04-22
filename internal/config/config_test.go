@@ -847,6 +847,170 @@ func TestFindNearestProjectConfigPath_IgnoresFenceJSONDirectories(t *testing.T) 
 	}
 }
 
+func TestFindNearestProjectConfigPath_PrefersJSONC(t *testing.T) {
+	projectRoot := filepath.Join(string(os.PathSeparator), "work", "demo")
+	childDir := filepath.Join(projectRoot, "packages", "web")
+	parentJSON := filepath.Join(projectRoot, "fence.json")
+	parentJSONC := filepath.Join(projectRoot, "fence.jsonc")
+
+	tests := []struct {
+		name     string
+		existing map[string]bool
+		want     string
+	}{
+		{
+			name: "prefers fence.jsonc over fence.json in the same directory",
+			existing: map[string]bool{
+				parentJSON:  true,
+				parentJSONC: true,
+			},
+			want: parentJSONC,
+		},
+		{
+			name: "falls back to fence.json when no jsonc file is present",
+			existing: map[string]bool{
+				parentJSON: true,
+			},
+			want: parentJSON,
+		},
+		{
+			name: "discovers fence.jsonc alone",
+			existing: map[string]bool{
+				parentJSONC: true,
+			},
+			want: parentJSONC,
+		},
+		{
+			name: "nearer fence.json wins over ancestor fence.jsonc",
+			existing: map[string]bool{
+				filepath.Join(childDir, "fence.json"): true,
+				parentJSONC:                           true,
+			},
+			want: filepath.Join(childDir, "fence.json"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := findNearestProjectConfigPath(childDir, func(path string) bool {
+				return tt.existing[path]
+			})
+			if err != nil {
+				t.Fatalf("findNearestProjectConfigPath() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("findNearestProjectConfigPath() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveDefaultConfigPathFor_JSONCPreference(t *testing.T) {
+	linuxHome := filepath.Join(string(os.PathSeparator), "home", "alice")
+	linuxConfigDir := filepath.Join(linuxHome, ".config")
+	linuxCanonicalJSON := filepath.Join(linuxConfigDir, "fence", "fence.json")
+	linuxCanonicalJSONC := filepath.Join(linuxConfigDir, "fence", "fence.jsonc")
+	linuxLegacyDotJSON := filepath.Join(linuxHome, ".fence.json")
+	linuxLegacyDotJSONC := filepath.Join(linuxHome, ".fence.jsonc")
+
+	tests := []struct {
+		name          string
+		goos          string
+		home          string
+		userConfigDir string
+		existing      map[string]bool
+		want          string
+	}{
+		{
+			name:          "prefers canonical fence.jsonc over fence.json",
+			goos:          "linux",
+			home:          linuxHome,
+			userConfigDir: linuxConfigDir,
+			existing: map[string]bool{
+				linuxCanonicalJSON:  true,
+				linuxCanonicalJSONC: true,
+			},
+			want: linuxCanonicalJSONC,
+		},
+		{
+			name:          "finds canonical fence.jsonc when only jsonc exists",
+			goos:          "linux",
+			home:          linuxHome,
+			userConfigDir: linuxConfigDir,
+			existing: map[string]bool{
+				linuxCanonicalJSONC: true,
+			},
+			want: linuxCanonicalJSONC,
+		},
+		{
+			name:          "falls back to legacy .fence.jsonc before .fence.json",
+			goos:          "linux",
+			home:          linuxHome,
+			userConfigDir: linuxConfigDir,
+			existing: map[string]bool{
+				linuxLegacyDotJSON:  true,
+				linuxLegacyDotJSONC: true,
+			},
+			want: linuxLegacyDotJSONC,
+		},
+		{
+			name:          "canonical fence.jsonc wins over legacy .fence.jsonc",
+			goos:          "linux",
+			home:          linuxHome,
+			userConfigDir: linuxConfigDir,
+			existing: map[string]bool{
+				linuxCanonicalJSONC: true,
+				linuxLegacyDotJSONC: true,
+			},
+			want: linuxCanonicalJSONC,
+		},
+		{
+			name:          "falls back to canonical .json default when nothing exists",
+			goos:          "linux",
+			home:          linuxHome,
+			userConfigDir: linuxConfigDir,
+			existing:      map[string]bool{},
+			want:          linuxCanonicalJSON,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveDefaultConfigPathFor(tt.goos, tt.home, tt.userConfigDir, func(path string) bool {
+				return tt.existing[path]
+			})
+			if got != tt.want {
+				t.Fatalf("resolveDefaultConfigPathFor() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLegacyConfigPathsIncludesJSONC(t *testing.T) {
+	home := filepath.Join(string(os.PathSeparator), "home", "alice")
+
+	got := legacyConfigPaths("linux", home)
+	want := []string{
+		filepath.Join(home, ".fence.jsonc"),
+		filepath.Join(home, ".fence.json"),
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("legacyConfigPaths(linux) = %v, want %v", got, want)
+	}
+
+	got = legacyConfigPaths("darwin", home)
+	appSupport := filepath.Join(home, "Library", "Application Support", "fence")
+	want = []string{
+		filepath.Join(appSupport, "fence.jsonc"),
+		filepath.Join(appSupport, "fence.json"),
+		filepath.Join(home, ".fence.jsonc"),
+		filepath.Join(home, ".fence.json"),
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("legacyConfigPaths(darwin) = %v, want %v", got, want)
+	}
+}
+
 func TestMerge(t *testing.T) {
 	t.Run("nil base", func(t *testing.T) {
 		override := &Config{

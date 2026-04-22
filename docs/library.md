@@ -80,7 +80,9 @@ cfg.Network.AllowedDomains = []string{"example.com"}
 
 #### `LoadConfig(path string) (*Config, error)`
 
-Loads configuration from a JSON file. Supports JSONC (comments allowed).
+Loads configuration from a JSON or JSONC file. The extension is not
+inspected: comments and trailing commas are accepted regardless of whether
+the file is named `fence.json` or `fence.jsonc`.
 
 This is a low-level loader and does not resolve `extends` entries relative to
 the config file location. Use `LoadConfigResolved` if your config may use

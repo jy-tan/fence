@@ -115,7 +115,7 @@ fence --help
 
 ### Configuration
 
-When `--settings` is not provided, Fence first looks for `fence.json` in the current directory and parent directories. If none is found, it falls back to `~/.config/fence/fence.json`. See [configuration reference](./docs/configuration.md) for more details.
+When `--settings` is not provided, Fence first looks for `fence.jsonc` (or `fence.json`) in the current directory and parent directories. If none is found, it falls back to `~/.config/fence/fence.{jsonc,json}`. Both extensions are treated as JSONC (comments and trailing commas are allowed). See [configuration reference](./docs/configuration.md) for more details.
 
 ```json
 {
