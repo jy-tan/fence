@@ -178,6 +178,16 @@ func Default() *Config {
 	}
 }
 
+// ConfigFileName is the canonical filename fence writes when creating new
+// config files.
+const ConfigFileName = "fence.json"
+
+// configFileNames lists the filenames fence auto-discovers, in precedence
+// order. fence.jsonc is preferred over fence.json so users can opt into
+// JSONC-style comments/trailing commas by choosing the extension, mirroring
+// the behavior of tools like opencode.
+var configFileNames = []string{"fence.jsonc", "fence.json"}
+
 // DefaultConfigPath returns the canonical config file path for new configs.
 // Uses ~/.config/fence/fence.json as the canonical path on macOS and the OS config dir elsewhere.
 func DefaultConfigPath() string {
@@ -198,8 +208,9 @@ func ResolveDefaultConfigPath() string {
 }
 
 // ResolveConfigPath returns the config path fence should load when --settings is
-// not provided. It prefers the nearest fence.json in startDir or any parent
-// directory, and falls back to the user's default config path otherwise.
+// not provided. It prefers the nearest fence.jsonc (falling back to
+// fence.json) in startDir or any parent directory, and falls back to the
+// user's default config path otherwise.
 func ResolveConfigPath(startDir string) (string, error) {
 	if startDir == "" {
 		cwd, err := os.Getwd()
@@ -216,18 +227,20 @@ func ResolveConfigPath(startDir string) (string, error) {
 }
 
 func defaultConfigPathFor(goos, home, userConfigDir string) string {
-	canonicalPath := canonicalConfigPath(goos, home, userConfigDir)
-	if canonicalPath != "" {
-		return canonicalPath
+	canonicalDir := canonicalConfigDir(goos, home, userConfigDir)
+	if canonicalDir != "" {
+		return filepath.Join(canonicalDir, ConfigFileName)
 	}
-	return "fence.json"
+	return ConfigFileName
 }
 
 func resolveDefaultConfigPathFor(goos, home, userConfigDir string, exists func(string) bool) string {
-	canonicalPath := defaultConfigPathFor(goos, home, userConfigDir)
-	if canonicalPath != "fence.json" {
-		if exists(canonicalPath) {
-			return canonicalPath
+	if canonicalDir := canonicalConfigDir(goos, home, userConfigDir); canonicalDir != "" {
+		for _, name := range configFileNames {
+			candidate := filepath.Join(canonicalDir, name)
+			if exists(candidate) {
+				return candidate
+			}
 		}
 	}
 
@@ -237,7 +250,7 @@ func resolveDefaultConfigPathFor(goos, home, userConfigDir string, exists func(s
 		}
 	}
 
-	return canonicalPath
+	return defaultConfigPathFor(goos, home, userConfigDir)
 }
 
 func resolveConfigPathFor(goos, home, userConfigDir, startDir string, exists func(string) bool) (string, error) {
@@ -252,14 +265,17 @@ func resolveConfigPathFor(goos, home, userConfigDir, startDir string, exists fun
 	return resolveDefaultConfigPathFor(goos, home, userConfigDir, exists), nil
 }
 
-func canonicalConfigPath(goos, home, userConfigDir string) string {
+// canonicalConfigDir returns the directory fence looks in for the user's
+// default config, without a filename appended. Returns an empty string when
+// neither a home nor OS config dir is available.
+func canonicalConfigDir(goos, home, userConfigDir string) string {
 	switch {
 	case goos == "darwin" && home != "":
-		return filepath.Join(home, ".config", "fence", "fence.json")
+		return filepath.Join(home, ".config", "fence")
 	case userConfigDir != "":
-		return filepath.Join(userConfigDir, "fence", "fence.json")
+		return filepath.Join(userConfigDir, "fence")
 	case home != "":
-		return filepath.Join(home, ".config", "fence", "fence.json")
+		return filepath.Join(home, ".config", "fence")
 	default:
 		return ""
 	}
@@ -270,11 +286,20 @@ func legacyConfigPaths(goos, home string) []string {
 		return nil
 	}
 
-	paths := make([]string, 0, 2)
+	// Capacity covers the darwin "Application Support" dir plus the
+	// ~/.fence dotfile, each with both .jsonc and .json variants.
+	paths := make([]string, 0, 4)
 	if goos == "darwin" {
-		paths = append(paths, filepath.Join(home, "Library", "Application Support", "fence", "fence.json"))
+		appSupport := filepath.Join(home, "Library", "Application Support", "fence")
+		paths = append(paths,
+			filepath.Join(appSupport, "fence.jsonc"),
+			filepath.Join(appSupport, "fence.json"),
+		)
 	}
-	return append(paths, filepath.Join(home, ".fence.json"))
+	return append(paths,
+		filepath.Join(home, ".fence.jsonc"),
+		filepath.Join(home, ".fence.json"),
+	)
 }
 
 func configFileExists(path string) bool {
@@ -297,9 +322,11 @@ func findNearestProjectConfigPath(startDir string, exists func(string) bool) (st
 	}
 
 	for {
-		candidate := filepath.Join(current, "fence.json")
-		if exists(candidate) {
-			return candidate, nil
+		for _, name := range configFileNames {
+			candidate := filepath.Join(current, name)
+			if exists(candidate) {
+				return candidate, nil
+			}
 		}
 
 		parent := filepath.Dir(current)

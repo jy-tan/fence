@@ -2,13 +2,15 @@
 
 Fence reads settings from:
 
-- The nearest `fence.json` in the current directory or any parent directory
-- Otherwise, Linux: `$XDG_CONFIG_HOME/fence/fence.json` (typically `~/.config/fence/fence.json`)
-- Otherwise, macOS: `~/.config/fence/fence.json`
-- Legacy paths still supported: macOS `~/Library/Application Support/fence/fence.json` and `~/.fence.json`
-- Custom path: pass `--settings ./fence.json`
+- The nearest `fence.jsonc` or `fence.json` in the current directory or any parent directory
+- Otherwise, Linux: `$XDG_CONFIG_HOME/fence/fence.{jsonc,json}` (typically `~/.config/fence/fence.json`)
+- Otherwise, macOS: `~/.config/fence/fence.{jsonc,json}`
+- Legacy paths still supported: macOS `~/Library/Application Support/fence/fence.{jsonc,json}` and `~/.fence.{jsonc,json}`
+- Custom path: pass `--settings ./fence.json` (or `./fence.jsonc`)
 
-Config files support JSONC.
+Config files support JSONC (comments and trailing commas) regardless of
+extension. When both `fence.jsonc` and `fence.json` exist in the same
+directory, the `.jsonc` file wins.
 
 Example config:
 

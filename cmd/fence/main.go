@@ -99,9 +99,10 @@ func main() {
 with network and filesystem restrictions.
 
 By default, all network access is blocked. Fence first looks for a
-fence.json file in the current directory or any parent directory. If none is
-found, it falls back to $XDG_CONFIG_HOME/fence/fence.json on Linux (typically
-~/.config/fence/fence.json) or ~/.config/fence/fence.json on macOS. You can
+fence.jsonc (preferred) or fence.json file in the current directory or any
+parent directory. If none is found, it falls back to
+$XDG_CONFIG_HOME/fence/fence.{jsonc,json} on Linux (typically
+~/.config/fence/) or ~/.config/fence/fence.{jsonc,json} on macOS. You can
 also pass a settings file with --settings or use a built-in template with
 --template.
 
@@ -140,7 +141,7 @@ Configuration file format:
 
 	rootCmd.Flags().BoolVarP(&debug, "debug", "d", false, "Enable debug logging")
 	rootCmd.Flags().BoolVarP(&monitor, "monitor", "m", false, "Monitor and log sandbox violations (macOS: log stream, all: proxy denials)")
-	rootCmd.Flags().StringVarP(&settingsPath, "settings", "s", "", "Path to settings file (default: nearest project fence.json or OS config path)")
+	rootCmd.Flags().StringVarP(&settingsPath, "settings", "s", "", "Path to settings file (default: nearest project fence.jsonc/fence.json or OS config path)")
 	rootCmd.Flags().StringVarP(&templateName, "template", "t", "", "Use built-in template (e.g., ai-coding-agents, npm-install)")
 	rootCmd.Flags().BoolVar(&listTemplates, "list-templates", false, "List available templates")
 	rootCmd.Flags().StringVarP(&cmdString, "c", "c", "", "Run command string directly (like sh -c)")

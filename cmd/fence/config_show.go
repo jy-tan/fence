@@ -38,7 +38,8 @@ func newConfigShowCmd() *cobra.Command {
 		Long: `Show the active Fence config chain and fully resolved JSON.
 
 This command does not run a sandboxed command. By default it auto-discovers
-the nearest fence.json in the current directory tree and resolves inheritance.
+the nearest fence.jsonc or fence.json in the current directory tree and
+resolves inheritance.
 
 Examples:
   fence config show
@@ -54,7 +55,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVarP(&settingsPath, "settings", "s", "", "Path to settings file (default: nearest project fence.json or OS config path)")
+	cmd.Flags().StringVarP(&settingsPath, "settings", "s", "", "Path to settings file (default: nearest project fence.jsonc/fence.json or OS config path)")
 	cmd.Flags().StringVarP(&templateName, "template", "t", "", "Show built-in template config (e.g., code)")
 	cmd.MarkFlagsMutuallyExclusive("settings", "template")
 

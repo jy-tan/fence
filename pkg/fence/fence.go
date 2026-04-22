@@ -100,8 +100,8 @@ func ResolveDefaultConfigPath() string {
 }
 
 // ResolveConfigPath returns the config path fence would load when --settings is
-// not provided, preferring the nearest project fence.json before the user
-// default config path.
+// not provided, preferring the nearest project fence.jsonc (or fence.json)
+// before the user default config path.
 func ResolveConfigPath(startDir string) (string, error) {
 	return config.ResolveConfigPath(startDir)
 }
