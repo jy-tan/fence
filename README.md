@@ -4,6 +4,7 @@
 
 ![GitHub Release](https://img.shields.io/github/v/release/Use-Tusk/fence)
 [![Build and test](https://github.com/Use-Tusk/fence/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/Use-Tusk/fence/actions/workflows/main.yml)
+[![Docs](https://img.shields.io/badge/docs-fencesandbox.com-4c1?logo=bookstack&logoColor=white&color=mediumslateblue)](https://fencesandbox.com/docs)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 </div>
@@ -179,13 +180,15 @@ Fence can be used as a Go package or CLI tool.
 
 ## Documentation
 
-- [Index](/docs/README.md)
-- [Quickstart Guide](docs/quickstart.md)
-- [Configuration Reference](docs/configuration.md)
-- [Security Model](docs/security-model.md)
-- [Architecture](ARCHITECTURE.md)
-- [Library Usage (Go)](docs/library.md)
-- [Examples](examples/)
+Full docs are hosted at **[fencesandbox.com/docs](https://fencesandbox.com/docs)**.
+
+Quick links:
+
+- [Quickstart](https://fencesandbox.com/docs/quickstart) ([source](docs/quickstart.md))
+- [Configuration Reference](https://fencesandbox.com/docs/reference/configuration) ([source](docs/configuration.md))
+- [Security Model](https://fencesandbox.com/docs/reference/security-model) ([source](docs/security-model.md))
+- [Go Library Usage](https://fencesandbox.com/docs/reference/library) ([source](docs/library.md))
+- [Architecture](https://fencesandbox.com/docs/reference/architecture) ([source](ARCHITECTURE.md))
 
 ## Attribution
 
