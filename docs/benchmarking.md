@@ -85,7 +85,7 @@ benchstat bench.txt
 | `BenchmarkWrapCommandConfigs` | WrapCommand under realistic configs (default deny, many allowed domains, strictDenyRead, allowLocalOutboundPorts) |
 | `BenchmarkCheckCommand` | Preflight policy check, parameterized by deny-list size |
 | `BenchmarkGetRuntimeDeniedExecutablePaths` | Runtime exec deny resolution — the path PR #98 optimized. Includes `SharedBinaryHeavy` sub-bench that exercises alias probing on busybox/coreutils multicall names |
-| `BenchmarkSharedExecutableSearch` | Alias search construction (device-bucketed probing from PR #98) |
+| `BenchmarkSharedExecutableSearch` | Alias search construction (device-bucketed probing) |
 | `BenchmarkColdSandbox_*` | Full init + wrap + exec per iteration |
 | `BenchmarkWarmSandbox_*` | Pre-initialized manager, just exec |
 | `BenchmarkAmortized_*` | N inner commands per outer sandbox — approximates how agents actually consume fence |
@@ -262,113 +262,154 @@ where `N` is the number of inner commands run under one outer fence. The
 in `scripts/benchmark.sh` measure exactly this.
 
 Per-call overhead is expected to be significantly smaller than cold-start
-overhead because initialization is paid once. For regressions in either
-dimension, prefer the appropriate bench:
+overhead because initialization is paid once. See the reading guide below
+for which bench answers which question.
 
-| Concern | Bench to watch |
-|---------|----------------|
-| Startup cost of `fence` itself | `BenchmarkColdSandbox_*`, `cold-*` hyperfine |
-| Per-tool-call cost inside an agent | `BenchmarkAmortized_*`, `amortized-*` hyperfine |
-| Runtime exec deny startup regressions (see PR #98) | `BenchmarkGetRuntimeDeniedExecutablePaths`, `runtime-deny-startup` hyperfine |
+## Reading the Benchmarks
 
-## Benchmark Findings (12/28/2025)
+Rather than publish fixed-point-in-time findings that quickly go stale,
+this section documents which bench answers which question. Re-run the
+benches yourself (`workflow_dispatch` on the Benchmarks workflow, or
+locally per the Quick Start) whenever you need current numbers.
 
-> [!NOTE]
-> These numbers are a point-in-time snapshot from late 2025, before several
-> perf-sensitive changes (PR #98 WSL runtime-deny optimization, #109 argv
-> policy, #113 strictDenyRead, #136 localhost port bridge). They are kept
-> here for historical reference but should not be treated as current
-> performance guarantees. Re-run the benchmarks yourself when you need
-> fresh numbers.
+### The five numbers that matter
 
-Results from GitHub Actions CI runners (Linux: AMD EPYC 7763, macOS: Apple M1 Virtual).
+For any run, these are the rows to look at first:
 
-### Manager Initialization
+| Question | Look at | Why |
+|----------|---------|-----|
+| "How much does `fence` cost to start up?" | `BenchmarkManagerInit` | Pure init cost (proxies, Linux bridges). Cleanup is separated into `BenchmarkManagerCleanup` for cleaner numbers. |
+| "How expensive is wrapping a command under a realistic agent config?" | `BenchmarkWrapCommandConfigs/AgentDefaultDeny` | Default deny list + runtime-deny resolution, which is what real users configure. The original `BenchmarkWrapCommand` uses an empty config and underestimates. |
+| "What's the per-tool-call cost once fence is running?" | `BenchmarkAmortized_True_100` minus `BenchmarkAmortized_True_10`, divided by 90 | Differential eliminates the one-time wrap cost, leaving the marginal cost of one extra inner command. This is the number that matters for agent usage. |
+| "Did PR #98 regress on runtime exec deny?" | `BenchmarkGetRuntimeDeniedExecutablePaths/{LargeDeny,SharedBinaryHeavy}` | These exercise the alias-probing code path PR #98 optimized. On WSL they are the canary. |
+| "What's the user-observable cost of `fence -- cmd` invocation?" | `cold-*` rows in the hyperfine markdown, or `BenchmarkColdSandbox_True` | Real cold-start invocation, including Go runtime startup, config load, and exec teardown. |
 
-| Platform | `Manager.Initialize()` |
-|----------|------------------------|
-| Linux | 101.9 ms |
-| macOS | 27.5 µs |
+### Cross-referencing hyperfine rows and Go benches
 
-Linux initialization is ~3,700x slower because it must:
+The hyperfine CLI benches and Go microbenches measure overlapping things.
+When in doubt, prefer the Go numbers - they are more reproducible because
+they skip the fence binary's Go runtime startup and CLI parsing.
 
-- Start HTTP + SOCKS proxies
-- Create Unix socket bridges for socat
-- Set up bwrap namespace configuration
+| hyperfine row | Closest Go bench | Notes |
+|---------------|------------------|-------|
+| `true` (cold) | `BenchmarkColdSandbox_True` + Go runtime startup | Hyperfine row is typically ~15-25 ms higher due to binary startup on Linux. |
+| `amortized-true-10` | `BenchmarkAmortized_True_10` | Should match closely on the same machine. |
+| `amortized-true-100` | `BenchmarkAmortized_True_100` | Ditto. |
+| `runtime-deny-startup` | `BenchmarkGetRuntimeDeniedExecutablePaths/SharedBinaryHeavy` plus fence startup | The end-to-end row includes fence's full startup cost; the Go bench isolates just the resolver. |
 
-macOS only generates a Seatbelt profile string (very cheap).
+### What's going on underneath
 
-### Cold Start Overhead (one `fence` invocation per command)
+A full cold `fence -- true` on Linux decomposes roughly into:
 
-| Workload | Linux | macOS |
-|----------|-------|-------|
-| `true` | 215 ms | 22 ms |
-| Python | 124 ms | 33 ms |
-| Git status | 114 ms | 25 ms |
+| Component | Typical cost |
+|-----------|--------------|
+| Go runtime startup + config load + flag parse | ~15-20 ms |
+| `Manager.Initialize()` (HTTP + SOCKS proxies, socat bridges) | dominant on Linux, near-zero on macOS |
+| `WrapCommand` (including runtime-deny resolution) | single-digit ms on modest configs |
+| `sh -c "<bwrap ...> true"` exec + bwrap namespace setup | double-digit ms on Linux, low-single-digit on macOS |
+| Cleanup (proxy stop, bridge teardown) | <1 ms |
 
-This is the realistic cost for scripts running `fence -c "command"` repeatedly.
+On macOS the sandbox-exec path doesn't create proxies or bridges, so init
+is effectively free and the wrap path is the dominant cost. On Linux, init
+dominates cold-start overhead and the wrap path is a small fraction. That's
+why the amortized benches exist - for agent usage, you pay init once and
+then the per-call cost is roughly just the bwrap exec overhead.
 
-### Warm Path Overhead (pre-initialized manager)
+For a fresh comparison against your own hardware, run:
 
-| Workload | Linux | macOS |
-|----------|-------|-------|
-| `true` | 112 ms | 20 ms |
-| Python | 124 ms | 33 ms |
-| Git status | 114 ms | 25 ms |
+```bash
+go test -run=^$ -bench='BenchmarkManagerInit|BenchmarkWrapCommand|BenchmarkAmortized|BenchmarkGetRuntimeDeniedExecutablePaths' \
+    -benchmem -count=5 ./internal/sandbox/...
+```
 
-Even with proxies already running, Linux bwrap execution adds ~110ms overhead per command.
+and `./scripts/benchmark.sh` for the end-to-end hyperfine view.
 
-### Overhead Factors
+## Reference Numbers (2026-04-24)
 
-| Workload | Linux Overhead | macOS Overhead |
-|----------|----------------|----------------|
-| `true` (cold) | ~360x | ~10x |
-| `true` (warm) | ~187x | ~8x |
-| Python (warm) | ~11x | ~2x |
-| Git status (warm) | ~54x | ~4x |
+Snapshot from one Benchmarks workflow run at `-count=5`, plus a separate
+local WSL run. Kept for orientation only - rerun for current numbers
+whenever you need them. Do not treat these as performance guarantees.
 
-Overhead decreases as the actual workload increases (sandbox setup is fixed cost).
+Platforms:
 
-## Impact on Agent Usage
+- **Linux CI** — `ubuntu-latest` GitHub-hosted runner, AMD EPYC 7763 64-Core.
+- **macOS CI** — `macos-latest` GitHub-hosted runner, Apple M1 (Virtual).
+- **WSL** — local laptop, Intel Core i5-1345U, WSL2 kernel 6.6.87,
+  `/mnt/c` interop enabled. Different hardware from the CI runners, so
+  compare shapes rather than absolute numbers.
 
-### Long-Running Agents (`fence claude`, `fence codex`)
+### Go microbenches
 
-For agents that run as a child process under fence:
+Means rounded from 5 samples per row. Rows are grouped by what they
+measure so the reading guide above maps onto them.
 
-| Phase | Cost |
-|-------|------|
-| Startup (once) | Linux: ~215ms, macOS: ~22ms |
-| Per tool call | Negligible (baseline fork+exec only) |
+| Bench | Linux CI | macOS CI | WSL |
+|-------|----------|----------|-----|
+| **Manager lifecycle** | | | |
+| `BenchmarkManagerInit` | 101 ms | 58 µs | 93 ms |
+| `BenchmarkManagerCleanup` | 0.58 ms | 22 µs | 1.98 ms |
+| **Wrap path** | | | |
+| `BenchmarkWrapCommand` (minimal config) | 1.77 ms | 2.72 ms | **1,649 ms** [¹] |
+| `BenchmarkWrapCommandConfigs/AgentDefaultDeny` | 3.96 ms | 4.21 ms | **1,731 ms** [¹] |
+| `BenchmarkWrapCommandConfigs/ManyAllowedDomains` | 1.08 ms | 3.10 ms | 1,545 ms [¹] |
+| `BenchmarkWrapCommandConfigs/StrictDenyRead` | 1.05 ms | 3.31 ms | 1,540 ms [¹] |
+| **Runtime exec deny** | | | |
+| `BenchmarkGetRuntimeDeniedExecutablePaths/Empty` | 1.10 ms | 1.12 ms | **1,698 ms** [¹] |
+| `BenchmarkGetRuntimeDeniedExecutablePaths/DefaultsOnly` | 2.96 ms | 2.58 ms | 2,109 ms [¹] |
+| `BenchmarkGetRuntimeDeniedExecutablePaths/SmallDeny` | 1.66 ms | 1.60 ms | 1,542 ms [¹] |
+| `BenchmarkGetRuntimeDeniedExecutablePaths/SharedBinaryHeavy` | 1.55 ms | 1.76 ms | 551 ms [¹] |
+| `BenchmarkGetRuntimeDeniedExecutablePaths/LargeDeny` (45 entries) | 8.79 ms | 8.41 ms | 6,602 ms [¹] |
+| **Amortized and baseline** | | | |
+| `BenchmarkBaseline_True` (unsandboxed, per iter) [²] | 0.59 ms | 2.33 ms | 0.78 ms |
+| `BenchmarkAmortized_True_10` (10 inner, sandboxed) | 20.3 ms | 25.8 ms | 27.3 ms |
+| `BenchmarkAmortized_True_100` (100 inner, sandboxed) | 21.3 ms | 22.3 ms | 27.9 ms |
+| Per-inner-call amortized overhead [³] | ~11 µs | ≈ 0 µs | ~6 µs |
 
-Child processes inherit the sandbox - no re-initialization, no WrapCommand overhead. The per-command cost is just normal process spawning:
+[¹] Known WSL slowdown. `WrapCommand` calls
+`GetRuntimeDeniedExecutablePaths` on every invocation, which does
+filesystem lookups under `/usr/bin`, `/bin`, etc. On WSL2 each of those
+lookups takes ~20 ms (vs microseconds on native Linux), likely because
+WSL's interop layer serializes `stat` / `EvalSymlinks` calls across the
+`/mnt/*` device boundary. [PR #98](https://github.com/Use-Tusk/fence/pull/98)
+reduced the worst shared-binary collision case from ~4.5s to ~1.5s by
+bounding the probe set, but the non-collision path still pays the full
+per-lookup cost. Noted as a known issue; amortized usage is unaffected
+because the cost is paid once at startup and inherited by child
+processes.
 
-| Command | Linux | macOS |
-|---------|-------|-------|
-| `true` | 0.6 ms | 2.3 ms |
-| `git status` | 2.1 ms | 5.9 ms |
-| Python script | 11 ms | 15 ms |
+[²] Baseline reflects Go's `exec.Command` + runner VM overhead, not raw
+`true` exec time. Use only as a reference point for the amortized
+comparison.
 
-**Bottom line**: For `fence <agent>` usage, sandbox overhead is a one-time startup cost. Tool calls inside the agent run at native speed.
+[³] Computed as `(BenchmarkAmortized_True_100 − BenchmarkAmortized_True_10) / 90`.
+Isolates the marginal cost of one extra inner command once
+initialization has been amortized away. Near-zero on all platforms —
+once inside the sandbox, tool calls run at native speed.
 
-### Per-Command Invocation (`fence -c "command"`)
+### End-to-end hyperfine (WSL only)
 
-For scripts or CI running fence per command:
+For cross-platform hyperfine numbers, download the artifacts from the
+Benchmarks workflow run. The WSL numbers below are included because they
+illustrate what a user would actually feel on WSL today:
 
-| Session | Linux Cost | macOS Cost |
-|---------|------------|------------|
-| 1 command | 215 ms | 22 ms |
-| 10 commands | 2.15 s | 220 ms |
-| 50 commands | 10.75 s | 1.1 s |
+| Workload | Unsandboxed | Sandboxed |
+|----------|-------------|-----------|
+| `true` | 0.004 ms | 2,784 ms [¹] |
+| `runtime-deny-startup` (sentinel) | 0.13 ms | 4,622 ms [¹] |
+| `amortized-true-10` | 3.00 ms | 2,829 ms |
+| `amortized-gitstatus-10` | 32.2 ms | 2,745 ms |
+| `git-status` | 2.33 ms | 1,149 ms |
+| `python` | 20.5 ms | 1,119 ms |
 
-Consider keeping the manager alive (daemon mode) or batching commands to reduce overhead.
+The sandboxed column for `true`, `echo`, and the other trivial workloads
+is dominated by fence's own startup on WSL (same [¹] mechanism as the Go
+table). `runtime-deny-startup` uses a deny list chosen to stress the PR #98 code path - it is the worst case, not a typical case.
 
 ## Running on WSL
 
 Windows Subsystem for Linux is a first-class fence target and has
 historically been the environment where the runtime exec deny resolver
-misbehaves worst (see [PR #98](https://github.com/Use-Tusk/fence/pull/98),
-where resolver startup dropped from ~4.5s to ~1.5s by avoiding exhaustive
-scans of `/mnt/*` mounts).
+misbehaves worst.
 
 The benchmark scripts work on WSL without changes. Setup:
 
@@ -387,7 +428,7 @@ Run the suite:
 ./scripts/benchmark.sh -q
 
 # Go microbenchmarks (includes the runtime-deny surface that PR #98 fixed)
-go test -run=^$ -bench=. -benchmem -count=10 ./internal/sandbox/...
+go test -run=^$ -bench=. -benchmem -count=5 ./internal/sandbox/...
 ```
 
 The benches most relevant to WSL regressions:
@@ -410,6 +451,19 @@ There is no CI coverage for WSL today (hosted Windows + WSL runners are
 noisy because of nested virtualization). Run these benches manually on a
 WSL machine when you touch the runtime exec deny or path-resolution code
 paths.
+
+**Practical guidance for WSL users today:**
+
+- Prefer long-running agent mode (`fence -- <agent>`) over
+  per-invocation mode (`fence -c "cmd"` in a loop). The amortized rows
+  above show that per-tool-call overhead is near-zero on WSL once
+  initialization is done.
+- If you benchmark on WSL, expect init to take 1-3 seconds of wall
+  clock even on idle hardware. That's the baseline to compare against,
+  not native Linux's ~100ms.
+- The pathology is filesystem-lookup-heavy. Workloads that avoid the
+  runtime-deny resolver (for example, the `BenchmarkCheckCommand` and
+  `BenchmarkAmortized_*` benches) look similar to native Linux on WSL.
 
 ## Additional Notes
 
