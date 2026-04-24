@@ -662,12 +662,29 @@ func WrapCommandMacOS(cfg *config.Config, command string, workingDir string, htt
 	// Fold caller-registered host-exposed paths into the seatbelt allowlist.
 	// On macOS the sandbox does not overmount any host path, so simply
 	// granting read (or read+write) access to the allowlist is sufficient.
+	//
+	// Important: writable exposures must ALSO appear in the read allowlist.
+	// In defaultDenyRead mode seatbelt's file-read-data and file-write*
+	// operation classes are disjoint - a (allow file-write* …) rule does
+	// NOT imply (allow file-read-data …), so a writable-only path would be
+	// open(O_RDWR)-but-unreadable. This also matches the Linux half of the
+	// API where --bind is inherently read+write.
+	//
+	// Existence is validated at wrap time rather than at ExposeHostPath
+	// registration (TOCTOU: the path might exist at registration but be
+	// deleted before sandbox launch). Missing paths are surfaced as a
+	// warning unconditionally - silently dropping them would cause a
+	// confusing downstream failure when the sandboxed process can't find
+	// the file.
 	readExposed := append([]string{}, cfg.Filesystem.AllowRead...)
 	for _, ehp := range exposedHostPaths {
+		if !fileExists(ehp.path) {
+			fencelog.Printf("[fence:macos] ExposeHostPath: skipping %q (does not exist on host at sandbox-launch time)\n", ehp.path)
+			continue
+		}
+		readExposed = append(readExposed, ehp.path)
 		if ehp.writable {
 			allowPaths = append(allowPaths, ehp.path)
-		} else {
-			readExposed = append(readExposed, ehp.path)
 		}
 	}
 

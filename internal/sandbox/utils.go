@@ -13,6 +13,14 @@ const (
 	sandboxTMPDIRFallback = "/tmp"
 )
 
+// fileExists reports whether path exists on the host filesystem. Cross-
+// platform helper used by both Linux (bind-mount emission) and macOS
+// (seatbelt allowlist construction).
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 // ContainsGlobChars checks if a path pattern contains glob characters.
 func ContainsGlobChars(pattern string) bool {
 	return strings.ContainsAny(pattern, "*?[]")

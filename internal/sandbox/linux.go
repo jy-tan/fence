@@ -391,11 +391,6 @@ func (b *LocalOutboundBridge) Cleanup() {
 	}
 }
 
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
 func appendLinuxDevicePassthrough(bwrapArgs []string, path string, bound map[string]bool, debug bool, reason string) []string {
 	normalized := filepath.Clean(path)
 	if bound[normalized] {
@@ -1357,11 +1352,19 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	// expects to pass to the sandboxed process — even one under /tmp — is
 	// bound back into the sandbox at the same location. bwrap auto-creates
 	// any missing intermediate directories on the destination side.
+	//
+	// We validate existence at wrap time (rather than at ExposeHostPath
+	// registration time) to avoid a TOCTOU pitfall: a caller might register
+	// a path that exists at call time but is deleted before the sandbox
+	// launches, so a registration-time check would be misleading about what
+	// actually ends up bound. A missing path is surfaced as a warning
+	// unconditionally (not gated on opts.Debug) because ExposeHostPath is
+	// an explicit caller intent - silently dropping it would cause a
+	// confusing downstream failure when the sandboxed process can't find
+	// the file it was told to expect.
 	for _, ehp := range opts.ExposedHostPaths {
 		if !fileExists(ehp.path) {
-			if opts.Debug {
-				fencelog.Printf("[fence:linux] ExposeHostPath: skipping %q (does not exist on host)\n", ehp.path)
-			}
+			fencelog.Printf("[fence:linux] ExposeHostPath: skipping %q (does not exist on host at sandbox-launch time)\n", ehp.path)
 			continue
 		}
 		flag := "--ro-bind"

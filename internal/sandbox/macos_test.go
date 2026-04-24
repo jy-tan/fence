@@ -738,3 +738,101 @@ func TestGenerateWriteRules_UsesWorkspaceScopedMandatoryDenyPatterns(t *testing.
 		t.Fatalf("unexpected unscoped .idea deny regex in rules:\n%s", joinedRules)
 	}
 }
+
+// TestWrapCommandMacOS_ExposedHostPathsGrantReadAndWrite verifies that paths
+// registered via Manager.ExposeHostPath appear in BOTH the read and write
+// allowlists when writable=true, and read-only when writable=false. Without
+// the read-side entry, a writable exposure would be open(O_RDWR)-but-
+// unreadable under defaultDenyRead (the file-read-data and file-write*
+// operation classes are disjoint in seatbelt).
+func TestWrapCommandMacOS_ExposedHostPathsGrantReadAndWrite(t *testing.T) {
+	cfg := &config.Config{
+		Filesystem: config.FilesystemConfig{
+			DefaultDenyRead: true,
+		},
+	}
+
+	tmpDir := t.TempDir()
+	roPath := filepath.Join(tmpDir, "ro.yml")
+	rwPath := filepath.Join(tmpDir, "rw")
+	if err := os.WriteFile(roPath, []byte("x: 1\n"), 0o600); err != nil {
+		t.Fatalf("write ro: %v", err)
+	}
+	if err := os.Mkdir(rwPath, 0o700); err != nil {
+		t.Fatalf("mkdir rw: %v", err)
+	}
+
+	cmd, err := WrapCommandMacOS(cfg, "true", "", 8080, 1080, nil, []exposedHostPath{
+		{path: roPath, writable: false},
+		{path: rwPath, writable: true},
+	}, false, ShellModeDefault, false)
+	if err != nil {
+		t.Fatalf("WrapCommandMacOS: %v", err)
+	}
+
+	// The rule generator passes paths through NormalizePath, which resolves
+	// symlinks (/var → /private/var on macOS). Match the resolved form.
+	roResolved := NormalizePath(roPath)
+	rwResolved := NormalizePath(rwPath)
+
+	readRO := "(allow file-read-data\n  (subpath " + escapePath(roResolved) + "))"
+	readRW := "(allow file-read-data\n  (subpath " + escapePath(rwResolved) + "))"
+	writeRW := "(allow file-write*\n  (subpath " + escapePath(rwResolved) + ")"
+	writeRO := "(allow file-write*\n  (subpath " + escapePath(roResolved) + ")"
+
+	if !strings.Contains(cmd, readRO) {
+		t.Errorf("expected read-only exposure to produce file-read-data rule for %s in profile:\n%s", roResolved, cmd)
+	}
+	if !strings.Contains(cmd, readRW) {
+		t.Errorf("expected writable exposure to ALSO produce file-read-data rule for %s (defaultDenyRead bug fix) in profile:\n%s", rwResolved, cmd)
+	}
+	if !strings.Contains(cmd, writeRW) {
+		t.Errorf("expected writable exposure to produce file-write* rule for %s in profile:\n%s", rwResolved, cmd)
+	}
+	if strings.Contains(cmd, writeRO) {
+		t.Errorf("read-only exposure must NOT produce a file-write* rule for %s, profile:\n%s", roResolved, cmd)
+	}
+}
+
+// TestWrapCommandMacOS_ExposedHostPathsSkipsMissing verifies that a registered
+// path which no longer exists at wrap time is silently dropped (with a warning
+// log) rather than producing a rule for a nonexistent subpath. This protects
+// against TOCTOU confusion where a path exists at ExposeHostPath registration
+// but is deleted before the sandbox launches.
+//
+// Runs in defaultDenyRead mode because that's where exposed paths appear as
+// individual subpath rules (in permissive mode reads are globally allowed and
+// paths aren't enumerated).
+func TestWrapCommandMacOS_ExposedHostPathsSkipsMissing(t *testing.T) {
+	cfg := &config.Config{
+		Filesystem: config.FilesystemConfig{
+			DefaultDenyRead: true,
+		},
+	}
+
+	tmpDir := t.TempDir()
+	good := filepath.Join(tmpDir, "ok.yml")
+	if err := os.WriteFile(good, []byte("ok"), 0o600); err != nil {
+		t.Fatalf("write good: %v", err)
+	}
+	missing := filepath.Join(tmpDir, "does-not-exist.yml")
+
+	cmd, err := WrapCommandMacOS(cfg, "true", "", 8080, 1080, nil, []exposedHostPath{
+		{path: good, writable: false},
+		{path: missing, writable: false},
+	}, false, ShellModeDefault, false)
+	if err != nil {
+		t.Fatalf("WrapCommandMacOS: %v", err)
+	}
+
+	// Rule generator resolves symlinks (/var → /private/var on macOS).
+	goodResolved := NormalizePath(good)
+	missingResolved := NormalizePath(missing)
+
+	if strings.Contains(cmd, escapePath(missingResolved)) {
+		t.Errorf("missing exposed host path %q should not appear in seatbelt profile, got:\n%s", missingResolved, cmd)
+	}
+	if !strings.Contains(cmd, escapePath(goodResolved)) {
+		t.Errorf("existing exposed host path %q should appear in seatbelt profile, got:\n%s", goodResolved, cmd)
+	}
+}

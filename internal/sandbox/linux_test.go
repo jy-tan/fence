@@ -590,7 +590,7 @@ func TestWrapCommandLinuxWithOptions_ExposedHostPathUnder_TmpSurvivesTmpfs(t *te
 	if err != nil {
 		t.Fatalf("CreateTemp: %v", err)
 	}
-	defer os.Remove(f.Name())
+	defer func() { _ = os.Remove(f.Name()) }()
 	_ = f.Close()
 
 	cfg := &config.Config{}
