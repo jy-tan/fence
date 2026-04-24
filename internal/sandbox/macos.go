@@ -405,8 +405,8 @@ func GenerateSandboxProfile(params MacOSSandboxParams) string {
 
 	// Header
 	profile.WriteString("(version 1)\n")
-	profile.WriteString(fmt.Sprintf("(deny default (with message %q))\n\n", logTag))
-	profile.WriteString(fmt.Sprintf("; LogTag: %s\n\n", logTag))
+	fmt.Fprintf(&profile, "(deny default (with message %q))\n\n", logTag)
+	fmt.Fprintf(&profile, "; LogTag: %s\n\n", logTag)
 
 	// Essential permissions - based on Chrome sandbox policy
 	profile.WriteString(`; Essential permissions - based on Chrome sandbox policy
@@ -568,8 +568,8 @@ func GenerateSandboxProfile(params MacOSSandboxParams) string {
 		profile.WriteString("; Runtime executable deny (applies to child processes)\n")
 		for _, execPath := range params.DeniedExecPaths {
 			profile.WriteString("(deny process-exec\n")
-			profile.WriteString(fmt.Sprintf("  (literal %s)\n", escapePath(execPath)))
-			profile.WriteString(fmt.Sprintf("  (with message %q))\n", logTag))
+			fmt.Fprintf(&profile, "  (literal %s)\n", escapePath(execPath))
+			fmt.Fprintf(&profile, "  (with message %q))\n", logTag)
 		}
 		profile.WriteString("\n")
 	}
@@ -596,22 +596,20 @@ func GenerateSandboxProfile(params MacOSSandboxParams) string {
 		} else if len(params.AllowUnixSockets) > 0 {
 			for _, socketPath := range params.AllowUnixSockets {
 				normalized := NormalizePath(socketPath)
-				profile.WriteString(fmt.Sprintf("(allow network* (subpath %s))\n", escapePath(normalized)))
+				fmt.Fprintf(&profile, "(allow network* (subpath %s))\n", escapePath(normalized))
 			}
 		}
 
 		if params.HTTPProxyPort > 0 {
-			profile.WriteString(fmt.Sprintf(`(allow network-bind (local ip "localhost:%d"))
-(allow network-inbound (local ip "localhost:%d"))
-(allow network-outbound (remote ip "localhost:%d"))
-`, params.HTTPProxyPort, params.HTTPProxyPort, params.HTTPProxyPort))
+			fmt.Fprintf(&profile, "(allow network-bind (local ip \"localhost:%d\"))\n", params.HTTPProxyPort)
+			fmt.Fprintf(&profile, "(allow network-inbound (local ip \"localhost:%d\"))\n", params.HTTPProxyPort)
+			fmt.Fprintf(&profile, "(allow network-outbound (remote ip \"localhost:%d\"))\n", params.HTTPProxyPort)
 		}
 
 		if params.SOCKSProxyPort > 0 {
-			profile.WriteString(fmt.Sprintf(`(allow network-bind (local ip "localhost:%d"))
-(allow network-inbound (local ip "localhost:%d"))
-(allow network-outbound (remote ip "localhost:%d"))
-`, params.SOCKSProxyPort, params.SOCKSProxyPort, params.SOCKSProxyPort))
+			fmt.Fprintf(&profile, "(allow network-bind (local ip \"localhost:%d\"))\n", params.SOCKSProxyPort)
+			fmt.Fprintf(&profile, "(allow network-inbound (local ip \"localhost:%d\"))\n", params.SOCKSProxyPort)
+			fmt.Fprintf(&profile, "(allow network-outbound (remote ip \"localhost:%d\"))\n", params.SOCKSProxyPort)
 		}
 	}
 	profile.WriteString("\n")

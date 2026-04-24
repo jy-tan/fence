@@ -53,7 +53,7 @@ func ResolveExecutionShell(mode string, login bool) (string, string, error) {
 		if !allowedUserShells[shellName] {
 			return "", "", fmt.Errorf("shell %q from $SHELL is not allowed", shellName)
 		}
-		info, err := os.Stat(envShell)
+		info, err := os.Stat(envShell) // #nosec G703 - validated: absolute path + allowlist
 		if err != nil {
 			return "", "", fmt.Errorf("shell from $SHELL not found: %w", err)
 		}
