@@ -436,9 +436,12 @@ if command -v jq &> /dev/null; then
         unsandboxed_ms=$(printf "%.3f" "$(echo "$unsandboxed * 1000" | bc -l 2>/dev/null)") || continue
         sandboxed_ms=$(printf "%.3f" "$(echo "$sandboxed * 1000" | bc -l 2>/dev/null)") || continue
 
-        # Gate overhead on the absolute baseline: sub-millisecond baselines
-        # produce misleading ratios (see comment above).
-        if (( $(echo "$unsandboxed_ms >= 1.0" | bc -l) )); then
+        # Gate overhead on the raw baseline (not the rounded ms value):
+        # sub-millisecond baselines produce misleading ratios (see comment
+        # above). Comparing the rounded value here would misclassify
+        # anything in [0.9995, 1.000) ms because printf "%.3f" rounds it up
+        # to 1.000.
+        if (( $(echo "$unsandboxed >= 0.001" | bc -l) )); then
             overhead_raw=$(echo "scale=2; $sandboxed / $unsandboxed" | bc 2>/dev/null) || overhead_raw=""
             if [[ -n "$overhead_raw" ]]; then
                 overhead="$(printf "%.1fx" "$overhead_raw")"
@@ -469,8 +472,8 @@ echo "  Markdown: $RESULTS_MD"
 echo ""
 
 # Print quick summary (errors in this section should not fail the script).
-# Only rows with a sub-1ms baseline get the overhead ratio; sub-ms rows
-# show absolute ms instead to avoid misleading multipliers.
+# Rows with a baseline >= 1 ms get the overhead ratio; sub-ms rows show
+# absolute ms instead to avoid misleading multipliers.
 if command -v jq &> /dev/null; then
     echo -e "${BLUE}Quick Summary:${NC}"
     for json_file in "$WORKSPACE"/*.json; do
@@ -486,7 +489,10 @@ if command -v jq &> /dev/null; then
             unsandboxed_ms=$(printf "%.3f" "$(echo "$unsandboxed * 1000" | bc -l 2>/dev/null)") || exit 0
             sandboxed_ms=$(printf "%.3f" "$(echo "$sandboxed * 1000" | bc -l 2>/dev/null)") || exit 0
 
-            if (( $(echo "$unsandboxed_ms >= 1.0" | bc -l) )); then
+            # Gate on the raw baseline (not the rounded ms value) so
+            # values near the 1 ms boundary don't get misclassified by
+            # printf rounding.
+            if (( $(echo "$unsandboxed >= 0.001" | bc -l) )); then
                 overhead=$(echo "scale=1; $sandboxed / $unsandboxed" | bc 2>/dev/null) || exit 0
                 [[ -n "$overhead" ]] && printf "  %-28s %sx (baseline %s ms)\n" "$name:" "$overhead" "$unsandboxed_ms"
             else
