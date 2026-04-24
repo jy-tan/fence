@@ -668,7 +668,7 @@ func directoryExists(path string) bool {
 	if path == "" {
 		return false
 	}
-	info, err := os.Stat(path)
+	info, err := os.Stat(path) // #nosec G703 - helper to check if directory exists, no execution
 	if err != nil {
 		return false
 	}

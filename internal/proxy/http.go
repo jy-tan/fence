@@ -126,7 +126,7 @@ func (p *HTTPProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	p.logRequest("CONNECT", fmt.Sprintf("https://%s:%d", host, port), host, 200, "ALLOWED", time.Since(start))
 
 	// Connect to target
-	targetConn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), 10*time.Second)
+	targetConn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), 10*time.Second) // #nosec G704 - validated by p.filter() allowlist
 	if err != nil {
 		p.logDebug("CONNECT dial failed: %s:%d: %v", host, port, err)
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
@@ -195,7 +195,7 @@ func (p *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create new request and copy headers
-	proxyReq, err := http.NewRequest(r.Method, r.RequestURI, r.Body)
+	proxyReq, err := http.NewRequest(r.Method, r.RequestURI, r.Body) // #nosec G704 - validated by p.filter() allowlist
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
@@ -218,7 +218,7 @@ func (p *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	resp, err := client.Do(proxyReq)
+	resp, err := client.Do(proxyReq) // #nosec G704 - validated by p.filter() allowlist
 	if err != nil {
 		p.logRequest(r.Method, r.RequestURI, host, 502, "ERROR", time.Since(start))
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)

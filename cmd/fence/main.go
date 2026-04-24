@@ -334,8 +334,8 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	usePTY := cfg != nil &&
 		cfg.AllowPty &&
 		platform.Detect() == platform.Linux &&
-		term.IsTerminal(int(os.Stdin.Fd())) &&
-		term.IsTerminal(int(os.Stdout.Fd()))
+		term.IsTerminal(int(os.Stdin.Fd())) && // #nosec G115 - fd fits in int on all supported platforms
+		term.IsTerminal(int(os.Stdout.Fd())) // #nosec G115 - fd fits in int on all supported platforms
 
 	// When stdin is a terminal, place the child in its own process group so
 	// we can hand it terminal foreground control after Start(). This allows
@@ -343,7 +343,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	// job control. Without this, bash prints:
 	//   "cannot set terminal process group: Operation not permitted"
 	//   "no job control in this shell"
-	isTTY := term.IsTerminal(int(os.Stdin.Fd()))
+	isTTY := term.IsTerminal(int(os.Stdin.Fd())) // #nosec G115 - fd fits in int on all supported platforms
 	configureHostTTYChildProcessGroup(execCmd, isTTY, usePTY)
 
 	if !usePTY {
@@ -364,7 +364,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	// later reclaim the foreground (at that point we'll be in the background
 	// process group).
 	if shouldManageHostTTYForeground(isTTY, usePTY) && execCmd.Process != nil {
-		stdinFd := int(os.Stdin.Fd())
+		stdinFd := int(os.Stdin.Fd()) // #nosec G115 - fd fits in int on all supported platforms
 
 		savedFgPgrp, err := unix.IoctlGetInt(stdinFd, unix.TIOCGPGRP)
 		if err != nil {
