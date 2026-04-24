@@ -1,40 +1,49 @@
+version: "2"
 run:
-  timeout: 5m
   modules-download-mode: readonly
-
-linters-settings:
-  gci:
-    sections:
-      - standard
-      - default
-      - prefix(github.com/Use-Tusk/fence)
-  gofmt:
-    simplify: true
-  goimports:
-    local-prefixes: github.com/Use-Tusk/fence
-  gocritic:
-    disabled-checks:
-      - singleCaseSwitch
-  revive:
-    rules:
-      - name: exported
-        disabled: true
-
 linters:
-  enable-all: false
-  disable-all: true
+  default: none
   enable:
-    - staticcheck
     - errcheck
-    - gosimple
-    - govet
-    - unused
-    - ineffassign
-    - gosec
     - gocritic
-    - revive
-    - gofumpt
+    - gosec
+    - govet
+    - ineffassign
     - misspell
-
-issues:
-  exclude-use-default: false
+    - revive
+    - staticcheck
+    - unused
+  settings:
+    gocritic:
+      disabled-checks:
+        - singleCaseSwitch
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofumpt
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/Use-Tusk/fence)
+    gofmt:
+      simplify: true
+    goimports:
+      local-prefixes:
+        - github.com/Use-Tusk/fence
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

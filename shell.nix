@@ -9,8 +9,6 @@ pkgs.mkShell {
       go
       gopls
       gotestsum
-      golangci-lint
-      gofumpt
       python3
       nodejs
       git
