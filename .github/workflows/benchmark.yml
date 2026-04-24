@@ -4,11 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       min_runs:
-        description: "Minimum benchmark runs"
+        description: "Minimum hyperfine runs per benchmark"
         required: false
         default: "30"
+      go_count:
+        description: "Go bench -count (override). Leave blank to use the default for the selected mode (5 normal, 3 quick)."
+        required: false
+        default: ""
       quick:
-        description: "Quick mode (fewer runs)"
+        description: "Quick mode: fewer hyperfine runs, lower Go bench -count, skip slow workloads"
         required: false
         default: "false"
         type: boolean
@@ -78,7 +82,17 @@ jobs:
       - name: Run Go microbenchmarks
         run: |
           mkdir -p benchmarks
-          go test -run=^$ -bench=. -benchmem -count=10 ./internal/sandbox/... | tee benchmarks/go-bench-linux.txt
+          QUICK="${{ github.event.inputs.quick || 'false' }}"
+          GO_COUNT="${{ github.event.inputs.go_count }}"
+          if [[ -z "$GO_COUNT" ]]; then
+            if [[ "$QUICK" == "true" ]]; then
+              GO_COUNT=3
+            else
+              GO_COUNT=5
+            fi
+          fi
+          echo "Running Go benches with -count=$GO_COUNT (quick=$QUICK)"
+          go test -run=^$ -bench=. -benchmem -count="$GO_COUNT" ./internal/sandbox/... | tee benchmarks/go-bench-linux.txt
 
       - name: Run CLI benchmarks
         run: |
@@ -152,7 +166,17 @@ jobs:
       - name: Run Go microbenchmarks
         run: |
           mkdir -p benchmarks
-          go test -run=^$ -bench=. -benchmem -count=10 ./internal/sandbox/... | tee benchmarks/go-bench-macos.txt
+          QUICK="${{ github.event.inputs.quick || 'false' }}"
+          GO_COUNT="${{ github.event.inputs.go_count }}"
+          if [[ -z "$GO_COUNT" ]]; then
+            if [[ "$QUICK" == "true" ]]; then
+              GO_COUNT=3
+            else
+              GO_COUNT=5
+            fi
+          fi
+          echo "Running Go benches with -count=$GO_COUNT (quick=$QUICK)"
+          go test -run=^$ -bench=. -benchmem -count="$GO_COUNT" ./internal/sandbox/... | tee benchmarks/go-bench-macos.txt
 
       - name: Run CLI benchmarks
         run: |
