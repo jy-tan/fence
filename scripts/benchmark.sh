@@ -222,6 +222,37 @@ else
 fi
 
 # ============================================================================
+# Amortized (agent-style) benchmarks
+# ============================================================================
+#
+# These measure the "parent fence wrapping N child tool calls" scenario that
+# long-running agents (Claude Code, Cursor, Codex) actually use. Compared
+# against per-invocation mode, the interesting number is:
+#
+#   per_call_overhead = (sandboxed_total - unsandboxed_total) / N
+#
+# which is the real marginal cost of a tool call under fence.
+
+echo -e "${YELLOW}=== Amortized (N tool calls per outer fence) ===${NC}"
+echo ""
+
+run_bench "amortized-true-10" \
+    --command-name "unsandboxed" "bash -c 'for i in \$(seq 1 10); do true; done'" \
+    --command-name "sandboxed" "$FENCE_BIN -s $SETTINGS_FILE -- bash -c 'for i in \$(seq 1 10); do true; done'"
+
+if [[ "$QUICK" == "false" ]]; then
+    run_bench "amortized-true-100" \
+        --command-name "unsandboxed" "bash -c 'for i in \$(seq 1 100); do true; done'" \
+        --command-name "sandboxed" "$FENCE_BIN -s $SETTINGS_FILE -- bash -c 'for i in \$(seq 1 100); do true; done'"
+fi
+
+if command -v git &> /dev/null && [[ -d .git ]]; then
+    run_bench "amortized-gitstatus-10" \
+        --command-name "unsandboxed" "bash -c 'for i in \$(seq 1 10); do git status --porcelain >/dev/null; done'" \
+        --command-name "sandboxed" "$FENCE_BIN -s $SETTINGS_FILE -- bash -c 'for i in \$(seq 1 10); do git status --porcelain >/dev/null; done'"
+fi
+
+# ============================================================================
 # File I/O benchmarks
 # ============================================================================
 
@@ -235,6 +266,47 @@ run_bench "file-write" \
 run_bench "file-read" \
     --command-name "unsandboxed" "cat $WORKSPACE/test.txt >/dev/null" \
     --command-name "sandboxed" "$FENCE_BIN -s $SETTINGS_FILE -c 'cat $WORKSPACE/test.txt' >/dev/null"
+
+# ============================================================================
+# WSL runtime-deny sentinel (tracks PR #98 regression surface)
+# ============================================================================
+#
+# On WSL, the runtime exec deny resolver used to do an exhaustive PATH scan
+# including /mnt/c/** which stalled startup to multi-second latency. PR #98
+# replaced that with bounded, device-bucketed probing. This workload exists
+# so regressions in that code path show up as a direct timing delta on WSL.
+#
+# Runs on Linux only (including WSL). On non-WSL Linux the numbers are still
+# useful as a baseline for the same code path.
+
+if [[ "$OS" == "Linux" ]]; then
+    echo -e "${YELLOW}=== Runtime Exec Deny Benchmarks ===${NC}"
+    echo ""
+
+    # Sentinel deny config: names that collide with busybox / coreutils
+    # multicall binaries are what exercises the shared-binary alias probing
+    # path most heavily.
+    DENY_SETTINGS="$WORKSPACE/fence-deny.json"
+    cat > "$DENY_SETTINGS" << EOF
+{
+  "command": {
+    "deny": ["curl", "wget", "nc", "ssh", "ls", "cat", "cp", "mv"],
+    "useDefaults": true
+  },
+  "filesystem": {
+    "allowWrite": ["$WORKSPACE", "."]
+  }
+}
+EOF
+
+    run_bench "runtime-deny-startup" \
+        --command-name "unsandboxed" "true" \
+        --command-name "sandboxed" "$FENCE_BIN -s $DENY_SETTINGS -- true"
+
+    if [[ -d /mnt/c ]]; then
+        echo -e "${BLUE}  (detected WSL: /mnt/c present)${NC}"
+    fi
+fi
 
 # ============================================================================
 # Monitor mode benchmarks (optional)

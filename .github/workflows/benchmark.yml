@@ -187,57 +187,7 @@ jobs:
           grep -E '^Benchmark|^ok|^PASS' benchmarks/go-bench-macos.txt | head -50 >> $GITHUB_STEP_SUMMARY || true
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-  compare:
-    name: Compare Results
-    needs: [benchmark-linux, benchmark-macos]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Install benchstat
-        run: go install golang.org/x/perf/cmd/benchstat@latest
-
-      - name: Download Linux results
-        uses: actions/download-artifact@v8
-        with:
-          name: benchmark-results-linux
-          path: linux-results/
-
-      - name: Download macOS results
-        uses: actions/download-artifact@v8
-        with:
-          name: benchmark-results-macos
-          path: macos-results/
-
-      - name: Compare Go benchmarks
-        run: |
-          echo "## Cross-Platform Comparison" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          if [[ -f linux-results/go-bench-linux.txt && -f macos-results/go-bench-macos.txt ]]; then
-            echo "### Go Microbenchmark Comparison (Linux vs macOS)" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            benchstat linux-results/go-bench-linux.txt macos-results/go-bench-macos.txt 2>&1 | head -100 >> $GITHUB_STEP_SUMMARY || echo "benchstat comparison failed"
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Display results
-        run: |
-          echo "=== Linux Results ==="
-          ls -la linux-results/
-          echo ""
-          echo "=== macOS Results ==="
-          ls -la macos-results/
-          echo ""
-          if [[ -f linux-results/go-bench-linux.txt && -f macos-results/go-bench-macos.txt ]]; then
-            echo "=== Benchstat Comparison ==="
-            benchstat linux-results/go-bench-linux.txt macos-results/go-bench-macos.txt || true
-          fi
+# The previous `compare` job ran `benchstat` across Linux and macOS results.
+# That's semantically wrong: benchstat compares two distributions of the
+# *same* benchmark, it is not a cross-platform delta tool. The per-platform
+# summaries above are sufficient for ad-hoc measurement.
