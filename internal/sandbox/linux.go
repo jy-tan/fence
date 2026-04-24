@@ -80,6 +80,12 @@ type LinuxSandboxOptions struct {
 	// brings up matching sandbox-side socat listeners bound to 127.0.0.1
 	// on each of the bridge's ports.
 	LocalOutboundBridge *LocalOutboundBridge
+	// ExposedHostPaths lists host files/directories the caller has explicitly
+	// registered (via Manager.ExposeHostPath) to be visible inside the
+	// sandbox at the same path. These bind mounts are emitted after all
+	// tmpfs overmounts, so a path under a fence-overmounted directory
+	// (e.g. /tmp/foo) remains visible.
+	ExposedHostPaths []exposedHostPath
 }
 
 const (
@@ -1161,16 +1167,26 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		targetUnderSpecialMount := strings.HasPrefix(target, "/dev/") ||
 			strings.HasPrefix(target, "/proc/") ||
 			strings.HasPrefix(target, "/tmp/")
-		// In defaultDenyRead mode, also skip if the target is under a path
-		// already individually bound (e.g., /run, /sys) — a --tmpfs would
-		// overwrite that explicit bind. Targets under unbound paths like
-		// /mnt/wsl still need the fix.
-		if defaultDenyRead {
-			for _, p := range GetDefaultReadablePaths() {
-				if strings.HasPrefix(target, p+"/") {
-					targetUnderSpecialMount = true
-					break
-				}
+		// Also skip if the target is under a path that fence already exposes
+		// via the recursive root bind (default mode) or an explicit --ro-bind
+		// (defaultDenyRead mode). Without this, a target like
+		// /run/systemd/resolve/stub-resolv.conf (stock Ubuntu w/ systemd-resolved)
+		// causes fence to emit --tmpfs /run, wiping /run/docker.sock and
+		// anything else in /run. Targets under unbound paths like /mnt/wsl
+		// still need the --tmpfs + --dir + --ro-bind fix.
+		//
+		// TODO: the path-prefix check here is a heuristic stand-in for the
+		// real question ("will this target's mount be visible after all
+		// fence-emitted mount ops?"). A more durable shape would consult
+		// /proc/self/mountinfo for propagation flags on target's mount and
+		// only emit the stub when the submount would NOT be reachable from
+		// the sandbox's mount namespace. Deferred; this guard covers the
+		// known cases (WSL /mnt/wsl needs stub; everything in
+		// GetDefaultReadablePaths() does not).
+		for _, p := range GetDefaultReadablePaths() {
+			if strings.HasPrefix(target, p+"/") {
+				targetUnderSpecialMount = true
+				break
 			}
 		}
 		if fileExists(target) && !sameDevice("/", target) && !targetUnderSpecialMount {
@@ -1241,10 +1257,12 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		}
 	}
 
-	// In normal mode (not defaultDenyRead), --ro-bind / / is non-recursive,
-	// so paths on separate mount points (e.g., /mnt/c on WSL's 9p/drvfs)
-	// are not captured. Bind allowExecute, allowRead, and allowWrite paths
-	// that live on a different device so they become visible inside the sandbox.
+	// In normal mode (not defaultDenyRead), --ro-bind / / is recursive at the
+	// mount-op level, but submounts whose propagation flag is MS_PRIVATE on
+	// the host (e.g. /mnt/c, /mnt/wsl on WSL's 9p/drvfs) do not propagate
+	// through the recursive bind. Bind allowExecute, allowRead, and
+	// allowWrite paths that live on a different device so they become
+	// visible inside the sandbox.
 	if !defaultDenyRead && cfg != nil {
 		crossMountBound := make(map[string]bool)
 
@@ -1333,6 +1351,28 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	}
 
 	bwrapArgs = appendLinuxLatePolicyMounts(bwrapArgs, cfg, cwd, defaultDenyRead, deniedExecPaths, opts.Debug)
+
+	// Apply caller-registered host path exposures. These run AFTER all tmpfs
+	// overmounts above (in particular --tmpfs /tmp), so a path the caller
+	// expects to pass to the sandboxed process — even one under /tmp — is
+	// bound back into the sandbox at the same location. bwrap auto-creates
+	// any missing intermediate directories on the destination side.
+	for _, ehp := range opts.ExposedHostPaths {
+		if !fileExists(ehp.path) {
+			if opts.Debug {
+				fencelog.Printf("[fence:linux] ExposeHostPath: skipping %q (does not exist on host)\n", ehp.path)
+			}
+			continue
+		}
+		flag := "--ro-bind"
+		if ehp.writable {
+			flag = "--bind"
+		}
+		bwrapArgs = append(bwrapArgs, flag, ehp.path, ehp.path)
+		if opts.Debug {
+			fencelog.Printf("[fence:linux] ExposeHostPath: %s %s (writable=%v)\n", flag, ehp.path, ehp.writable)
+		}
+	}
 
 	// Bind the outbound Unix sockets into the sandbox (need to be writable)
 	if bridge != nil {

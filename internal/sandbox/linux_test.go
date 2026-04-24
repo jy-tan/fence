@@ -520,6 +520,106 @@ func TestWrapCommandLinuxWithOptions_RootBindPrecedesSpecialMounts(t *testing.T)
 	}
 }
 
+func TestWrapCommandLinuxWithOptions_ExposedHostPathsEmitBinds(t *testing.T) {
+	if _, err := exec.LookPath("bwrap"); err != nil {
+		t.Skip("bwrap not available")
+	}
+
+	tmpDir := t.TempDir()
+	roPath := filepath.Join(tmpDir, "override.yml")
+	rwPath := filepath.Join(tmpDir, "scratch")
+	if err := os.WriteFile(roPath, []byte("x: 1\n"), 0o600); err != nil {
+		t.Fatalf("write override: %v", err)
+	}
+	if err := os.Mkdir(rwPath, 0o700); err != nil {
+		t.Fatalf("mkdir scratch: %v", err)
+	}
+
+	cfg := &config.Config{}
+	cmd, err := WrapCommandLinuxWithOptions(cfg, "true", nil, nil, LinuxSandboxOptions{
+		UseLandlock: false,
+		UseSeccomp:  false,
+		UseEBPF:     false,
+		ShellMode:   ShellModeDefault,
+		ExposedHostPaths: []exposedHostPath{
+			{path: roPath, writable: false},
+			{path: rwPath, writable: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WrapCommandLinuxWithOptions failed: %v", err)
+	}
+
+	roExpected := ShellQuote([]string{"--ro-bind", roPath, roPath})
+	rwExpected := ShellQuote([]string{"--bind", rwPath, rwPath})
+	tmpfsTmp := ShellQuote([]string{"--tmpfs", "/tmp"})
+
+	roIdx := strings.Index(cmd, roExpected)
+	rwIdx := strings.Index(cmd, rwExpected)
+	tmpfsIdx := strings.Index(cmd, tmpfsTmp)
+	if roIdx == -1 {
+		t.Fatalf("expected read-only exposed-host-path bind %q in command: %s", roExpected, cmd)
+	}
+	if rwIdx == -1 {
+		t.Fatalf("expected read-write exposed-host-path bind %q in command: %s", rwExpected, cmd)
+	}
+	if tmpfsIdx == -1 {
+		t.Fatalf("expected --tmpfs /tmp in command: %s", cmd)
+	}
+	// The exposed host paths must be applied AFTER --tmpfs /tmp so that a
+	// path under /tmp (the exact case that motivated ExposeHostPath) survives
+	// the overmount.
+	if roIdx <= tmpfsIdx {
+		t.Fatalf("expected exposed --ro-bind to appear after --tmpfs /tmp: roIdx=%d tmpfsIdx=%d cmd=%s", roIdx, tmpfsIdx, cmd)
+	}
+	if rwIdx <= tmpfsIdx {
+		t.Fatalf("expected exposed --bind to appear after --tmpfs /tmp: rwIdx=%d tmpfsIdx=%d cmd=%s", rwIdx, tmpfsIdx, cmd)
+	}
+}
+
+func TestWrapCommandLinuxWithOptions_ExposedHostPathUnder_TmpSurvivesTmpfs(t *testing.T) {
+	if _, err := exec.LookPath("bwrap"); err != nil {
+		t.Skip("bwrap not available")
+	}
+
+	// Regression test for the motivating bug (see docs/sandbox-gaps.md and
+	// docs/engineering/drift/... compose-override file under /tmp becoming
+	// invisible). A caller passing a /tmp path to ExposedHostPaths must see
+	// the --ro-bind emitted AFTER --tmpfs /tmp in the bwrap command.
+	f, err := os.CreateTemp("", "fence-expose-tmp-*.yml")
+	if err != nil {
+		t.Fatalf("CreateTemp: %v", err)
+	}
+	defer os.Remove(f.Name())
+	_ = f.Close()
+
+	cfg := &config.Config{}
+	cmd, err := WrapCommandLinuxWithOptions(cfg, "true", nil, nil, LinuxSandboxOptions{
+		UseLandlock: false,
+		UseSeccomp:  false,
+		UseEBPF:     false,
+		ShellMode:   ShellModeDefault,
+		ExposedHostPaths: []exposedHostPath{
+			{path: f.Name(), writable: false},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WrapCommandLinuxWithOptions failed: %v", err)
+	}
+
+	tmpfsTmp := ShellQuote([]string{"--tmpfs", "/tmp"})
+	bind := ShellQuote([]string{"--ro-bind", f.Name(), f.Name()})
+
+	tmpfsIdx := strings.Index(cmd, tmpfsTmp)
+	bindIdx := strings.Index(cmd, bind)
+	if tmpfsIdx == -1 || bindIdx == -1 {
+		t.Fatalf("expected both --tmpfs /tmp and --ro-bind of the tmp file in command:\n%s", cmd)
+	}
+	if bindIdx <= tmpfsIdx {
+		t.Fatalf("exposed bind must come AFTER --tmpfs /tmp; bindIdx=%d tmpfsIdx=%d", bindIdx, tmpfsIdx)
+	}
+}
+
 func TestLinuxLateMountPlanner_MaskedAncestorWinsOverChildReadOnly(t *testing.T) {
 	planner := newLinuxLateMountPlanner()
 	planner.Add("/tmp/secret", linuxLateMountMaskDir)

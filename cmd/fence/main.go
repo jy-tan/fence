@@ -34,20 +34,23 @@ var (
 )
 
 var (
-	debug           bool
-	monitor         bool
-	settingsPath    string
-	templateName    string
-	listTemplates   bool
-	cmdString       string
-	exposePorts     []string
-	shellMode       string
-	shellLogin      bool
-	fenceLogFile    string
-	forceNewSession bool
-	exitCode        int
-	showVersion     bool
-	linuxFeatures   bool
+	debug                 bool
+	monitor               bool
+	settingsPath          string
+	templateName          string
+	listTemplates         bool
+	cmdString             string
+	exposePorts           []string
+	serviceExecutionModel string
+	exposeHostPaths       []string
+	exposeHostPathsRW     []string
+	shellMode             string
+	shellLogin            bool
+	fenceLogFile          string
+	forceNewSession       bool
+	exitCode              int
+	showVersion           bool
+	linuxFeatures         bool
 )
 
 func main() {
@@ -146,6 +149,10 @@ Configuration file format:
 	rootCmd.Flags().BoolVar(&listTemplates, "list-templates", false, "List available templates")
 	rootCmd.Flags().StringVarP(&cmdString, "c", "c", "", "Run command string directly (like sh -c)")
 	rootCmd.Flags().StringArrayVarP(&exposePorts, "port", "p", nil, "Expose port for inbound connections (can be used multiple times)")
+	rootCmd.Flags().StringVar(&serviceExecutionModel, "service-execution-model", "in-sandbox",
+		"How the sandboxed service binds its exposed ports: 'in-sandbox' (default; fence sets up a reverse bridge) or 'on-host' (an external daemon like docker/podman binds the port outside the sandbox netns; no reverse bridge)")
+	rootCmd.Flags().StringArrayVar(&exposeHostPaths, "expose-host-path", nil, "Expose a host file/directory at the same path inside the sandbox (read-only). Can be used multiple times.")
+	rootCmd.Flags().StringArrayVar(&exposeHostPathsRW, "expose-host-path-rw", nil, "Expose a host file/directory at the same path inside the sandbox (read-write). Can be used multiple times.")
 	rootCmd.Flags().StringVar(&shellMode, "shell", sandbox.ShellModeDefault, "Shell mode for command execution: default (bash) or user ($SHELL)")
 	rootCmd.Flags().BoolVar(&shellLogin, "shell-login", false, "Run shell as login shell (-lc). Use with --shell user for shell init compatibility")
 	rootCmd.Flags().StringVar(&fenceLogFile, "fence-log-file", "", "Write Fence monitor/debug logs to this file while keeping command output on its normal streams")
@@ -222,8 +229,22 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		ports = append(ports, port)
 	}
 
+	var execModel sandbox.ServiceExecutionModel
+	switch strings.ToLower(strings.TrimSpace(serviceExecutionModel)) {
+	case "", "in-sandbox":
+		execModel = sandbox.ServiceBindsInSandbox
+	case "on-host":
+		execModel = sandbox.ServiceBindsOnHost
+	default:
+		return fmt.Errorf("invalid --service-execution-model %q (expected 'in-sandbox' or 'on-host')", serviceExecutionModel)
+	}
+
 	if debug && len(ports) > 0 {
-		fencelog.Printf("[fence] Exposing ports: %v\n", ports)
+		modelName := "in-sandbox"
+		if execModel == sandbox.ServiceBindsOnHost {
+			modelName = "on-host"
+		}
+		fencelog.Printf("[fence] Exposing ports: %v (execution model: %s)\n", ports, modelName)
 	}
 
 	// Validate shell mode early to fail before proxy/sandbox initialization.
@@ -251,8 +272,21 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	cfg = applyCLIConfigOverrides(cmd, cfg, forceNewSession)
 
 	manager := sandbox.NewManager(cfg, debug, monitor)
-	manager.SetExposedPorts(ports)
+	manager.SetService(sandbox.ServiceOptions{
+		ExposedPorts:   ports,
+		ExecutionModel: execModel,
+	})
 	manager.SetShellOptions(shellMode, shellLogin)
+	for _, p := range exposeHostPaths {
+		if err := manager.ExposeHostPath(p, false); err != nil {
+			return fmt.Errorf("invalid --expose-host-path %q: %w", p, err)
+		}
+	}
+	for _, p := range exposeHostPathsRW {
+		if err := manager.ExposeHostPath(p, true); err != nil {
+			return fmt.Errorf("invalid --expose-host-path-rw %q: %w", p, err)
+		}
+	}
 	defer manager.Cleanup()
 
 	if err := manager.Initialize(); err != nil {

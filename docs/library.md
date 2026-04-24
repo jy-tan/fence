@@ -154,13 +154,51 @@ if err != nil {
 }
 ```
 
-#### `SetExposedPorts(ports []int)`
+#### `SetService(opts ServiceOptions)`
 
-Sets ports to expose for inbound connections (e.g., dev servers).
+Configures the sandboxed service's inbound-connectivity model. Must be called
+before `Initialize`.
 
 ```go
-manager.SetExposedPorts([]int{3000, 8080})
+manager.SetService(fence.ServiceOptions{
+    ExposedPorts:   []int{3000, 8080},
+    ExecutionModel: fence.ServiceBindsInSandbox, // default
+})
 ```
+
+For services whose start command delegates port binding to an external daemon
+(e.g. `docker compose up`, `podman run`, `systemctl start …`) set
+`ExecutionModel: fence.ServiceBindsOnHost`. Fence then skips setting up the
+reverse bridge, which would otherwise collide with the daemon's own bind on
+the host port.
+
+```go
+manager.SetService(fence.ServiceOptions{
+    ExposedPorts:   []int{8000},
+    ExecutionModel: fence.ServiceBindsOnHost, // dockerd binds 8000 on the host
+})
+```
+
+#### `ExposeHostPath(path string, writable bool) error`
+
+Registers a host file or directory that must be visible inside the sandbox at
+the same path. Use this when you need to hand a host file (e.g. a
+caller-generated config or temp file) to the sandboxed process.
+
+This decouples callers from fence's internal mount plan — in particular from
+the fact that fence tmpfs-overmounts `/tmp` on Linux, which would otherwise
+hide any file the caller wrote via `os.CreateTemp("", ...)`. You don't need
+to know where fence overmounts to pick a valid path; just call
+`ExposeHostPath` with the path you already chose.
+
+```go
+f, _ := os.CreateTemp("", "compose-override-*.yml")
+_ = os.WriteFile(f.Name(), overrideYaml, 0o600)
+
+manager.ExposeHostPath(f.Name(), false /* read-only */)
+```
+
+Must be called before `WrapCommand`. The path must exist at call time.
 
 #### `Cleanup()`
 
@@ -293,10 +331,33 @@ cfg := &fence.Config{
 
 ```go
 manager := fence.NewManager(cfg, false, false)
-manager.SetExposedPorts([]int{3000})
+manager.SetService(fence.ServiceOptions{ExposedPorts: []int{3000}})
 defer manager.Cleanup()
 
 wrapped, _ := manager.WrapCommand("npm run dev")
+```
+
+### Expose a docker-compose stack (host-bound ports)
+
+```go
+manager := fence.NewManager(cfg, false, false)
+manager.SetService(fence.ServiceOptions{
+    ExposedPorts:   []int{8000},
+    ExecutionModel: fence.ServiceBindsOnHost,
+})
+defer manager.Cleanup()
+
+wrapped, _ := manager.WrapCommand("docker compose up")
+```
+
+### Hand a host-generated file to the sandboxed process
+
+```go
+f, _ := os.CreateTemp("", "override-*.yml")
+_ = os.WriteFile(f.Name(), overrideYaml, 0o600)
+
+manager.ExposeHostPath(f.Name(), false)
+wrapped, _ := manager.WrapCommand("docker compose -f base.yml -f " + f.Name() + " up")
 ```
 
 ### Load and extend config

@@ -57,6 +57,25 @@ type SSHConfig = config.SSHConfig
 // Manager handles sandbox initialization and command wrapping.
 type Manager = sandbox.Manager
 
+// ServiceOptions describes the sandboxed service's inbound-connectivity model.
+// See Manager.SetService.
+type ServiceOptions = sandbox.ServiceOptions
+
+// ServiceExecutionModel selects the port-binding workflow fence should assume
+// for the sandboxed service.
+type ServiceExecutionModel = sandbox.ServiceExecutionModel
+
+const (
+	// ServiceBindsInSandbox indicates the sandboxed process itself binds
+	// the exposed port inside the sandbox (default).
+	ServiceBindsInSandbox ServiceExecutionModel = sandbox.ServiceBindsInSandbox
+
+	// ServiceBindsOnHost indicates the sandboxed process delegates port
+	// binding to an external daemon (docker, podman, systemctl, …) whose
+	// listener lives outside the sandbox network namespace.
+	ServiceBindsOnHost ServiceExecutionModel = sandbox.ServiceBindsOnHost
+)
+
 // NewManager creates a new sandbox manager.
 // If debug is true, verbose logging is enabled.
 // If monitor is true, only violations (blocked requests) are logged.

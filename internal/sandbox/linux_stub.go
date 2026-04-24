@@ -37,6 +37,7 @@ type LinuxSandboxOptions struct {
 	ShellLogin          bool
 	WorkDir             string
 	LocalOutboundBridge *LocalOutboundBridge
+	ExposedHostPaths    []exposedHostPath
 }
 
 // NewLinuxBridge returns an error on non-Linux platforms.

@@ -749,7 +749,7 @@ func TestLinux_ExposedPortAllowsHostReachability(t *testing.T) {
 
 		attemptErr := func() error {
 			manager := NewManager(cfg, false, false)
-			manager.SetExposedPorts([]int{port})
+			manager.SetService(ServiceOptions{ExposedPorts: []int{port}})
 			defer manager.Cleanup()
 
 			if err := manager.Initialize(); err != nil {

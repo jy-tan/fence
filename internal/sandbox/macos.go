@@ -649,7 +649,7 @@ func GenerateSandboxProfile(params MacOSSandboxParams) string {
 }
 
 // WrapCommandMacOS wraps a command with macOS sandbox restrictions.
-func WrapCommandMacOS(cfg *config.Config, command string, workingDir string, httpPort, socksPort int, exposedPorts []int, debug bool, shellMode string, shellLogin bool) (string, error) {
+func WrapCommandMacOS(cfg *config.Config, command string, workingDir string, httpPort, socksPort int, exposedPorts []int, exposedHostPaths []exposedHostPath, debug bool, shellMode string, shellLogin bool) (string, error) {
 	// In wildcard mode ("*"), still run the proxy for apps that respect
 	// HTTP_PROXY, but allow direct connections for apps that don't.
 	hasWildcardAllow := hasWildcardAllowedDomain(cfg)
@@ -658,6 +658,18 @@ func WrapCommandMacOS(cfg *config.Config, command string, workingDir string, htt
 
 	// Build allow paths: default + configured
 	allowPaths := append(GetDefaultWritePaths(), cfg.Filesystem.AllowWrite...)
+
+	// Fold caller-registered host-exposed paths into the seatbelt allowlist.
+	// On macOS the sandbox does not overmount any host path, so simply
+	// granting read (or read+write) access to the allowlist is sufficient.
+	readExposed := append([]string{}, cfg.Filesystem.AllowRead...)
+	for _, ehp := range exposedHostPaths {
+		if ehp.writable {
+			allowPaths = append(allowPaths, ehp.path)
+		} else {
+			readExposed = append(readExposed, ehp.path)
+		}
+	}
 
 	// Expand /tmp <-> /private/tmp for macOS symlink compatibility
 	allowPaths = expandMacOSTmpPaths(allowPaths)
@@ -712,7 +724,7 @@ func WrapCommandMacOS(cfg *config.Config, command string, workingDir string, htt
 		MachRegister:            cfg.MacOS.Mach.Register,
 		DefaultDenyRead:         cfg.Filesystem.DefaultDenyRead,
 		StrictDenyRead:          cfg.Filesystem.StrictDenyRead,
-		ReadAllowPaths:          cfg.Filesystem.AllowRead,
+		ReadAllowPaths:          readExposed,
 		ReadDenyPaths:           cfg.Filesystem.DenyRead,
 		WriteAllowPaths:         allowPaths,
 		WriteDenyPaths:          cfg.Filesystem.DenyWrite,
@@ -723,6 +735,11 @@ func WrapCommandMacOS(cfg *config.Config, command string, workingDir string, htt
 
 	if debug && len(exposedPorts) > 0 {
 		fencelog.Printf("[fence:macos] Enabling local binding for exposed ports: %v\n", exposedPorts)
+	}
+	if debug && len(exposedHostPaths) > 0 {
+		for _, ehp := range exposedHostPaths {
+			fencelog.Printf("[fence:macos] ExposeHostPath: %s (writable=%v)\n", ehp.path, ehp.writable)
+		}
 	}
 	if debug && allowLocalBinding && !allowLocalOutbound {
 		fencelog.Printf("[fence:macos] Blocking localhost outbound (AllowLocalOutbound=false)\n")
