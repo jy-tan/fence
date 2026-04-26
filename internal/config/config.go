@@ -114,7 +114,7 @@ type CommandConfig struct {
 
 // Environment defines environment variable restrictions.
 type EnvironmentConfig struct {
-	AllowedVars []string `json:"allowedVars,omitempty" description:"Environment variable names that are allowed to be passed through into the sandbox. If empty, no environment variables are passed through."`
+	AllowedVars []string `json:"allowedVars,omitempty" description:"Environment variable names that are allowed to be passed through into the sandbox. If empty, all environment variables are passed through (unless explicitly denied)."`
 	DeniedVars  []string `json:"deniedVars,omitempty" description:"Environment variable names that are explicitly blocked from being passed through, even if they match allowedVars. Evaluated before allowedVars."`
 }
 
