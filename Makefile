@@ -9,7 +9,7 @@ BINARY_UNIX=$(BINARY_NAME)_unix
 # Tool versions
 GOLANGCI_LINT_VERSION=v2.11.4
 
-.PHONY: all build build-ci build-linux test test-ci clean deps install-lint-tools setup setup-ci run fmt lint release release-minor schema help
+.PHONY: all build build-ci build-linux build-darwin test test-ci clean deps install-lint-tools setup setup-ci run fmt lint lint-fix release release-minor schema help
 
 all: build
 
