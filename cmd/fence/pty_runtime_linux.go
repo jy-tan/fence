@@ -65,10 +65,10 @@ func startCommandWithPTY(execCmd *exec.Cmd) (func(), error) {
 	_ = pty.InheritSize(os.Stdin, ptmx)
 
 	restoreTTY := func() {}
-	if term.IsTerminal(int(os.Stdin.Fd())) {
-		if oldState, err := term.MakeRaw(int(os.Stdin.Fd())); err == nil {
+	if term.IsTerminal(int(os.Stdin.Fd())) { // #nosec G115 - fd fits in int on all supported platforms
+		if oldState, err := term.MakeRaw(int(os.Stdin.Fd())); err == nil { // #nosec G115 - fd fits in int on all supported platforms
 			restoreTTY = func() {
-				_ = term.Restore(int(os.Stdin.Fd()), oldState)
+				_ = term.Restore(int(os.Stdin.Fd()), oldState) // #nosec G115 - fd fits in int on all supported platforms
 			}
 		}
 	}
@@ -169,7 +169,7 @@ func forwardSIGWINCHToPTYForegroundPgrp(ptmx *os.File) (int, bool) {
 }
 
 func ptyForegroundPgrp(ptmx *os.File) (int, bool) {
-	pgid, err := unix.IoctlGetInt(int(ptmx.Fd()), unix.TIOCGPGRP)
+	pgid, err := unix.IoctlGetInt(int(ptmx.Fd()), unix.TIOCGPGRP) // #nosec G115 - fd fits in int on all supported platforms
 	if err != nil || pgid <= 0 {
 		return 0, false
 	}
