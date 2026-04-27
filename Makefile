@@ -85,7 +85,7 @@ lint:
 
 # All platforms
 lint-all:
-	@$(foreach platform,$(PLATFORMS),echo "Linting $(platform)$(if $(ARGS), with: $(ARGS))..."; $(call LINT_CMD,$(platform));)
+	@set -e; $(foreach platform,$(PLATFORMS),echo "Linting $(platform)$(if $(ARGS), with: $(ARGS))..."; $(call LINT_CMD,$(platform));)
 
 # Single platform use PLATFORM=os/arch
 lint-platform:
