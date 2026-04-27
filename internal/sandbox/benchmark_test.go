@@ -767,7 +767,7 @@ func execBenchCommand(b *testing.B, command string, workDir string) {
 		shell = "/bin/bash"
 	}
 
-	cmd := exec.CommandContext(ctx, shell, "-c", command)
+	cmd := exec.CommandContext(ctx, shell, "-c", command) // #nosec G204 - test code uses dynamic shell selection
 	cmd.Dir = workDir
 	cmd.Stdout = &bytes.Buffer{}
 	cmd.Stderr = &bytes.Buffer{}

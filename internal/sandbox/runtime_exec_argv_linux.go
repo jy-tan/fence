@@ -111,10 +111,10 @@ func RunLinuxArgvExecRunnerFromEnv() (int, error) {
 		return 1, fmt.Errorf("failed to parse Linux argv exec plan: %w", err)
 	}
 	if len(plan.BwrapArgs) == 0 {
-		return 1, errors.New("Linux argv exec plan has no bubblewrap command")
+		return 1, errors.New("linux argv exec plan has no bubblewrap command")
 	}
 	if plan.AllowedMultithreadedBootstrapContinues <= 0 {
-		return 1, errors.New("Linux argv exec plan has no multithreaded bootstrap continue budget")
+		return 1, errors.New("linux argv exec plan has no multithreaded bootstrap continue budget")
 	}
 
 	socketDir, err := os.MkdirTemp("", "fence-argv-exec-")
@@ -287,7 +287,7 @@ func recvLinuxArgvExecHandshake(conn net.Conn) (int, error) {
 
 	payload := make([]byte, 4096)
 	oob := make([]byte, unix.CmsgSpace(4))
-	n, oobn, _, _, recvErr := unix.Recvmsg(int(connFile.Fd()), payload, oob, 0)
+	n, oobn, _, _, recvErr := unix.Recvmsg(int(connFile.Fd()), payload, oob, 0) //nolint:gosec // fd fits in int on all supported platforms
 	if recvErr != nil {
 		return -1, recvErr
 	}
@@ -372,13 +372,13 @@ func RunLinuxArgvExecShim(args []string) (int, error) {
 
 	err = syscall.Exec(execPath, command, FilterDangerousEnv(os.Environ())) //nolint:gosec // execing trusted argv slice
 	if err != nil {
-		return 1, fmt.Errorf("Linux argv exec shim failed to exec %q: %w", execPath, err)
+		return 1, fmt.Errorf("linux argv exec shim failed to exec %q: %w", execPath, err)
 	}
 	return 0, nil
 }
 
 func sendLinuxArgvExecHandshake(socketPath string, listenerFD int, handshakeErr error) error {
-	conn, err := net.Dial("unix", socketPath)
+	conn, err := net.Dial("unix", socketPath) //nolint:gosec // socketPath is internally generated and trusted
 	if err != nil {
 		return err
 	}
@@ -406,7 +406,7 @@ func sendLinuxArgvExecHandshake(socketPath string, listenerFD int, handshakeErr 
 		oob = unix.UnixRights(listenerFD)
 	}
 
-	_, err = unix.SendmsgN(int(connFile.Fd()), payload, oob, nil, 0)
+	_, err = unix.SendmsgN(int(connFile.Fd()), payload, oob, nil, 0) //nolint:gosec // fd fits in int on all supported platforms
 	return err
 }
 
@@ -455,7 +455,7 @@ func installLinuxArgvExecNotifyFilter() (int, error) {
 		return -1, errno
 	}
 
-	return int(listenerFD), nil
+	return int(listenerFD), nil //nolint:gosec // listenerFD from syscall fits in int
 }
 
 func runLinuxArgvExecSupervisor(
@@ -641,7 +641,7 @@ func linuxSendSeccompNotifResp(listenerFD int, resp *linuxSeccompNotifResp) erro
 func linuxIoctlValue[T any](fd int, request uintptr, value *T) error {
 	_, _, errno := unix.Syscall(
 		unix.SYS_IOCTL,
-		uintptr(fd),
+		uintptr(fd), //nolint:gosec // fd from file descriptor fits in uintptr
 		request,
 		uintptr(unsafe.Pointer(value)), //nolint:gosec // ioctl(2) requires a pointer to the kernel ABI value.
 	)

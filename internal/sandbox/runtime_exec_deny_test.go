@@ -385,7 +385,7 @@ func TestShouldSkipRuntimeExecDenyPath_AcceptSharedBinaryCannotRuntimeDenyMatche
 		accept string
 	}{
 		// absolute-path deny rule, bare-name accept entry
-		{token: "/shared/bin/dd", accept: "dd"},
+		{token: "/shared/bin/dd", accept: "dd"}, // #nosec G101 - test fixture data, not credentials
 		// bare-name deny rule, absolute-path accept entry
 		{token: "dd", accept: "/shared/bin/dd"},
 	}

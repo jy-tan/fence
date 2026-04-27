@@ -245,7 +245,7 @@ func executeShellCommandWithTimeout(t *testing.T, command string, workDir string
 		shell = "/bin/bash"
 	}
 
-	cmd := exec.CommandContext(ctx, shell, "-c", command)
+	cmd := exec.CommandContext(ctx, shell, "-c", command) // #nosec G204 - test code uses dynamic shell selection
 	cmd.Dir = workDir
 
 	var stdout, stderr bytes.Buffer

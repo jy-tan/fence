@@ -42,7 +42,7 @@ type LinuxSandboxOptions struct {
 
 // NewLinuxBridge returns an error on non-Linux platforms.
 func NewLinuxBridge(httpProxyPort, socksProxyPort int, debug bool) (*LinuxBridge, error) {
-	return nil, fmt.Errorf("Linux bridge not available on this platform")
+	return nil, fmt.Errorf("linux bridge not available on this platform")
 }
 
 // Cleanup is a no-op on non-Linux platforms.
@@ -69,17 +69,17 @@ func (b *LocalOutboundBridge) Cleanup() {}
 
 // WrapCommandLinux returns an error on non-Linux platforms.
 func WrapCommandLinux(cfg *config.Config, command string, bridge *LinuxBridge, reverseBridge *ReverseBridge, debug bool) (string, error) {
-	return "", fmt.Errorf("Linux sandbox not available on this platform")
+	return "", fmt.Errorf("linux sandbox not available on this platform")
 }
 
 // WrapCommandLinuxWithShell returns an error on non-Linux platforms.
 func WrapCommandLinuxWithShell(cfg *config.Config, command string, workingDir string, bridge *LinuxBridge, reverseBridge *ReverseBridge, debug bool, shellMode string, shellLogin bool) (string, error) {
-	return "", fmt.Errorf("Linux sandbox not available on this platform")
+	return "", fmt.Errorf("linux sandbox not available on this platform")
 }
 
 // WrapCommandLinuxWithOptions returns an error on non-Linux platforms.
 func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *LinuxBridge, reverseBridge *ReverseBridge, opts LinuxSandboxOptions) (string, error) {
-	return "", fmt.Errorf("Linux sandbox not available on this platform")
+	return "", fmt.Errorf("linux sandbox not available on this platform")
 }
 
 // StartLinuxMonitor returns nil on non-Linux platforms.

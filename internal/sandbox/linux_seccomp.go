@@ -254,14 +254,14 @@ type bpfInstruction struct {
 func (i *bpfInstruction) writeTo(f *os.File) error {
 	// BPF instruction is 8 bytes: code(2) + jt(1) + jf(1) + k(4)
 	buf := make([]byte, 8)
-	buf[0] = byte(i.code)
-	buf[1] = byte(i.code >> 8)
+	buf[0] = byte(i.code)      //nolint:gosec // BPF instruction code fits in byte
+	buf[1] = byte(i.code >> 8) //nolint:gosec // BPF instruction code fits in byte
 	buf[2] = i.jt
 	buf[3] = i.jf
-	buf[4] = byte(i.k)
-	buf[5] = byte(i.k >> 8)
-	buf[6] = byte(i.k >> 16)
-	buf[7] = byte(i.k >> 24)
+	buf[4] = byte(i.k)       //nolint:gosec // BPF instruction operand fits in byte
+	buf[5] = byte(i.k >> 8)  //nolint:gosec // BPF instruction operand fits in byte
+	buf[6] = byte(i.k >> 16) //nolint:gosec // BPF instruction operand fits in byte
+	buf[7] = byte(i.k >> 24) //nolint:gosec // BPF instruction operand fits in byte
 	_, err := f.Write(buf)
 	return err
 }

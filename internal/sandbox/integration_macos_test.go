@@ -422,7 +422,7 @@ const mdlsBaselineFailureMarker = "could not find"
 // we skip the tests that rely on it.
 func probeMdlsWorksUnsandboxed(t *testing.T, path string) {
 	t.Helper()
-	out, err := exec.Command("/usr/bin/mdls", path).CombinedOutput()
+	out, err := exec.Command("/usr/bin/mdls", path).CombinedOutput() // #nosec G204 - test probe with fixed binary path
 	if err != nil || !strings.Contains(string(out), "kMDItem") {
 		t.Skipf("skipping: unsandboxed `mdls %s` does not return metadata (Spotlight disabled?): err=%v out=%s", path, err, string(out))
 	}

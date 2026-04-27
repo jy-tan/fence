@@ -205,7 +205,7 @@ func shouldSkipShellWrap(command, fenceExePath string) bool {
 }
 
 func isPureCDCommand(command string) bool {
-	if command != "cd" && !(strings.HasPrefix(command, "cd ") || strings.HasPrefix(command, "cd\t")) {
+	if command != "cd" && !strings.HasPrefix(command, "cd ") && !strings.HasPrefix(command, "cd\t") {
 		return false
 	}
 	if containsCommandSubstitution(command) {

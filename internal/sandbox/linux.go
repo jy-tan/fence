@@ -981,8 +981,8 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 		}
 	}
 
-	stdinIsTTY := term.IsTerminal(int(os.Stdin.Fd()))
-	stdoutIsTTY := term.IsTerminal(int(os.Stdout.Fd()))
+	stdinIsTTY := term.IsTerminal(int(os.Stdin.Fd()))   // #nosec G115 - fd fits in int on all supported platforms
+	stdoutIsTTY := term.IsTerminal(int(os.Stdout.Fd())) // #nosec G115 - fd fits in int on all supported platforms
 	forceNewSession := effectiveLinuxForceNewSession(cfg, stdinIsTTY, stdoutIsTTY)
 
 	deviceMode := effectiveLinuxDeviceMode(cfg, bwrapPath)

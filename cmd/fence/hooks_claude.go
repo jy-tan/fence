@@ -57,7 +57,7 @@ func buildClaudePreToolUseResponse(stdin io.Reader, fenceExePath string, extraFe
 
 	command, ok := event.ToolInput["command"].(string)
 	if !ok {
-		return nil, false, fmt.Errorf("Bash tool_input.command missing or not a string")
+		return nil, false, fmt.Errorf("bash tool_input.command missing or not a string")
 	}
 	result, changed, err := evaluateShellHookRequest(shellHookRequest{
 		Command:   command,
