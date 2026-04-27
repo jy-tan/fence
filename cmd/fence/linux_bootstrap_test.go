@@ -17,6 +17,20 @@ import (
 	"github.com/Use-Tusk/fence/internal/config"
 )
 
+func mustSetenv(t *testing.T, key, value string) {
+	t.Helper()
+	if err := os.Setenv(key, value); err != nil {
+		t.Fatalf("failed to set %s: %v", key, err)
+	}
+}
+
+func mustUnsetenv(t *testing.T, key string) {
+	t.Helper()
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("failed to unset %s: %v", key, err)
+	}
+}
+
 func TestBridgeTCPToUnix(t *testing.T) {
 	// Create a Unix socket server that echoes data
 	tmpDir := t.TempDir()
@@ -633,19 +647,19 @@ func TestRepairRuntimeEnv_Integration(t *testing.T) {
 	origXDG := os.Getenv("XDG_RUNTIME_DIR")
 	defer func() {
 		if origTMPDIR != "" {
-			os.Setenv("TMPDIR", origTMPDIR)
+			mustSetenv(t, "TMPDIR", origTMPDIR)
 		} else {
-			os.Unsetenv("TMPDIR")
+			mustUnsetenv(t, "TMPDIR")
 		}
 		if origXDG != "" {
-			os.Setenv("XDG_RUNTIME_DIR", origXDG)
+			mustSetenv(t, "XDG_RUNTIME_DIR", origXDG)
 		} else {
-			os.Unsetenv("XDG_RUNTIME_DIR")
+			mustUnsetenv(t, "XDG_RUNTIME_DIR")
 		}
 	}()
 
 	t.Run("repairs unset TMPDIR", func(t *testing.T) {
-		os.Unsetenv("TMPDIR")
+		mustUnsetenv(t, "TMPDIR")
 		cleanup := repairRuntimeEnv()
 		defer cleanup()
 
@@ -656,7 +670,7 @@ func TestRepairRuntimeEnv_Integration(t *testing.T) {
 	})
 
 	t.Run("repairs TMPDIR pointing to nonexistent directory", func(t *testing.T) {
-		os.Setenv("TMPDIR", "/nonexistent/tmp/dir/xyz123")
+		mustSetenv(t, "TMPDIR", "/nonexistent/tmp/dir/xyz123")
 		cleanup := repairRuntimeEnv()
 		defer cleanup()
 
@@ -668,7 +682,7 @@ func TestRepairRuntimeEnv_Integration(t *testing.T) {
 
 	t.Run("keeps valid TMPDIR", func(t *testing.T) {
 		validTmpDir := t.TempDir()
-		os.Setenv("TMPDIR", validTmpDir)
+		mustSetenv(t, "TMPDIR", validTmpDir)
 		cleanup := repairRuntimeEnv()
 		defer cleanup()
 
@@ -679,7 +693,7 @@ func TestRepairRuntimeEnv_Integration(t *testing.T) {
 	})
 
 	t.Run("creates XDG_RUNTIME_DIR when unset", func(t *testing.T) {
-		os.Unsetenv("XDG_RUNTIME_DIR")
+		mustUnsetenv(t, "XDG_RUNTIME_DIR")
 		cleanup := repairRuntimeEnv()
 		defer cleanup()
 
@@ -700,20 +714,22 @@ func TestRepairRuntimeEnv_Integration(t *testing.T) {
 		}
 
 		// Verify permissions are 0700
-		if info.Mode().Perm() != 0700 {
+		if info.Mode().Perm() != 0o700 {
 			t.Errorf("expected XDG_RUNTIME_DIR permissions 0700, got %04o", info.Mode().Perm())
 		}
 
 		// Verify we can write to it
 		testFile := xdg + "/test-write"
-		if err := os.WriteFile(testFile, []byte("test"), 0600); err != nil {
+		if err := os.WriteFile(testFile, []byte("test"), 0o600); err != nil {
 			t.Errorf("cannot write to XDG_RUNTIME_DIR: %v", err)
 		}
-		os.Remove(testFile)
+		if err := os.Remove(testFile); err != nil {
+			t.Errorf("failed to remove test file: %v", err)
+		}
 	})
 
 	t.Run("repairs XDG_RUNTIME_DIR pointing to nonexistent directory", func(t *testing.T) {
-		os.Setenv("XDG_RUNTIME_DIR", "/nonexistent/runtime/dir/xyz123")
+		mustSetenv(t, "XDG_RUNTIME_DIR", "/nonexistent/runtime/dir/xyz123")
 		cleanup := repairRuntimeEnv()
 		defer cleanup()
 
@@ -735,7 +751,7 @@ func TestRepairRuntimeEnv_Integration(t *testing.T) {
 
 	t.Run("keeps valid XDG_RUNTIME_DIR", func(t *testing.T) {
 		validRuntimeDir := t.TempDir()
-		os.Setenv("XDG_RUNTIME_DIR", validRuntimeDir)
+		mustSetenv(t, "XDG_RUNTIME_DIR", validRuntimeDir)
 		cleanup := repairRuntimeEnv()
 		defer cleanup()
 
@@ -746,7 +762,7 @@ func TestRepairRuntimeEnv_Integration(t *testing.T) {
 	})
 
 	t.Run("cleanup removes created runtime directory", func(t *testing.T) {
-		os.Unsetenv("XDG_RUNTIME_DIR")
+		mustUnsetenv(t, "XDG_RUNTIME_DIR")
 		cleanup := repairRuntimeEnv()
 
 		xdg := os.Getenv("XDG_RUNTIME_DIR")
@@ -770,7 +786,7 @@ func TestRepairRuntimeEnv_Integration(t *testing.T) {
 
 	t.Run("cleanup does not remove pre-existing XDG_RUNTIME_DIR", func(t *testing.T) {
 		existingDir := t.TempDir()
-		os.Setenv("XDG_RUNTIME_DIR", existingDir)
+		mustSetenv(t, "XDG_RUNTIME_DIR", existingDir)
 		cleanup := repairRuntimeEnv()
 
 		// Call cleanup
@@ -783,8 +799,8 @@ func TestRepairRuntimeEnv_Integration(t *testing.T) {
 	})
 
 	t.Run("handles both TMPDIR and XDG_RUNTIME_DIR needing repair", func(t *testing.T) {
-		os.Unsetenv("TMPDIR")
-		os.Unsetenv("XDG_RUNTIME_DIR")
+		mustUnsetenv(t, "TMPDIR")
+		mustUnsetenv(t, "XDG_RUNTIME_DIR")
 		cleanup := repairRuntimeEnv()
 		defer cleanup()
 
@@ -808,12 +824,12 @@ func TestRepairRuntimeEnv_Integration(t *testing.T) {
 		// Create a read-only directory
 		tmpDir := t.TempDir()
 		readOnlyDir := tmpDir + "/readonly"
-		if err := os.Mkdir(readOnlyDir, 0555); err != nil {
+		// #nosec G301 -- the test intentionally creates a non-writable directory
+		if err := os.Mkdir(readOnlyDir, 0o500); err != nil {
 			t.Fatalf("failed to create read-only dir: %v", err)
 		}
-		defer os.Chmod(readOnlyDir, 0755) // Clean up
 
-		os.Setenv("XDG_RUNTIME_DIR", readOnlyDir)
+		mustSetenv(t, "XDG_RUNTIME_DIR", readOnlyDir)
 		cleanup := repairRuntimeEnv()
 		defer cleanup()
 
@@ -1048,14 +1064,18 @@ func TestStartBridgesAndSetEnv_SetsNoProxy(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to listen on http socket: %v", err)
 		}
-		defer httpListener.Close()
+		defer func() {
+			if err := httpListener.Close(); err != nil {
+				t.Errorf("failed to close http listener: %v", err)
+			}
+		}()
 		go func() {
 			for {
 				conn, err := httpListener.Accept()
 				if err != nil {
 					return
 				}
-				conn.Close()
+				_ = conn.Close()
 			}
 		}()
 
@@ -1093,14 +1113,18 @@ func TestStartBridgesAndSetEnv_SetsNoProxy(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to listen on socks socket: %v", err)
 		}
-		defer socksListener.Close()
+		defer func() {
+			if err := socksListener.Close(); err != nil {
+				t.Errorf("failed to close socks listener: %v", err)
+			}
+		}()
 		go func() {
 			for {
 				conn, err := socksListener.Accept()
 				if err != nil {
 					return
 				}
-				conn.Close()
+				_ = conn.Close()
 			}
 		}()
 

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"slices"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 

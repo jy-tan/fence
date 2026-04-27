@@ -56,12 +56,6 @@ func fatalError(code int, format string, args ...any) error {
 	}
 }
 
-// fatal calls os.Exit with the appropriate code (kept for backward compatibility)
-func fatal(exitCode int, format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Error: "+format+"\n", args...)
-	os.Exit(exitCode)
-}
-
 func parseFlagsAndArgs() (bootstrapOptions, error) {
 	flags := pflag.NewFlagSet("linux-bootstrap", pflag.ContinueOnError)
 	httpSocket := flags.String("http-socket", "", "")
@@ -347,8 +341,6 @@ func parseReverseBridge(spec string) (reverseBridgeSpec, error) {
 	}, nil
 }
 
-
-
 // bridgeTCPToUnix bridges TCP connections on a port to a Unix socket.
 // This is used for proxy support (HTTP/SOCKS proxies).
 // startErrCh receives the actual port and nil once the listener is ready,
@@ -356,7 +348,8 @@ func parseReverseBridge(spec string) (reverseBridgeSpec, error) {
 func bridgeTCPToUnix(ctx context.Context, listenPort int, unixSocketPath string, startErrCh chan<- struct {
 	port int
 	err  error
-}) (int, error) {
+},
+) (int, error) {
 	lc := net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
 			var setsockoptErr error
@@ -560,12 +553,18 @@ func dirIsUsable(path string) bool {
 
 	// Try to create a test file to verify write permissions
 	testFile := path + "/.fence-write-test-" + fmt.Sprintf("%d", os.Getpid())
-	f, err := os.OpenFile(testFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	// #nosec G304 -- testFile is intentionally created under a caller-provided directory to probe writability
+	f, err := os.OpenFile(testFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return false
 	}
-	f.Close()
-	os.Remove(testFile)
+	if err := f.Close(); err != nil {
+		_ = os.Remove(testFile)
+		return false
+	}
+	if err := os.Remove(testFile); err != nil {
+		return false
+	}
 
 	return true
 }
@@ -581,19 +580,20 @@ func preparePrivateRuntimeDir() (dir string, cleanup func(), err error) {
 	}
 
 	// Set permissions to 0700 (private)
-	if err := os.Chmod(dir, 0700); err != nil {
-		os.RemoveAll(dir)
+	// #nosec G302 -- runtime directories must be owner-accessible and traversable
+	if err := os.Chmod(dir, 0o700); err != nil {
+		_ = os.RemoveAll(dir)
 		return "", nil, err
 	}
 
 	// Verify the directory is usable
 	if !dirIsUsable(dir) {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		return "", nil, fmt.Errorf("created directory is not usable")
 	}
 
 	cleanup = func() {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 	}
 
 	return dir, cleanup, nil
@@ -607,7 +607,9 @@ func repairRuntimeEnv() (cleanup func()) {
 	// Repair TMPDIR if not usable
 	tmpdir := os.Getenv("TMPDIR")
 	if !dirIsUsable(tmpdir) {
-		os.Setenv("TMPDIR", "/tmp")
+		if err := os.Setenv("TMPDIR", "/tmp"); err != nil {
+			fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Warning: failed to set TMPDIR: %v\n", err)
+		}
 	}
 
 	// Repair XDG_RUNTIME_DIR if not usable
@@ -618,12 +620,18 @@ func repairRuntimeEnv() (cleanup func()) {
 		// Create a private runtime directory
 		dir, dirCleanup, err := preparePrivateRuntimeDir()
 		if err == nil {
-			os.Setenv("XDG_RUNTIME_DIR", dir)
+			if err := os.Setenv("XDG_RUNTIME_DIR", dir); err != nil {
+				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Warning: failed to set XDG_RUNTIME_DIR: %v\n", err)
+				dirCleanup()
+				return cleanup
+			}
 			createdRuntimeDir = dir
 			cleanup = dirCleanup
 		} else {
 			// If we can't create a runtime dir, unset it
-			os.Unsetenv("XDG_RUNTIME_DIR")
+			if err := os.Unsetenv("XDG_RUNTIME_DIR"); err != nil {
+				fmt.Fprintf(os.Stderr, "[fence:linux-bootstrap] Warning: failed to unset XDG_RUNTIME_DIR: %v\n", err)
+			}
 		}
 	}
 

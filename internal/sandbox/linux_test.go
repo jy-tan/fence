@@ -250,7 +250,7 @@ func TestAppendLinuxBootstrapWrapperArgs_ResolvesSymlinks(t *testing.T) {
 
 	// Create a real shell binary (just an empty file for testing)
 	realShell := filepath.Join(tmpDir, "real-shell")
-	if err := os.WriteFile(realShell, []byte("#!/bin/sh\necho test"), 0o755); err != nil {
+	if err := os.WriteFile(realShell, []byte("#!/bin/sh\necho test"), 0o600); err != nil {
 		t.Fatalf("failed to create real shell: %v", err)
 	}
 
@@ -262,7 +262,7 @@ func TestAppendLinuxBootstrapWrapperArgs_ResolvesSymlinks(t *testing.T) {
 
 	// Create a real fence binary
 	realFence := filepath.Join(tmpDir, "real-fence")
-	if err := os.WriteFile(realFence, []byte("#!/bin/sh\necho fence"), 0o755); err != nil {
+	if err := os.WriteFile(realFence, []byte("#!/bin/sh\necho fence"), 0o600); err != nil {
 		t.Fatalf("failed to create real fence: %v", err)
 	}
 
@@ -274,7 +274,7 @@ func TestAppendLinuxBootstrapWrapperArgs_ResolvesSymlinks(t *testing.T) {
 
 	// Call appendLinuxBootstrapWrapperArgs with symlinked paths
 	args := []string{"bwrap"}
-	result, err := appendLinuxBootstrapWrapperArgs(args, symlinkFence, symlinkShell, "-c", "echo test", nil, nil, nil)
+	result, err := appendLinuxBootstrapWrapperArgs(args, symlinkFence, symlinkShell, "-c", "echo test", nil, nil, nil, false)
 	if err != nil {
 		t.Fatalf("appendLinuxBootstrapWrapperArgs returned error: %v", err)
 	}
@@ -337,7 +337,7 @@ func TestAppendLinuxBootstrapWrapperArgs_HandlesNonexistentPaths(t *testing.T) {
 	nonexistentPath := "/nonexistent/path/to/fence"
 	nonexistentShell := "/nonexistent/path/to/shell"
 
-	_, err := appendLinuxBootstrapWrapperArgs(args, nonexistentPath, nonexistentShell, "-c", "echo test", nil, nil, nil)
+	_, err := appendLinuxBootstrapWrapperArgs(args, nonexistentPath, nonexistentShell, "-c", "echo test", nil, nil, nil, false)
 
 	// Should return an error since the paths cannot be resolved for staging
 	if err == nil {

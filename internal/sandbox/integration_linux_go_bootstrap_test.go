@@ -34,7 +34,7 @@ func TestLinux_GoBootstrapWrapper_RuntimeExecDeny_DoesNotCrashOnBinAliasPath(t *
 	defer func() { _ = os.RemoveAll(sandboxRoot) }()
 
 	fenceBin := filepath.Join(sandboxRoot, "fence")
-	build := exec.Command("go", "build", "-o", fenceBin, "../../cmd/fence")
+	build := exec.Command("go", "build", "-o", fenceBin, "../../cmd/fence") // #nosec G204 -- test builds a fixed repo-local target with fixed arguments
 	build.Stdout = os.Stdout
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
