@@ -81,13 +81,17 @@ settings file for that integration.
 
 If you want hook-invoked shell commands to use a specific Fence policy instead
 of resolving config at runtime, generate or install the hook with
-`--settings /path/to/fence.json` or `--template code`.
+`--settings /path/to/fence.json` or `--template code`. Supported on
+`--claude` and `--cursor`; the `--opencode` install path uses a different
+mechanism (see below).
 
 Commands that already violate Fence command policy are denied directly at hook
 time instead of being rewritten to a nested `fence -c ...` invocation.
 
 If the agent is already running inside Fence, the helper avoids launching a
 second nested sandbox and only applies Fence's command policy at hook time.
+
+### Claude Code
 
 Claude Code uses `PreToolUse` for `Bash` and calls
 `fence --claude-pre-tool-use`:
@@ -99,6 +103,8 @@ fence hooks uninstall --claude
 ```
 
 Default file: `~/.claude/settings.json`
+
+### Cursor
 
 Cursor uses `preToolUse` for `Shell` and calls
 `fence --cursor-pre-tool-use`:
@@ -113,6 +119,37 @@ Default file: `~/.cursor/hooks.json`
 
 Cursor may also run Claude Code hook commands if Claude settings are present.
 Fence handles that too by accepting either Cursor or Claude hook payloads.
+
+### OpenCode
+
+OpenCode loads plugins from npm packages listed in its `plugin` array, so the
+Fence integration ships as the [`@use-tusk/opencode-fence`](https://github.com/Use-Tusk/opencode-fence)
+plugin. It hooks `tool.execute.before` for the `bash` tool and calls
+`fence --opencode-pre-tool-use`:
+
+```bash
+fence hooks print --opencode
+fence hooks install --opencode
+fence hooks uninstall --opencode
+```
+
+Default file: `~/.config/opencode/opencode.json`
+
+`install --opencode` only adds `@use-tusk/opencode-fence` to the `plugin`
+array; OpenCode's npm-package plugin loader does not accept options, so
+`--settings` and `--template` are not supported with `--opencode`. To pin a
+specific config or template, write a local plugin shim under
+`~/.config/opencode/plugins/` that constructs `FencePlugin({...})` directly -
+see the plugin's [README](https://github.com/Use-Tusk/opencode-fence#configuration).
+
+> [!NOTE]
+> **OpenCode `!`-prefixed commands bypass the plugin.** OpenCode's plugin
+> lifecycle currently does not fire `tool.execute.before` for commands the
+> user types directly into the TUI with the `!` prefix, so those bypass the
+> Fence plugin even when installed. Whole-agent wrapping
+> (`fence -t code -- opencode`) still applies its filesystem and network
+> policy to those commands; only multi-token command denies are missed for
+> the `!` path.
 
 If your coding agent has a hook or plugin system you'd like Fence to support, feel free to open an issue or pull request.
 

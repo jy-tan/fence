@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -36,6 +37,30 @@ func loadHookConfigDocument(path string, label string) (map[string]any, error) {
 		return map[string]any{}, nil
 	}
 	return doc, nil
+}
+
+// hookConfigHasJSONCComments reports whether the file at path contains JSONC
+// comments that would be stripped on a structured re-marshal. Implemented via
+// byte-for-byte comparison against jsonc.ToJSON output (which replaces comments
+// with whitespace, preserving positions). Returns false on a missing file.
+func hookConfigHasJSONCComments(path string) (bool, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // user-provided path is intentional
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return false, nil
+	}
+
+	stripped := jsonc.ToJSON(data)
+	if !bytes.Equal(data, stripped) {
+		return true, nil
+	}
+	return false, nil
 }
 
 func writeHookConfigDocument(path string, doc map[string]any, label string) error {
