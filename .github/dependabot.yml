@@ -17,23 +17,3 @@ updates:
       go-deps:
         patterns:
           - "*"
-
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "tuesday"
-      time: "09:30"
-      timezone: "America/Los_Angeles"
-    cooldown:
-      default-days: 7
-    open-pull-requests-limit: 2
-    ignore:
-      # Ignore major updates to golangci-lint-action until we update to v2
-      - dependency-name: "golangci/golangci-lint-action"
-        update-types:
-          - "version-update:semver-major"
-    groups:
-      github-actions:
-        patterns:
-          - "*"
