@@ -153,6 +153,68 @@ see the plugin's [README](https://github.com/Use-Tusk/opencode-fence#configurati
 > policy to those commands; only multi-token command denies are missed for
 > the `!` path.
 
+### Hermes Agent
+
+Hermes Agent has a YAML-declared shell-hook system (`~/.hermes/config.yaml`)
+that pipes JSON to a subprocess on stdin and reads JSON on stdout, so the
+Fence integration ships as the `fence` binary itself, no separate package.
+It registers `pre_tool_call` hooks for Hermes' `terminal`, `write_file`,
+`patch`, and `web_extract` tools and calls `fence --hermes-pre-tool-use`:
+
+```bash
+fence hooks print --hermes
+fence hooks install --hermes
+fence hooks install --hermes --template code         # pin to the `code` template
+fence hooks install --hermes --settings ./fence.json
+fence hooks uninstall --hermes
+```
+
+Default file: `~/.hermes/config.yaml`. Override with `--file` to target a
+project-local config or alternate profile.
+
+Unlike the coding-agent integrations above, the Hermes hook surface goes
+**beyond bash**. Each Hermes tool maps to one of Fence's existing config
+domains:
+
+| Hermes tool | Fence policy domain | Reads |
+|-------------|---------------------|-------|
+| `terminal` | `command.deny` / `command.allow` | `tool_input.command` |
+| `write_file` | `filesystem.allowWrite` / `denyWrite` (+ dangerous-files protection) | `tool_input.path` |
+| `patch` | `filesystem.allowWrite` / `denyWrite` (+ dangerous-files protection) | `tool_input.path` |
+| `web_extract` | `network.allowedDomains` / `deniedDomains` | `tool_input.url` |
+
+Tools not in this table (memory, todos, image generation, MCP, channel
+sends, etc.) are passed through unmodified — they don't fit Fence's
+filesystem/network/command vocabulary, so we don't pretend to gate them.
+
+> [!NOTE]
+> **Hermes hook mode is intent-only, not traffic-enforced.** Fence sees what
+> the agent declared it wants to do (which path, which URL) and decides
+> against your config; it doesn't sit in the syscall or HTTP path. If a
+> tool's actual implementation does something different from its declared
+> arguments (`web_extract` follows a redirect to a blocked host, for
+> example), the hook can't catch that. For traffic-time enforcement, also
+> wrap the gateway with `fence -- hermes` — the two compose.
+
+> [!NOTE]
+> **Default-allow when a domain is unconfigured.** If you only set
+> `command.deny`, `write_file` and `web_extract` calls pass through. The
+> hook only enforces `filesystem.*` once you've configured `allowWrite` or
+> `denyWrite`, and only enforces `network.*` once you've configured
+> `allowedDomains` or `deniedDomains`. This is intentional: it lets users
+> opt into command policy without accidentally denying every file write.
+> Wrap mode (`fence -- hermes`) is more aggressive because the OS sandbox
+> is the only protection there.
+
+> [!NOTE]
+> **Consent / non-TTY runs.** Hermes prompts once per `(event, command)`
+> pair before running it. For the gateway, cron, or CI, run with
+> `HERMES_ACCEPT_HOOKS=1`, set `hooks_auto_accept: true` in
+> `~/.hermes/config.yaml`, or run `hermes` once interactively to record
+> the approval. See the Hermes
+> [Shell Hooks docs](https://docs.hermes-agent.com/docs/user-guide/features/hooks)
+> for the full consent model.
+
 If your coding agent has a hook or plugin system you'd like Fence to support, feel free to open an issue or pull request.
 
 ## Protecting your environment

@@ -317,6 +317,111 @@ func CreateDomainFilter(cfg *config.Config, debug bool) FilterFunc {
 	}
 }
 
+// URLBlockedError is returned when a URL is blocked by network policy at the
+// hook layer. Wrap-mode equivalent is the in-line filter result inside
+// CreateDomainFilter; this exists so callers can `errors.As` and surface the
+// matched rule.
+type URLBlockedError struct {
+	URL         string
+	Host        string
+	MatchedRule string
+	Reason      string
+}
+
+func (e *URLBlockedError) Error() string {
+	if e.MatchedRule == "" {
+		return fmt.Sprintf("network access to %q blocked: %s", e.URL, e.Reason)
+	}
+	return fmt.Sprintf("network access to %q blocked: %s (matched %q)", e.URL, e.Reason, e.MatchedRule)
+}
+
+// CheckURL reports whether the caller is allowed to fetch rawURL under cfg.
+//
+// This is the *intent*-time check used by hook integrations against a tool's
+// declared URL argument (e.g. Hermes' web_extract). It is intentionally
+// looser than CreateDomainFilter's wrap-mode behavior:
+//
+//   - If neither AllowedDomains nor DeniedDomains is configured, returns nil
+//     (allow). Wrap mode denies by default because the proxy is the only
+//     network protection; hook mode treats absence of policy as "this domain
+//     isn't under Fence's purview" so users opting in to command policy
+//     don't accidentally block every web fetch.
+//   - DeniedDomains takes precedence over AllowedDomains, matching wrap mode.
+//   - If AllowedDomains is configured but the host doesn't match, the URL
+//     is blocked with reason "not in allowedDomains".
+//
+// Caveat the caller should surface in docs: hook-time policy is
+// "deny-by-intent", not "deny-by-traffic". The agent could embed an
+// allowed host in a path (`?next=https://blocked.example/`) and the actual
+// HTTP fetch would not be intercepted — wrap-mode is the answer for that
+// model. Hook-mode catches the agent's declared intent only.
+func CheckURL(rawURL string, cfg *config.Config) error {
+	if cfg == nil {
+		cfg = config.Default()
+	}
+
+	host, err := hostFromURLString(rawURL)
+	if err != nil {
+		return &URLBlockedError{URL: rawURL, Reason: err.Error()}
+	}
+
+	for _, denied := range cfg.Network.DeniedDomains {
+		if config.MatchesDomain(host, denied) {
+			return &URLBlockedError{
+				URL:         rawURL,
+				Host:        host,
+				MatchedRule: denied,
+				Reason:      "deniedDomains",
+			}
+		}
+	}
+
+	if len(cfg.Network.AllowedDomains) == 0 && len(cfg.Network.DeniedDomains) == 0 {
+		return nil
+	}
+
+	for _, allowed := range cfg.Network.AllowedDomains {
+		if config.MatchesDomain(host, allowed) {
+			return nil
+		}
+	}
+
+	if len(cfg.Network.AllowedDomains) == 0 {
+		return nil
+	}
+	return &URLBlockedError{
+		URL:    rawURL,
+		Host:   host,
+		Reason: "not in allowedDomains",
+	}
+}
+
+// hostFromURLString parses rawURL and returns the lower-cased hostname,
+// stripped of any port. Returns an error if the URL is unparseable, has no
+// host, or uses a non-network scheme (file:, data:, etc.) we'd refuse to
+// reason about.
+func hostFromURLString(rawURL string) (string, error) {
+	if strings.TrimSpace(rawURL) == "" {
+		return "", fmt.Errorf("empty url")
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid url: %w", err)
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https", "ws", "wss":
+	case "":
+		return "", fmt.Errorf("url has no scheme")
+	default:
+		return "", fmt.Errorf("unsupported url scheme %q", parsed.Scheme)
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return "", fmt.Errorf("url has no host")
+	}
+	return strings.ToLower(host), nil
+}
+
 // GetHostFromRequest extracts the hostname from a request.
 func GetHostFromRequest(r *http.Request) string {
 	host := r.Host

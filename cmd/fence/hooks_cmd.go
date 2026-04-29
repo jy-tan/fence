@@ -27,6 +27,7 @@ func newHooksPrintCmd() *cobra.Command {
 		claude      bool
 		cursor      bool
 		opencode    bool
+		hermes      bool
 		hookOptions hookFenceOptions
 	)
 
@@ -39,7 +40,8 @@ Examples:
   fence hooks print --claude
   fence hooks print --claude --settings ./fence.json
   fence hooks print --cursor --template code
-  fence hooks print --opencode`,
+  fence hooks print --opencode
+  fence hooks print --hermes`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resolvedHookOptions, err := hookOptions.normalized()
@@ -57,8 +59,10 @@ Examples:
 					return fmt.Errorf("--settings/--template are not supported with --opencode (OpenCode plugins do not accept options through the plugin array; use a local plugin shim instead, see https://github.com/Use-Tusk/opencode-fence)")
 				}
 				return writeOpencodeHooksConfig(cmd.OutOrStdout())
+			case hermes:
+				return writeHermesHooksConfig(cmd.OutOrStdout(), resolvedHookOptions)
 			default:
-				return fmt.Errorf("no hook target specified. Use --claude, --cursor, or --opencode")
+				return fmt.Errorf("no hook target specified. Use --claude, --cursor, --opencode, or --hermes")
 			}
 		},
 	}
@@ -66,8 +70,9 @@ Examples:
 	cmd.Flags().BoolVar(&claude, "claude", false, "Print Claude Code hook config")
 	cmd.Flags().BoolVar(&cursor, "cursor", false, "Print Cursor hook config")
 	cmd.Flags().BoolVar(&opencode, "opencode", false, "Print OpenCode plugin config")
+	cmd.Flags().BoolVar(&hermes, "hermes", false, "Print Hermes shell-hook config (~/.hermes/config.yaml)")
 	addHookPolicyFlags(cmd, &hookOptions)
-	cmd.MarkFlagsMutuallyExclusive("claude", "cursor", "opencode")
+	cmd.MarkFlagsMutuallyExclusive("claude", "cursor", "opencode", "hermes")
 	return cmd
 }
 
@@ -76,6 +81,7 @@ func newHooksInstallCmd() *cobra.Command {
 		claude      bool
 		cursor      bool
 		opencode    bool
+		hermes      bool
 		path        string
 		force       bool
 		hookOptions hookFenceOptions
@@ -93,7 +99,10 @@ Examples:
   fence hooks install --cursor --template code --file ./.cursor/hooks.json
   fence hooks install --opencode
   fence hooks install --opencode --file ./opencode.json
-  fence hooks install --opencode --force                          # skip prompt`,
+  fence hooks install --opencode --force                          # skip prompt
+  fence hooks install --hermes
+  fence hooks install --hermes --settings ./fence.json
+  fence hooks install --hermes --file ./project-hermes-config.yaml`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resolvedHookOptions, err := hookOptions.normalized()
@@ -174,8 +183,33 @@ Examples:
 					}
 				}
 				return nil
+			case hermes:
+				targetPath := path
+				if targetPath == "" {
+					targetPath = defaultHermesConfigPath()
+				}
+				if targetPath == "" {
+					return fmt.Errorf("could not determine Hermes config path")
+				}
+				changed, err := installHermesHook(targetPath, resolvedHookOptions)
+				if err != nil {
+					return err
+				}
+				if changed {
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Installed Hermes hooks in %q\n", targetPath); err != nil {
+						return err
+					}
+					if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Note: Hermes prompts on first use of each hook. For non-TTY runs (gateway, cron) set HERMES_ACCEPT_HOOKS=1 or hooks_auto_accept: true."); err != nil {
+						return err
+					}
+				} else {
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Hermes hooks already installed in %q\n", targetPath); err != nil {
+						return err
+					}
+				}
+				return nil
 			default:
-				return fmt.Errorf("no hook target specified. Use --claude, --cursor, or --opencode")
+				return fmt.Errorf("no hook target specified. Use --claude, --cursor, --opencode, or --hermes")
 			}
 		},
 	}
@@ -183,10 +217,11 @@ Examples:
 	cmd.Flags().BoolVar(&claude, "claude", false, "Install Claude Code hook config")
 	cmd.Flags().BoolVar(&cursor, "cursor", false, "Install Cursor hook config")
 	cmd.Flags().BoolVar(&opencode, "opencode", false, "Install OpenCode plugin config")
-	cmd.Flags().StringVarP(&path, "file", "f", "", "Path to the settings file to modify (default: ~/.claude/settings.json for --claude, ~/.cursor/hooks.json for --cursor, existing ~/.config/opencode/opencode.{jsonc,json} for --opencode)")
+	cmd.Flags().BoolVar(&hermes, "hermes", false, "Install Hermes shell-hook config")
+	cmd.Flags().StringVarP(&path, "file", "f", "", "Path to the settings file to modify (default: ~/.claude/settings.json for --claude, ~/.cursor/hooks.json for --cursor, existing ~/.config/opencode/opencode.{jsonc,json} for --opencode, ~/.hermes/config.yaml for --hermes)")
 	cmd.Flags().BoolVarP(&force, "force", "y", false, "Skip the confirmation prompt when comments would be stripped")
 	addHookPolicyFlags(cmd, &hookOptions)
-	cmd.MarkFlagsMutuallyExclusive("claude", "cursor", "opencode")
+	cmd.MarkFlagsMutuallyExclusive("claude", "cursor", "opencode", "hermes")
 	return cmd
 }
 
@@ -195,6 +230,7 @@ func newHooksUninstallCmd() *cobra.Command {
 		claude   bool
 		cursor   bool
 		opencode bool
+		hermes   bool
 		path     string
 		force    bool
 	)
@@ -209,7 +245,8 @@ Examples:
   fence hooks uninstall --claude --file ./.claude/settings.json
   fence hooks uninstall --cursor --file ./.cursor/hooks.json
   fence hooks uninstall --opencode
-  fence hooks uninstall --opencode --force                          # skip prompt`,
+  fence hooks uninstall --opencode --force                          # skip prompt
+  fence hooks uninstall --hermes`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch {
@@ -282,8 +319,33 @@ Examples:
 					}
 				}
 				return nil
+			case hermes:
+				targetPath := path
+				if targetPath == "" {
+					targetPath = defaultHermesConfigPath()
+				}
+				if targetPath == "" {
+					return fmt.Errorf("could not determine Hermes config path")
+				}
+				changed, err := uninstallHermesHook(targetPath)
+				if err != nil {
+					return err
+				}
+				if changed {
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Removed Hermes hooks from %q\n", targetPath); err != nil {
+						return err
+					}
+					if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Tip: revoke Hermes' shell-hook consent with `hermes hooks revoke 'fence "+hermesPreToolUseMode+"'`."); err != nil {
+						return err
+					}
+				} else {
+					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Hermes hooks not present in %q\n", targetPath); err != nil {
+						return err
+					}
+				}
+				return nil
 			default:
-				return fmt.Errorf("no hook target specified. Use --claude, --cursor, or --opencode")
+				return fmt.Errorf("no hook target specified. Use --claude, --cursor, --opencode, or --hermes")
 			}
 		},
 	}
@@ -291,9 +353,10 @@ Examples:
 	cmd.Flags().BoolVar(&claude, "claude", false, "Remove Claude Code hook config")
 	cmd.Flags().BoolVar(&cursor, "cursor", false, "Remove Cursor hook config")
 	cmd.Flags().BoolVar(&opencode, "opencode", false, "Remove OpenCode plugin config")
-	cmd.Flags().StringVarP(&path, "file", "f", "", "Path to the settings file to modify (default: ~/.claude/settings.json for --claude, ~/.cursor/hooks.json for --cursor, existing ~/.config/opencode/opencode.{jsonc,json} for --opencode)")
+	cmd.Flags().BoolVar(&hermes, "hermes", false, "Remove Hermes shell-hook config")
+	cmd.Flags().StringVarP(&path, "file", "f", "", "Path to the settings file to modify (default: ~/.claude/settings.json for --claude, ~/.cursor/hooks.json for --cursor, existing ~/.config/opencode/opencode.{jsonc,json} for --opencode, ~/.hermes/config.yaml for --hermes)")
 	cmd.Flags().BoolVarP(&force, "force", "y", false, "Skip the confirmation prompt when comments would be stripped")
-	cmd.MarkFlagsMutuallyExclusive("claude", "cursor", "opencode")
+	cmd.MarkFlagsMutuallyExclusive("claude", "cursor", "opencode", "hermes")
 	return cmd
 }
 
