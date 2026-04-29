@@ -202,6 +202,11 @@ Examples:
 					if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Note: Hermes prompts on first use of each hook. For non-TTY runs (gateway, cron) set HERMES_ACCEPT_HOOKS=1 or hooks_auto_accept: true."); err != nil {
 						return err
 					}
+					for _, line := range hermesEmptyPolicyAdvice(resolvedHookOptions) {
+						if _, err := fmt.Fprintln(cmd.ErrOrStderr(), line); err != nil {
+							return err
+						}
+					}
 				} else {
 					if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Hermes hooks already installed in %q\n", targetPath); err != nil {
 						return err

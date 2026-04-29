@@ -163,11 +163,15 @@ It registers `pre_tool_call` hooks for Hermes' `terminal`, `write_file`,
 
 ```bash
 fence hooks print --hermes
-fence hooks install --hermes
-fence hooks install --hermes --template code         # pin to the `code` template
-fence hooks install --hermes --settings ./fence.json
+fence hooks install --hermes --template hermes       # recommended starting point
+fence hooks install --hermes --settings ./fence.json # pin a project config
 fence hooks uninstall --hermes
 ```
+
+The `hermes` template extends `code` with messaging-platform domains
+(Telegram, Discord, Slack, Feishu, ...), Hermes-specific LLM providers,
+and writable `~/.hermes/**`. Use it as a starting point and override
+locally as needed; refine over time as Hermes' tool surface evolves.
 
 Default file: `~/.hermes/config.yaml`. Override with `--file` to target a
 project-local config or alternate profile.
@@ -183,9 +187,13 @@ domains:
 | `patch` | `filesystem.allowWrite` / `denyWrite` (+ dangerous-files protection) | `tool_input.path` |
 | `web_extract` | `network.allowedDomains` / `deniedDomains` | `tool_input.url` |
 
-Tools not in this table (memory, todos, image generation, MCP, channel
-sends, etc.) are passed through unmodified — they don't fit Fence's
-filesystem/network/command vocabulary, so we don't pretend to gate them.
+Tools not in this table — including channel sends (`send_message`,
+`discord_tool`, `feishu_doc_tool`, ...), MCP calls (`mcp_tool`),
+subagent spawning (`delegate_tool`), memory, todos, and image/TTS
+generation — are passed through unmodified at the hook layer. They
+don't fit Fence's filesystem/network/command vocabulary today.
+Wrap mode (`fence -t hermes -- hermes`) does cover their network
+traffic at the proxy layer; the two modes compose.
 
 > [!NOTE]
 > **Hermes hook mode is intent-only, not traffic-enforced.** Fence sees what
@@ -195,16 +203,6 @@ filesystem/network/command vocabulary, so we don't pretend to gate them.
 > arguments (`web_extract` follows a redirect to a blocked host, for
 > example), the hook can't catch that. For traffic-time enforcement, also
 > wrap the gateway with `fence -- hermes` — the two compose.
-
-> [!NOTE]
-> **Default-allow when a domain is unconfigured.** If you only set
-> `command.deny`, `write_file` and `web_extract` calls pass through. The
-> hook only enforces `filesystem.*` once you've configured `allowWrite` or
-> `denyWrite`, and only enforces `network.*` once you've configured
-> `allowedDomains` or `deniedDomains`. This is intentional: it lets users
-> opt into command policy without accidentally denying every file write.
-> Wrap mode (`fence -- hermes`) is more aggressive because the OS sandbox
-> is the only protection there.
 
 > [!NOTE]
 > **Consent / non-TTY runs.** Hermes prompts once per `(event, command)`

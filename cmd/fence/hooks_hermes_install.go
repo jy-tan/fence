@@ -77,6 +77,42 @@ func defaultHermesConfigPath() string {
 	return filepath.Join(home, ".hermes", "config.yaml")
 }
 
+// hermesEmptyPolicyAdvice returns advisory lines about which Hermes-gated
+// domains will hard-deny under the active config, or nil when the policy
+// covers all of them. Hook mode is deny-by-default for parity with wrap
+// mode, so an `command.deny`-only fence.json would silently start denying
+// every write_file/web_extract call after install — surfacing this at
+// install time saves the user a debugging round-trip.
+//
+// hookOptions is the resolved policy pin (--settings / --template) that
+// will be embedded in the hook command line; we evaluate against the same
+// resolution so the warning matches runtime behavior.
+func hermesEmptyPolicyAdvice(hookOptions hookFenceOptions) []string {
+	audit, err := loadActiveConfigAudit("", hookOptions.SettingsPath, hookOptions.TemplateName)
+	if err != nil || audit == nil || audit.Config == nil {
+		// If config resolution itself failed, the hook will surface
+		// the error at runtime; skip the install-time hint.
+		return nil
+	}
+	cfg := audit.Config
+
+	var blocked []string
+	if len(cfg.Filesystem.AllowWrite) == 0 {
+		blocked = append(blocked, "filesystem.allowWrite is empty: write_file and patch will be denied")
+	}
+	if len(cfg.Network.AllowedDomains) == 0 {
+		blocked = append(blocked, "network.allowedDomains is empty: web_extract will be denied")
+	}
+	if len(blocked) == 0 {
+		return nil
+	}
+	blocked = append(blocked,
+		"To start with sane defaults for messaging-shaped agents, run:",
+		"  fence hooks install --hermes --template hermes",
+	)
+	return blocked
+}
+
 // writeHermesHooksConfig prints the snippet a user can copy into their
 // hermes config.yaml manually. Mirrors writeOpencodeHooksConfig's intent:
 // "here is the YAML you'd paste".

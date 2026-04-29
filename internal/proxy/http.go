@@ -335,26 +335,20 @@ func (e *URLBlockedError) Error() string {
 	return fmt.Sprintf("network access to %q blocked: %s (matched %q)", e.URL, e.Reason, e.MatchedRule)
 }
 
-// CheckURL reports whether the caller is allowed to fetch rawURL under cfg.
+// CheckURL is the hook-time predicate paralleling CreateDomainFilter's
+// wrap-mode traffic gate. Both consume cfg.Network.* identically: a URL is
+// allowed iff the host matches AllowedDomains and not DeniedDomains; an
+// empty AllowedDomains denies everything.
 //
-// This is the *intent*-time check used by hook integrations against a tool's
-// declared URL argument (e.g. Hermes' web_extract). It is intentionally
-// looser than CreateDomainFilter's wrap-mode behavior:
+// Caveat: hook-time enforcement is deny-by-intent, not deny-by-traffic.
+// The agent could embed an allowed host in a path
+// (`?next=https://blocked.example/`) and the actual HTTP fetch would not
+// be intercepted — wrap mode (with the proxy in the network path) is the
+// answer for that. Hook mode catches the agent's declared intent only.
 //
-//   - If neither AllowedDomains nor DeniedDomains is configured, returns nil
-//     (allow). Wrap mode denies by default because the proxy is the only
-//     network protection; hook mode treats absence of policy as "this domain
-//     isn't under Fence's purview" so users opting in to command policy
-//     don't accidentally block every web fetch.
-//   - DeniedDomains takes precedence over AllowedDomains, matching wrap mode.
-//   - If AllowedDomains is configured but the host doesn't match, the URL
-//     is blocked with reason "not in allowedDomains".
-//
-// Caveat the caller should surface in docs: hook-time policy is
-// "deny-by-intent", not "deny-by-traffic". The agent could embed an
-// allowed host in a path (`?next=https://blocked.example/`) and the actual
-// HTTP fetch would not be intercepted — wrap-mode is the answer for that
-// model. Hook-mode catches the agent's declared intent only.
+// Adapters that want hook-mode to be permissive when network policy is
+// unconfigured should ship a template (see internal/templates/hermes.json
+// for a worked example) rather than relaxing this predicate.
 func CheckURL(rawURL string, cfg *config.Config) error {
 	if cfg == nil {
 		cfg = config.Default()
@@ -376,19 +370,12 @@ func CheckURL(rawURL string, cfg *config.Config) error {
 		}
 	}
 
-	if len(cfg.Network.AllowedDomains) == 0 && len(cfg.Network.DeniedDomains) == 0 {
-		return nil
-	}
-
 	for _, allowed := range cfg.Network.AllowedDomains {
 		if config.MatchesDomain(host, allowed) {
 			return nil
 		}
 	}
 
-	if len(cfg.Network.AllowedDomains) == 0 {
-		return nil
-	}
 	return &URLBlockedError{
 		URL:    rawURL,
 		Host:   host,

@@ -210,6 +210,43 @@ func TestHermesInstall_PinsPolicyOption(t *testing.T) {
 	}
 }
 
+func TestHermesEmptyPolicyAdvice_FlagsEmptyAllowLists(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "fence.json")
+	// command-only config: hook will deny write_file and web_extract.
+	if err := os.WriteFile(settingsPath, []byte(`{
+  "command": {"deny": ["git push"], "useDefaults": false}
+}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	opts, err := hookFenceOptions{SettingsPath: settingsPath}.normalized()
+	if err != nil {
+		t.Fatalf("normalized: %v", err)
+	}
+	advice := hermesEmptyPolicyAdvice(opts)
+	if len(advice) == 0 {
+		t.Fatal("expected advice when both allow lists are empty")
+	}
+	joined := strings.Join(advice, "\n")
+	if !strings.Contains(joined, "filesystem.allowWrite is empty") {
+		t.Errorf("expected filesystem warning, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "network.allowedDomains is empty") {
+		t.Errorf("expected network warning, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "--template hermes") {
+		t.Errorf("expected template suggestion, got:\n%s", joined)
+	}
+}
+
+func TestHermesEmptyPolicyAdvice_QuietWhenTemplateCovers(t *testing.T) {
+	// The hermes template ships allowWrite + allowedDomains; advice
+	// should be empty.
+	advice := hermesEmptyPolicyAdvice(hookFenceOptions{TemplateName: "hermes"})
+	if len(advice) != 0 {
+		t.Errorf("expected no advice when template covers both domains, got:\n%v", advice)
+	}
+}
+
 func TestHermesInstallEntries_StableOrdering(t *testing.T) {
 	a := hermesInstallEntries()
 	b := hermesInstallEntries()

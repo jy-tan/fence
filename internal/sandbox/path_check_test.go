@@ -8,13 +8,20 @@ import (
 	"github.com/Use-Tusk/fence/internal/config"
 )
 
-func TestCheckWritePath_HookModeDefaultAllow(t *testing.T) {
-	// When neither allowWrite nor denyWrite is configured, hook-mode
-	// treats writes as out-of-scope so users opting in to command policy
-	// don't accidentally block every write_file call.
+func TestCheckWritePath_EmptyPolicyDenies(t *testing.T) {
+	// Hook-mode is deny-by-default for parity with wrap-mode. A user who
+	// installed the hook with a command-only fence.json will see writes
+	// blocked here; the documented fix is to extend a Hermes-shaped
+	// template (see internal/templates/hermes.json) instead of relaxing
+	// this predicate.
 	cfg := &config.Config{}
-	if err := CheckWritePath("/tmp/anywhere.txt", "", cfg); err != nil {
-		t.Fatalf("expected nil for unconfigured policy, got %v", err)
+	err := CheckWritePath("/tmp/anywhere.txt", "", cfg)
+	if err == nil {
+		t.Fatal("expected deny for unconfigured policy")
+	}
+	var blocked *PathWriteBlockedError
+	if !errors.As(err, &blocked) || blocked.Reason != "not in allowWrite" {
+		t.Fatalf("expected not-in-allowWrite error, got %v", err)
 	}
 }
 
@@ -149,24 +156,24 @@ func TestCheckWritePath_RelativePathWithoutCWD(t *testing.T) {
 	}
 }
 
-func TestCheckWritePath_DenyWriteOnly(t *testing.T) {
-	// User-set denyWrite without allowWrite means "block these specific
-	// paths, allow everything else" — useful for "deny ~/.config but
-	// otherwise unconstrained". We exit the default-allow short-circuit
-	// when *either* allowWrite or denyWrite is non-empty.
+func TestCheckWritePath_DenyWriteWithoutAllowDeniesAll(t *testing.T) {
+	// denyWrite without allowWrite is effectively a complete deny — there
+	// is no allowlist to match. Mirrors wrap-mode: an allowWrite of empty
+	// also denies everything, and denyWrite is just an extra precedence
+	// layer. Users who want "deny these and otherwise unconstrained"
+	// should set allowWrite = ["/"] or similar explicitly.
 	cfg := &config.Config{
 		Filesystem: config.FilesystemConfig{
 			DenyWrite: []string{"/home/user/.config"},
 		},
 	}
-	if err := CheckWritePath("/tmp/x", "", cfg); err == nil {
-		// Once any policy is set, default-deny applies for unmatched
-		// paths.
-	} else {
-		var blocked *PathWriteBlockedError
-		if !errors.As(err, &blocked) || blocked.Reason != "not in allowWrite" {
-			t.Fatalf("expected default-deny when policy is configured, got %v", err)
-		}
+	err := CheckWritePath("/tmp/x", "", cfg)
+	if err == nil {
+		t.Fatal("expected deny when allowWrite is empty")
+	}
+	var blocked *PathWriteBlockedError
+	if !errors.As(err, &blocked) || blocked.Reason != "not in allowWrite" {
+		t.Fatalf("expected not-in-allowWrite, got %v", err)
 	}
 	if err := CheckWritePath("/home/user/.config/x", "", cfg); err == nil {
 		t.Errorf("expected denyWrite hit")

@@ -1,0 +1,74 @@
+{
+  // Fence config for Hermes Agent (https://github.com/teknium1/hermes-agent).
+  // Extends the `code` template; refine as Hermes' tool surface evolves.
+  //
+  // network.allowedDomains covers two surfaces:
+  //   1. The Hermes gateway process itself in wrap mode
+  //      (`fence -t hermes -- hermes`) — Telegram polling, Discord
+  //      gateway, Feishu webhooks. Enforced by the proxy.
+  //   2. The agent's web_extract tool in hook mode
+  //      (`fence hooks install --hermes`) — search APIs, docs, news.
+  // Hook mode does not gate Hermes' channel-send / MCP / subagent
+  // tools today, so the messaging-platform hosts below are wrap-mode
+  // only. They're harmless to keep in hook-mode users' configs.
+  "extends": "code",
+  "network": {
+    "allowedDomains": [
+      // LLM providers not already in `code`
+      "api.deepseek.com",
+      "api.x.ai",
+      "api.fireworks.ai",
+      "api.groq.com",
+      "api.cerebras.ai",
+      "api.huggingface.co",
+
+      // Messaging platforms (wrap-mode only; see header)
+      "api.telegram.org",
+      "discord.com",
+      "*.discord.com",
+      "discordapp.com",
+      "slack.com",
+      "*.slack.com",
+      "graph.facebook.com",
+      "graph.whatsapp.com",
+      "open.feishu.cn",
+      "open.larksuite.com",
+      "qyapi.weixin.qq.com",
+      "*.dingtalkapps.com",
+      "*.dingtalk.com",
+      "matrix.org",
+      "*.matrix.org",
+
+      // Search / extraction backends (web_extract)
+      "api.tavily.com",
+      "api.firecrawl.dev",
+      "api.serper.dev",
+      "api.exa.ai",
+      "*.duckduckgo.com",
+
+      // Memory / RAG providers (wrap-mode only)
+      "api.honcho.dev",
+      "api.mem0.ai",
+      "api.supermemory.ai",
+
+      // Image / TTS / transcription providers (wrap-mode only)
+      "api.elevenlabs.io",
+      "api.deepgram.com",
+      "api.replicate.com",
+      "fal.run",
+      "*.fal.ai"
+    ]
+  },
+
+  "filesystem": {
+    "allowWrite": [
+      // Sessions, logs, plugins, skills, shell-hook allowlist.
+      // Glob also covers profile mode (~/.hermes/profiles/<name>/).
+      "~/.hermes/**",
+
+      // Sane default workspace; override locally if Hermes' terminal.cwd
+      // is set elsewhere.
+      "~/hermes-workspace/**"
+    ]
+  }
+}

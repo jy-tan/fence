@@ -27,18 +27,18 @@ func (e *PathWriteBlockedError) Error() string {
 // CheckWritePath is the hook-time predicate paralleling the wrap-mode profile
 // generators (macOS seatbelt, Linux landlock). Both consume cfg.Filesystem.*
 // plus DangerousFiles / DangerousDirectories, so a single fence.json behaves
-// the same in both modes — with two intentional differences:
+// the same in both modes: a write is allowed iff it matches allowWrite and
+// neither denyWrite nor a dangerous-path rule. allowWrite entries are exact
+// or subtree matches (mirroring seatbelt's `(allow file-write* (subpath ...))`);
+// glob patterns use doublestar.
 //
-//   - Hook-mode default-allow: when neither allowWrite nor denyWrite is
-//     configured, returns nil. Wrap mode locks down the FS by default
-//     because the OS sandbox is the only protection; hook mode treats
-//     absence of policy as out-of-scope so users opting in to command
-//     policy don't accidentally deny every write.
-//   - allowWrite is exact-or-subtree match (mirrors seatbelt's
-//     `(allow file-write* (subpath ...))`). Glob patterns use doublestar.
-//
-// denyWrite, dangerous files, and git internals always win over allowWrite.
 // `cwd` is required when path is relative; pass "" to require absolute paths.
+//
+// Adapters that want hook-mode to be permissive when filesystem policy is
+// unconfigured should ship a template (see internal/templates/hermes.json
+// for a worked example) rather than relaxing this predicate, keeping
+// hook-mode and wrap-mode semantics identical avoids a permanent
+// asymmetry between the two enforcement paths.
 func CheckWritePath(path string, cwd string, cfg *config.Config) error {
 	if cfg == nil {
 		cfg = config.Default()
@@ -54,11 +54,6 @@ func CheckWritePath(path string, cwd string, cfg *config.Config) error {
 
 	if rule, ok := matchPathRule(clean, cfg.Filesystem.DenyWrite); ok {
 		return &PathWriteBlockedError{Path: clean, MatchedRule: rule, Reason: "denyWrite"}
-	}
-
-	// Hook-mode default-allow when no write policy is configured. See doc.
-	if len(cfg.Filesystem.AllowWrite) == 0 && len(cfg.Filesystem.DenyWrite) == 0 {
-		return nil
 	}
 
 	if _, ok := matchPathRule(clean, cfg.Filesystem.AllowWrite); ok {
@@ -86,26 +81,35 @@ func absoluteCleanPath(path, cwd string) (string, error) {
 	return filepath.Clean(filepath.Join(cwd, path)), nil
 }
 
-// matchPathRule returns (rule, true) when path matches:
-//   - a glob (rule contains *, ?, [, {): via doublestar
-//   - an absolute path: exact or subtree (path == rule, or path starts
-//     with rule + "/")
+// matchPathRule returns (rule, true) when path matches one of rules.
+// Each rule is normalized via NormalizePath before matching: tildes
+// expand to $HOME, relative paths resolve against cwd, and symlinks
+// resolve where possible. Wrap-mode generators do the same thing, so
+// templates like "~/.hermes/**" behave identically in both modes.
 //
-// Relative rules are skipped — Fence config has always been absolute or
-// globs, and silently joining against cwd would shadow user mistakes.
+//   - Globs (rule contains *, ?, [, {): doublestar.Match.
+//   - Plain paths: exact or subtree match (path == rule, or path
+//     starts with rule + "/", anchored at a component boundary).
+//
+// The original rule string is returned in MatchedRule so deny messages
+// echo what the user actually wrote, not the post-expansion path.
 func matchPathRule(path string, rules []string) (string, bool) {
 	for _, rule := range rules {
 		if rule == "" {
 			continue
 		}
-		if hasGlobMeta(rule) {
-			if matched, err := doublestar.Match(rule, path); err == nil && matched {
+		normalized := NormalizePath(rule)
+		if hasGlobMeta(normalized) {
+			if matched, err := doublestar.Match(normalized, path); err == nil && matched {
 				return rule, true
 			}
 			continue
 		}
-		clean := filepath.Clean(rule)
+		clean := filepath.Clean(normalized)
 		if !filepath.IsAbs(clean) {
+			// NormalizePath should always produce an absolute path
+			// for non-glob rules, but defend against edge cases
+			// (empty cwd, etc.).
 			continue
 		}
 		if path == clean {
