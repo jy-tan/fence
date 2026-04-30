@@ -35,6 +35,7 @@ var templateDescriptions = map[string]string{
 	"code-relaxed":      "Like 'code' but allows direct network for apps that ignore HTTP_PROXY (cursor-agent, opencode)",
 	"code-strict":       "Like 'code' but denies reads by default; only allows reading the current project directory and essential system paths",
 	"hermes":            "Extends 'code' with messaging-platform domains and ~/.hermes writes for Hermes Agent (gateway + CLI)",
+	"openclaw":          "Extends 'code' with messaging-platform domains and ~/.openclaw writes for OpenClaw (gateway + agents)",
 }
 
 // List returns all available template names sorted alphabetically.

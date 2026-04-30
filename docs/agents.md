@@ -213,6 +213,69 @@ traffic at the proxy layer; the two modes compose.
 > [Shell Hooks docs](https://docs.hermes-agent.com/docs/user-guide/features/hooks)
 > for the full consent model.
 
+### OpenClaw
+
+OpenClaw uses an imperative plugin manager rather than a declarative
+config-array, so the Fence integration ships as the
+[`@use-tusk/openclaw-fence`](https://github.com/Use-Tusk/openclaw-fence)
+npm package and is installed via OpenClaw's own command:
+
+```bash
+openclaw plugins install @use-tusk/openclaw-fence
+openclaw gateway restart
+```
+
+`fence hooks install --openclaw` is **not** supported — Fence editing the
+config file would only be half the work. To see the install one-liner
+plus optional plugin-options hints, run:
+
+```bash
+fence hooks print --openclaw
+fence hooks print --openclaw --template openclaw   # surface the template hint
+```
+
+The plugin registers a `before_tool_call` handler and forwards a curated
+set of OpenClaw tool calls through `fence --openclaw-pre-tool-use`:
+
+| OpenClaw tool | Fence policy domain | Reads |
+|---|---|---|
+| `exec` (alias `bash`) | `command.deny` / `command.allow` | `params.command` |
+| `write`, `edit`, `apply_patch` | `filesystem.allowWrite` / `denyWrite` (+ dangerous-files protection) | `params.path` |
+| `web_fetch` | `network.allowedDomains` / `deniedDomains` | `params.url` |
+
+Tools not in this table — channel sends, MCP, subagent spawning, image/media
+generation, sessions, gateway, and so on — are passed through unmodified at
+the hook layer. Wrap mode (`fence -t openclaw -- openclaw gateway run`)
+covers their network traffic at the proxy layer.
+
+#### Recommended config
+
+The bundled `openclaw` template extends `code` with channel/provider
+domains and writable `~/.openclaw/**`. Pin it via the plugin's options
+in your OpenClaw config:
+
+```jsonc
+{
+  "plugins": {
+    "entries": {
+      "openclaw-fence": {
+        "enabled": true,
+        "config": {
+          "template": "openclaw"
+        }
+      }
+    }
+  }
+}
+```
+
+> [!NOTE]
+> **Hook mode is intent-only, not traffic-enforced.** Fence sees what
+> the agent declared it wants to do (which command, path, or URL) and
+> decides against your config; it doesn't sit in the syscall or HTTP
+> path. Run `fence -t openclaw -- openclaw gateway run` for traffic-time
+> enforcement; the two compose.
+
 If your coding agent has a hook or plugin system you'd like Fence to support, feel free to open an issue or pull request.
 
 ## Protecting your environment

@@ -28,6 +28,7 @@ func newHooksPrintCmd() *cobra.Command {
 		cursor      bool
 		opencode    bool
 		hermes      bool
+		openclaw    bool
 		hookOptions hookFenceOptions
 	)
 
@@ -41,7 +42,8 @@ Examples:
   fence hooks print --claude --settings ./fence.json
   fence hooks print --cursor --template code
   fence hooks print --opencode
-  fence hooks print --hermes`,
+  fence hooks print --hermes
+  fence hooks print --openclaw`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resolvedHookOptions, err := hookOptions.normalized()
@@ -61,8 +63,10 @@ Examples:
 				return writeOpencodeHooksConfig(cmd.OutOrStdout())
 			case hermes:
 				return writeHermesHooksConfig(cmd.OutOrStdout(), resolvedHookOptions)
+			case openclaw:
+				return writeOpenclawHooksGuidance(cmd.OutOrStdout(), resolvedHookOptions)
 			default:
-				return fmt.Errorf("no hook target specified. Use --claude, --cursor, --opencode, or --hermes")
+				return fmt.Errorf("no hook target specified. Use --claude, --cursor, --opencode, --hermes, or --openclaw")
 			}
 		},
 	}
@@ -71,8 +75,9 @@ Examples:
 	cmd.Flags().BoolVar(&cursor, "cursor", false, "Print Cursor hook config")
 	cmd.Flags().BoolVar(&opencode, "opencode", false, "Print OpenCode plugin config")
 	cmd.Flags().BoolVar(&hermes, "hermes", false, "Print Hermes shell-hook config (~/.hermes/config.yaml)")
+	cmd.Flags().BoolVar(&openclaw, "openclaw", false, "Print install instructions for the OpenClaw plugin (@use-tusk/openclaw-fence)")
 	addHookPolicyFlags(cmd, &hookOptions)
-	cmd.MarkFlagsMutuallyExclusive("claude", "cursor", "opencode", "hermes")
+	cmd.MarkFlagsMutuallyExclusive("claude", "cursor", "opencode", "hermes", "openclaw")
 	return cmd
 }
 
@@ -82,6 +87,7 @@ func newHooksInstallCmd() *cobra.Command {
 		cursor      bool
 		opencode    bool
 		hermes      bool
+		openclaw    bool
 		path        string
 		force       bool
 		hookOptions hookFenceOptions
@@ -102,7 +108,11 @@ Examples:
   fence hooks install --opencode --force                          # skip prompt
   fence hooks install --hermes
   fence hooks install --hermes --settings ./fence.json
-  fence hooks install --hermes --file ./project-hermes-config.yaml`,
+  fence hooks install --hermes --file ./project-hermes-config.yaml
+
+Note: --openclaw is not supported because OpenClaw uses an imperative
+plugin manager. Run 'openclaw plugins install @use-tusk/openclaw-fence'
+instead. See 'fence hooks print --openclaw' for the full instructions.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			resolvedHookOptions, err := hookOptions.normalized()
@@ -213,8 +223,10 @@ Examples:
 					}
 				}
 				return nil
+			case openclaw:
+				return errOpenclawUseImperativeInstall
 			default:
-				return fmt.Errorf("no hook target specified. Use --claude, --cursor, --opencode, or --hermes")
+				return fmt.Errorf("no hook target specified. Use --claude, --cursor, --opencode, --hermes, or --openclaw")
 			}
 		},
 	}
@@ -223,10 +235,11 @@ Examples:
 	cmd.Flags().BoolVar(&cursor, "cursor", false, "Install Cursor hook config")
 	cmd.Flags().BoolVar(&opencode, "opencode", false, "Install OpenCode plugin config")
 	cmd.Flags().BoolVar(&hermes, "hermes", false, "Install Hermes shell-hook config")
+	cmd.Flags().BoolVar(&openclaw, "openclaw", false, "Not supported (run `openclaw plugins install @use-tusk/openclaw-fence` instead)")
 	cmd.Flags().StringVarP(&path, "file", "f", "", "Path to the settings file to modify (default: ~/.claude/settings.json for --claude, ~/.cursor/hooks.json for --cursor, existing ~/.config/opencode/opencode.{jsonc,json} for --opencode, ~/.hermes/config.yaml for --hermes)")
 	cmd.Flags().BoolVarP(&force, "force", "y", false, "Skip the confirmation prompt when comments would be stripped")
 	addHookPolicyFlags(cmd, &hookOptions)
-	cmd.MarkFlagsMutuallyExclusive("claude", "cursor", "opencode", "hermes")
+	cmd.MarkFlagsMutuallyExclusive("claude", "cursor", "opencode", "hermes", "openclaw")
 	return cmd
 }
 
@@ -236,6 +249,7 @@ func newHooksUninstallCmd() *cobra.Command {
 		cursor   bool
 		opencode bool
 		hermes   bool
+		openclaw bool
 		path     string
 		force    bool
 	)
@@ -251,7 +265,10 @@ Examples:
   fence hooks uninstall --cursor --file ./.cursor/hooks.json
   fence hooks uninstall --opencode
   fence hooks uninstall --opencode --force                          # skip prompt
-  fence hooks uninstall --hermes`,
+  fence hooks uninstall --hermes
+
+Note: --openclaw is not supported. Run 'openclaw plugins remove
+openclaw-fence' instead.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch {
@@ -349,8 +366,10 @@ Examples:
 					}
 				}
 				return nil
+			case openclaw:
+				return errOpenclawUseImperativeUninstall
 			default:
-				return fmt.Errorf("no hook target specified. Use --claude, --cursor, --opencode, or --hermes")
+				return fmt.Errorf("no hook target specified. Use --claude, --cursor, --opencode, --hermes, or --openclaw")
 			}
 		},
 	}
@@ -359,9 +378,10 @@ Examples:
 	cmd.Flags().BoolVar(&cursor, "cursor", false, "Remove Cursor hook config")
 	cmd.Flags().BoolVar(&opencode, "opencode", false, "Remove OpenCode plugin config")
 	cmd.Flags().BoolVar(&hermes, "hermes", false, "Remove Hermes shell-hook config")
+	cmd.Flags().BoolVar(&openclaw, "openclaw", false, "Not supported (run `openclaw plugins remove openclaw-fence` instead)")
 	cmd.Flags().StringVarP(&path, "file", "f", "", "Path to the settings file to modify (default: ~/.claude/settings.json for --claude, ~/.cursor/hooks.json for --cursor, existing ~/.config/opencode/opencode.{jsonc,json} for --opencode, ~/.hermes/config.yaml for --hermes)")
 	cmd.Flags().BoolVarP(&force, "force", "y", false, "Skip the confirmation prompt when comments would be stripped")
-	cmd.MarkFlagsMutuallyExclusive("claude", "cursor", "opencode", "hermes")
+	cmd.MarkFlagsMutuallyExclusive("claude", "cursor", "opencode", "hermes", "openclaw")
 	return cmd
 }
 

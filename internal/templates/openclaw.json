@@ -1,0 +1,84 @@
+{
+  // Fence config for OpenClaw (https://github.com/openclaw/openclaw).
+  // Extends the `code` template; refine as OpenClaw's tool surface evolves.
+  //
+  // network.allowedDomains covers two surfaces:
+  //   1. The OpenClaw gateway process itself in wrap mode
+  //      (`fence -t openclaw -- openclaw gateway run`) — channel polling,
+  //      provider APIs, ClawHub. Enforced by the proxy.
+  //   2. The agent's web_fetch tool in hook mode
+  //      (`@use-tusk/openclaw-fence` plugin) — search APIs, docs, news.
+  // Hook mode does not gate OpenClaw's channel-send / MCP / subagent
+  // tools today, so the messaging-platform hosts below are wrap-mode
+  // only. They're harmless to keep in hook-mode users' configs.
+  "extends": "code",
+  "network": {
+    "allowedDomains": [
+      // LLM providers not already in `code`
+      "api.deepseek.com",
+      "api.x.ai",
+      "api.fireworks.ai",
+      "api.groq.com",
+      "api.cerebras.ai",
+      "api.huggingface.co",
+      "api.together.ai",
+      "api.minimax.chat",
+      "api.moonshot.cn",
+      "api.lingyiwanwu.com",         // Yi
+      "ark.cn-beijing.volces.com",   // Volcengine
+      "qianfan.baidubce.com",        // Qianfan
+
+      // Messaging platforms (wrap-mode only, see header)
+      "api.telegram.org",
+      "discord.com",
+      "*.discord.com",
+      "discordapp.com",
+      "slack.com",
+      "*.slack.com",
+      "graph.facebook.com",
+      "graph.whatsapp.com",
+      "*.matrix.org",
+      "matrix.org",
+      "graph.microsoft.com",
+      "login.microsoftonline.com",
+      "open.feishu.cn",
+      "open.larksuite.com",
+      "openapi.zalo.me",
+      "*.signal.org",
+      "*.bsky.app",
+      "relay.damus.io",
+
+      // OpenClaw services
+      "*.clawhub.dev",
+      "clawhub.dev",
+      "openclaw.ai",
+      "*.openclaw.ai",
+
+      // Search / extraction backends (web_fetch / web_search providers)
+      "api.tavily.com",
+      "api.firecrawl.dev",
+      "api.serper.dev",
+      "api.exa.ai",
+      "*.duckduckgo.com",
+
+      // Speech / voice / media providers
+      "api.elevenlabs.io",
+      "api.deepgram.com",
+      "*.cognitiveservices.azure.com",
+      "api.replicate.com",
+      "fal.run",
+      "*.fal.ai",
+
+      // Memory / RAG providers (extensions/memory-*)
+      "api.voyageai.com"
+    ]
+  },
+
+  "filesystem": {
+    "allowWrite": [
+      // OpenClaw home: sessions, plugin state, ClawHub install staging,
+      // credentials, gateway logs.
+      "~/.openclaw/**"
+    ]
+  }
+}
