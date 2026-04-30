@@ -99,7 +99,15 @@ func buildLinuxArgvExecRunnerCommand(fenceExePath string, plan linuxArgvExecPlan
 	), nil
 }
 
+// linuxArgvExecSupervisorDrainTimeout caps the wait for the supervisor
+// goroutine to exit after bwrap has terminated. If a kernel pathology
+// (e.g. WSL2's seccomp_unotify wake) parks ppoll forever, we log and exit
+// anyway; the kernel reaps the stuck thread on process exit.
+const linuxArgvExecSupervisorDrainTimeout = 2 * time.Second
+
 // RunLinuxArgvExecRunnerFromEnv executes the host-side supervisor mode.
+// The runner parents bwrap and owns the seccomp_unotify listener fd that
+// the in-sandbox shim hands back via SCM_RIGHTS.
 func RunLinuxArgvExecRunnerFromEnv() (int, error) {
 	planJSON := os.Getenv(fenceLinuxArgvExecPlanEnv)
 	if strings.TrimSpace(planJSON) == "" {
@@ -116,6 +124,12 @@ func RunLinuxArgvExecRunnerFromEnv() (int, error) {
 	if plan.AllowedMultithreadedBootstrapContinues <= 0 {
 		return 1, errors.New("linux argv exec plan has no multithreaded bootstrap continue budget")
 	}
+
+	shutdown, err := newArgvRunnerShutdown()
+	if err != nil {
+		return 1, fmt.Errorf("failed to create argv exec shutdown coordinator: %w", err)
+	}
+	defer shutdown.Close()
 
 	socketDir, err := os.MkdirTemp("", "fence-argv-exec-")
 	if err != nil {
@@ -150,6 +164,12 @@ func RunLinuxArgvExecRunnerFromEnv() (int, error) {
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(), "FENCE_LINUX_ARGV_EXEC_SOCKET="+socketPath)
 	cmd.ExtraFiles = extraFiles
+	// Own pgrp so the signal forwarder can target the whole sandboxed
+	// subtree (bwrap + shim + agent + MCPs) via Kill(-pgrp, sig).
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+		Pgid:    0,
+	}
 
 	if err := cmd.Start(); err != nil {
 		if filterFile != nil {
@@ -162,7 +182,7 @@ func RunLinuxArgvExecRunnerFromEnv() (int, error) {
 		_ = filterFile.Close()
 	}
 
-	stopSignals := startLinuxArgvExecSignalForwarder(cmd)
+	stopSignals := startLinuxArgvExecSignalForwarder(cmd, shutdown)
 	defer stopSignals()
 
 	if unixSocketListener, ok := unixListener.(*net.UnixListener); ok {
@@ -203,55 +223,93 @@ func RunLinuxArgvExecRunnerFromEnv() (int, error) {
 	}
 	supervisorErrCh := make(chan error, 1)
 	go func() {
-		supervisorErrCh <- runLinuxArgvExecSupervisor(listenerFD, plan.Config, plan.Debug, supervisorState)
+		supervisorErrCh <- runLinuxArgvExecSupervisor(listenerFD, shutdown, plan.Config, plan.Debug, supervisorState)
 	}()
 
+	var (
+		waitErr       error
+		waitArrived   bool
+		supervisorErr error
+		supErrArrived bool
+	)
 	select {
-	case waitErr := <-waitErrCh:
+	case waitErr = <-waitErrCh:
+		waitArrived = true
+	case supervisorErr = <-supervisorErrCh:
+		supErrArrived = true
+	}
+
+	shutdown.Begin()
+
+	if !supErrArrived {
+		select {
+		case supervisorErr = <-supervisorErrCh:
+		case <-time.After(linuxArgvExecSupervisorDrainTimeout):
+			fencelog.Printf(
+				"[fence:linux] argv supervisor did not drain within %s; exiting (kernel may have a stuck seccomp_unotify wake)\n",
+				linuxArgvExecSupervisorDrainTimeout,
+			)
+		}
+		// Belt-and-suspenders wake in case ppoll-based exit raced.
 		_ = unix.Close(listenerFD)
-		supervisorErr := <-supervisorErrCh
-		if supervisorErr != nil {
-			return 1, supervisorErr
+	}
+
+	if !waitArrived {
+		// Supervisor exited first; tear down bwrap if it hasn't noticed.
+		if cmd.Process != nil {
+			_ = killProcessGroup(cmd.Process.Pid, syscall.SIGTERM)
 		}
-		if waitErr != nil {
-			if exitErr, ok := waitErr.(*exec.ExitError); ok {
-				return exitErr.ExitCode(), nil
-			}
-			return 1, waitErr
-		}
-		return 0, nil
-	case supervisorErr := <-supervisorErrCh:
-		if supervisorErr != nil {
+		select {
+		case waitErr = <-waitErrCh:
+		case <-time.After(linuxArgvExecSupervisorDrainTimeout):
 			if cmd.Process != nil {
 				_ = cmd.Process.Kill()
 			}
-			waitErr := <-waitErrCh
-			if waitErr != nil {
-				if exitErr, ok := waitErr.(*exec.ExitError); ok {
-					return exitErr.ExitCode(), supervisorErr
-				}
-				return 1, errors.Join(supervisorErr, waitErr)
-			}
-			return 1, supervisorErr
+			waitErr = <-waitErrCh
 		}
+	}
 
-		waitErr := <-waitErrCh
+	if supervisorErr != nil {
 		if waitErr != nil {
 			if exitErr, ok := waitErr.(*exec.ExitError); ok {
-				return exitErr.ExitCode(), nil
+				return exitErr.ExitCode(), supervisorErr
 			}
-			return 1, waitErr
+			return 1, errors.Join(supervisorErr, waitErr)
 		}
-		return 0, nil
+		return 1, supervisorErr
 	}
+	if waitErr != nil {
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			return exitErr.ExitCode(), nil
+		}
+		return 1, waitErr
+	}
+	return 0, nil
 }
 
-func startLinuxArgvExecSignalForwarder(cmd *exec.Cmd) func() {
+func killProcessGroup(leaderPid int, sig syscall.Signal) error {
+	if leaderPid <= 0 {
+		return nil
+	}
+	return syscall.Kill(-leaderPid, sig)
+}
+
+// startLinuxArgvExecSignalForwarder mirrors the escalation in
+// startCommandWithSignalProxy (cmd/fence/main.go):
+//   - SIGWINCH: forward to bwrap (TUI resize), never escalate.
+//   - 1st SIGINT/SIGTERM: forward to bwrap so the agent's TUI can handle
+//     it (e.g. single Ctrl+C as cancel, not quit).
+//   - 2nd: pgrp-broadcast + shutdown.Begin().
+//   - 3rd+: SIGKILL bwrap + shutdown.Begin().
+//
+// shutdown may be nil in tests.
+func startLinuxArgvExecSignalForwarder(cmd *exec.Cmd, shutdown *argvRunnerShutdown) func() {
 	sigChan := make(chan os.Signal, 1)
 	done := make(chan struct{})
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGWINCH)
 
 	go func() {
+		sigCount := 0
 		for {
 			select {
 			case <-done:
@@ -260,8 +318,30 @@ func startLinuxArgvExecSignalForwarder(cmd *exec.Cmd) func() {
 				if cmd.Process == nil {
 					continue
 				}
-				if forwarded, ok := sig.(syscall.Signal); ok {
+				forwarded, ok := sig.(syscall.Signal)
+				if !ok {
+					continue
+				}
+
+				if forwarded == syscall.SIGWINCH {
 					_ = cmd.Process.Signal(forwarded)
+					continue
+				}
+
+				sigCount++
+				switch sigCount {
+				case 1:
+					_ = cmd.Process.Signal(forwarded)
+				case 2:
+					_ = killProcessGroup(cmd.Process.Pid, forwarded)
+					if shutdown != nil {
+						shutdown.Begin()
+					}
+				default:
+					_ = cmd.Process.Kill()
+					if shutdown != nil {
+						shutdown.Begin()
+					}
 				}
 			}
 		}
@@ -458,19 +538,52 @@ func installLinuxArgvExecNotifyFilter() (int, error) {
 	return int(listenerFD), nil //nolint:gosec // listenerFD from syscall fits in int
 }
 
+// runLinuxArgvExecSupervisor is the seccomp_unotify event loop. We park
+// in ppoll(listenerFD, wakeFD) before the recv ioctl rather than blocking
+// directly inside ioctl(SECCOMP_IOCTL_NOTIF_RECV): close(listenerFD) does
+// not reliably wake a parked ioctl on WSL2, but writing to the eventfd
+// always wakes ppoll. shutdown may be nil in tests.
 func runLinuxArgvExecSupervisor(
 	listenerFD int,
+	shutdown *argvRunnerShutdown,
 	cfg *config.Config,
 	debug bool,
 	state *linuxArgvExecSupervisorState,
 ) error {
+	wakeFD := -1
+	if shutdown != nil {
+		wakeFD = shutdown.WakeFD()
+	}
+
 	for {
+		if shutdown != nil && shutdown.Begun() {
+			return nil
+		}
+
+		ready, err := waitForArgvExecNotification(listenerFD, wakeFD)
+		if err != nil {
+			if errors.Is(err, unix.EINTR) {
+				continue
+			}
+			if errors.Is(err, unix.EBADF) {
+				return nil
+			}
+			return fmt.Errorf("failed to poll argv exec listener: %w", err)
+		}
+		if !ready {
+			// Wake from shutdown or signal; re-check Begun() at top.
+			continue
+		}
+
 		req := &linuxSeccompNotif{}
 		if err := linuxRecvSeccompNotif(listenerFD, req); err != nil {
 			switch {
-			case errors.Is(err, unix.EINTR):
-				continue
-			case errors.Is(err, unix.ENOENT):
+			case errors.Is(err, unix.EINTR),
+				errors.Is(err, unix.EAGAIN),
+				errors.Is(err, unix.EWOULDBLOCK),
+				errors.Is(err, unix.ENOENT):
+				// Spurious wake / stale notification; loop. Single-
+				// supervisor invariant means EAGAIN here is rare.
 				continue
 			case errors.Is(err, unix.EBADF):
 				return nil
@@ -507,6 +620,51 @@ func runLinuxArgvExecSupervisor(
 			return fmt.Errorf("failed to send argv exec notification response: %w", err)
 		}
 	}
+}
+
+// waitForArgvExecNotification returns (true, nil) when the seccomp
+// listener is ready, (false, nil) on shutdown wake. wakeFD may be -1.
+// EINTR is surfaced (not retried) so the caller re-checks Begun().
+func waitForArgvExecNotification(listenerFD, wakeFD int) (bool, error) {
+	if listenerFD < 0 {
+		return false, unix.EBADF
+	}
+
+	pollFds := []unix.PollFd{
+		{
+			Fd:     int32(listenerFD), //nolint:gosec // listenerFD comes from a syscall and fits in int32
+			Events: unix.POLLIN,
+		},
+	}
+	if wakeFD >= 0 {
+		pollFds = append(pollFds, unix.PollFd{
+			Fd:     int32(wakeFD), //nolint:gosec // wakeFD comes from eventfd(2) and fits in int32
+			Events: unix.POLLIN,
+		})
+	}
+
+	n, err := unix.Ppoll(pollFds, nil, nil)
+	if err != nil {
+		return false, err
+	}
+	if n == 0 {
+		return false, nil
+	}
+
+	if wakeFD >= 0 && pollFds[1].Revents != 0 {
+		var buf [8]byte
+		_, _ = unix.Read(wakeFD, buf[:])
+		return false, nil
+	}
+
+	if pollFds[0].Revents&(unix.POLLIN|unix.POLLPRI) != 0 {
+		return true, nil
+	}
+	if pollFds[0].Revents&(unix.POLLERR|unix.POLLHUP|unix.POLLNVAL) != 0 {
+		return false, unix.EBADF
+	}
+
+	return false, nil
 }
 
 func evaluateLinuxRuntimeExecDecision(
