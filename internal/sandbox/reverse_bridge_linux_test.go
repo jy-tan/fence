@@ -21,7 +21,7 @@ func findFreeTCPPort(t *testing.T) int {
 	if err != nil {
 		t.Fatalf("failed to allocate test port: %v", err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	return l.Addr().(*net.TCPAddr).Port
 }
 
