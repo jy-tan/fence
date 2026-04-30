@@ -20,7 +20,7 @@ When you allow domains, fence:
 
 - `allowLocalBinding`: lets a sandboxed process *listen* on local ports (e.g. dev servers).
 - `allowLocalOutbound`: lets a sandboxed process connect to `localhost` services (e.g. Redis/Postgres on your machine). On Linux, also set `allowLocalOutboundPorts` to list the host loopback ports to bridge (e.g. `[5432, 6379]`); the sandbox runs in its own network namespace, so each port is explicitly opted-in.
-- `-p/--port`: exposes inbound ports so things outside the sandbox can reach your server.
+- `-p/--port`: exposes inbound ports so things outside the sandbox can reach your server. By default the host-side listener binds `127.0.0.1` only; pass `-p 0.0.0.0:PORT` (or a specific interface IP) to expose to other hosts on your network.
 
 These are separate on purpose. A typical safe default for dev servers is:
 

@@ -30,8 +30,14 @@ type LinuxBridge struct {
 }
 
 // ReverseBridge holds the socat bridge processes for inbound connections.
+//
+// Ports preserves the legacy port-only view; Exposures carries the full
+// (BindAddress, Port) pairs the bridge was started for. They are kept in sync
+// (Ports[i].Port == Exposures[i].Port) so existing readers that only care
+// about port numbers continue to work.
 type ReverseBridge struct {
 	Ports       []int
+	Exposures   []ExposedPort
 	SocketPaths []string // Unix socket paths for each port
 	processes   []*exec.Cmd
 	debug       bool
@@ -229,9 +235,17 @@ func (b *LinuxBridge) Cleanup() {
 }
 
 // NewReverseBridge creates Unix socket bridges for inbound connections.
-// Host listens on ports, forwards to Unix sockets that go into the sandbox.
-func NewReverseBridge(ports []int, debug bool) (*ReverseBridge, error) {
-	if len(ports) == 0 {
+// Host listens on each ExposedPort's (BindAddress, Port) tuple and forwards
+// to a per-port Unix socket that the sandbox-side socat picks up via
+// UNIX-LISTEN. An empty BindAddress is treated as DefaultExposedBindAddress.
+//
+// Loopback-by-default matters in two places:
+//   - It prevents accidental LAN exposure of in-development services.
+//   - WSL2's automatic localhost forwarding to Windows only picks up
+//     listeners bound to 127.0.0.1; *:PORT bindings stay invisible to a
+//     Windows browser asking for http://127.0.0.1:PORT/.
+func NewReverseBridge(exposures []ExposedPort, debug bool) (*ReverseBridge, error) {
+	if len(exposures) == 0 {
 		return nil, nil
 	}
 
@@ -247,37 +261,55 @@ func NewReverseBridge(ports []int, debug bool) (*ReverseBridge, error) {
 
 	tmpDir := os.TempDir()
 	bridge := &ReverseBridge{
-		Ports: ports,
 		debug: debug,
 	}
 
-	for _, port := range ports {
+	for _, exposure := range exposures {
+		bind := exposure.BindAddress
+		if bind == "" {
+			bind = DefaultExposedBindAddress
+		}
+		port := exposure.Port
+
 		socketPath := filepath.Join(tmpDir, fmt.Sprintf("fence-rev-%d-%s.sock", port, socketID))
+		bridge.Ports = append(bridge.Ports, port)
+		bridge.Exposures = append(bridge.Exposures, ExposedPort{BindAddress: bind, Port: port})
 		bridge.SocketPaths = append(bridge.SocketPaths, socketPath)
 
-		// Start reverse bridge: TCP listen on host port -> Unix socket
+		// Start reverse bridge: TCP listen on bind:port -> Unix socket
 		// The sandbox will create the Unix socket with UNIX-LISTEN
 		// We use retry to wait for the socket to be created by the sandbox
+		listenSpec := fmt.Sprintf("TCP-LISTEN:%d,bind=%s,fork,reuseaddr", port, bind)
 		args := []string{
-			fmt.Sprintf("TCP-LISTEN:%d,fork,reuseaddr", port),
+			listenSpec,
 			fmt.Sprintf("UNIX-CONNECT:%s,retry=50,interval=0.1", socketPath),
 		}
 		proc := exec.Command("socat", args...) //nolint:gosec // args constructed from trusted input
 		if debug {
-			fencelog.Printf("[fence:linux] Starting reverse bridge for port %d: socat %s\n", port, strings.Join(args, " "))
+			fencelog.Printf("[fence:linux] Starting reverse bridge for %s:%d: socat %s\n", bind, port, strings.Join(args, " "))
 		}
 		if err := proc.Start(); err != nil {
 			bridge.Cleanup()
-			return nil, fmt.Errorf("failed to start reverse bridge for port %d: %w", port, err)
+			return nil, fmt.Errorf("failed to start reverse bridge for %s:%d: %w", bind, port, err)
 		}
 		bridge.processes = append(bridge.processes, proc)
 	}
 
 	if debug {
-		fencelog.Printf("[fence:linux] Reverse bridges ready for ports: %v\n", ports)
+		fencelog.Printf("[fence:linux] Reverse bridges ready for: %s\n", formatExposures(bridge.Exposures))
 	}
 
 	return bridge, nil
+}
+
+// formatExposures renders an []ExposedPort for diagnostic output as
+// "127.0.0.1:3000, 0.0.0.0:8080".
+func formatExposures(exposures []ExposedPort) string {
+	parts := make([]string, len(exposures))
+	for i, e := range exposures {
+		parts[i] = fmt.Sprintf("%s:%d", e.BindAddress, e.Port)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // Cleanup stops the reverse bridge processes and removes socket files.

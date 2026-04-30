@@ -185,7 +185,51 @@ If you're running a server inside the sandbox that must accept connections:
 - set `network.allowLocalBinding: true` (to bind)
 - use `-p <port>` (to expose inbound port(s))
 
-## WSL: "Permission denied" for wslpath or Windows .exe files
+By default `-p PORT` binds the host-side listener on `127.0.0.1` only. To
+expose the service on every interface (e.g. so other hosts on your LAN can
+reach it) write `-p 0.0.0.0:PORT` instead. Specific addresses also work:
+`-p 192.168.1.10:PORT`, `-p [::1]:PORT`, `-p [::]:PORT`.
+
+## WSL2: my dev server runs but `http://127.0.0.1:PORT` from a Windows browser doesn't load
+
+WSL2 forwards a Windows-side `localhost:PORT` request to the WSL distro
+when, and only when, a process inside the distro is bound on `127.0.0.1`.
+Listeners bound on `0.0.0.0` / `*` (all interfaces) often don't trigger
+the automatic relay.
+
+If you launch fence with `fence -p PORT -- yourserver`, the host-side
+reverse bridge binds `127.0.0.1:PORT` by default, which is what the WSL
+relay expects, so the Windows browser will reach the server. If you wrote
+`fence -p 0.0.0.0:PORT -- yourserver` to opt into LAN exposure, the
+Windows-side `localhost:PORT` mapping may fail; reach the server via the
+WSL VM's IP instead:
+
+```powershell
+# Windows PowerShell or cmd
+wsl.exe hostname -I              # e.g. 172.20.143.42
+# then point your browser at http://172.20.143.42:PORT/
+```
+
+If you also want Windows-side `localhost:PORT` to work in that case,
+either bind on `127.0.0.1` instead, or enable WSL2 mirrored networking
+(`[wsl2] networkingMode=mirrored` in `%UserProfile%\.wslconfig`).
+
+You can confirm fence's listener address with:
+
+```bash
+ss -ltnp | grep ':PORT '         # look at the Local Address column
+```
+
+`127.0.0.1:PORT` works through WSL's relay; `*:PORT` and `0.0.0.0:PORT`
+need the WSL VM IP route above.
+
+> [!NOTE]
+> The sandboxed process itself can still bind any address it likes inside
+> the sandbox (`127.0.0.1`, `0.0.0.0`, …). The bind address `-p` controls
+> is only the host-side reverse-bridge listener that relays inbound traffic
+> into the sandbox.
+
+## WSL2: "Permission denied" for wslpath or Windows .exe files
 
 On WSL2, commands like `wslpath` or `powershell.exe` may fail with "Permission denied" inside the sandbox.
 

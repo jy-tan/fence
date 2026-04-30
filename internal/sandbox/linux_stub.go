@@ -17,6 +17,7 @@ type LinuxBridge struct {
 // ReverseBridge is a stub for non-Linux platforms.
 type ReverseBridge struct {
 	Ports       []int
+	Exposures   []ExposedPort
 	SocketPaths []string
 }
 
@@ -49,7 +50,7 @@ func NewLinuxBridge(httpProxyPort, socksProxyPort int, debug bool) (*LinuxBridge
 func (b *LinuxBridge) Cleanup() {}
 
 // NewReverseBridge returns an error on non-Linux platforms.
-func NewReverseBridge(ports []int, debug bool) (*ReverseBridge, error) {
+func NewReverseBridge(exposures []ExposedPort, debug bool) (*ReverseBridge, error) {
 	return nil, fmt.Errorf("reverse bridge not available on this platform")
 }
 

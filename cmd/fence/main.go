@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -129,7 +130,8 @@ Examples:
   fence --settings config.json npm install
   fence -t npm-install npm install        # Use built-in npm-install template
   fence -t ai-coding-agents -- agent-cmd  # Use AI coding agents template
-  fence -p 3000 -c "npm run dev"          # Expose port 3000 for inbound connections
+  fence -p 3000 -c "npm run dev"          # Expose port 3000 on 127.0.0.1 (loopback)
+  fence -p 0.0.0.0:3000 -c "npm run dev"  # Expose port 3000 on all interfaces (LAN)
   fence --shell user -c "nvim"            # Use validated $SHELL for command execution
   fence --list-templates                  # Show available built-in templates
   fence config show                       # Inspect the active config chain and merged JSON
@@ -161,7 +163,8 @@ Configuration file format:
 	rootCmd.Flags().StringVarP(&templateName, "template", "t", "", "Use built-in template (e.g., ai-coding-agents, npm-install)")
 	rootCmd.Flags().BoolVar(&listTemplates, "list-templates", false, "List available templates")
 	rootCmd.Flags().StringVarP(&cmdString, "c", "c", "", "Run command string directly (like sh -c)")
-	rootCmd.Flags().StringArrayVarP(&exposePorts, "port", "p", nil, "Expose port for inbound connections (can be used multiple times)")
+	rootCmd.Flags().StringArrayVarP(&exposePorts, "port", "p", nil,
+		"Expose port for inbound connections. Format: PORT (binds 127.0.0.1) or ADDR:PORT (e.g. 0.0.0.0:8080 to allow LAN access). Repeatable.")
 	rootCmd.Flags().StringVar(&serviceExecutionModel, "service-execution-model", "in-sandbox",
 		"How the sandboxed service binds its exposed ports: 'in-sandbox' (default; fence sets up a reverse bridge) or 'on-host' (an external daemon like docker/podman binds the port outside the sandbox netns; no reverse bridge)")
 	rootCmd.Flags().StringArrayVar(&exposeHostPaths, "expose-host-path", nil, "Expose a host file/directory at the same path inside the sandbox (read-only). Can be used multiple times.")
@@ -233,13 +236,9 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		fencelog.Printf("[fence] Command: %s\n", command)
 	}
 
-	var ports []int
-	for _, p := range exposePorts {
-		port, err := strconv.Atoi(p)
-		if err != nil || port < 1 || port > 65535 {
-			return fmt.Errorf("invalid port: %s", p)
-		}
-		ports = append(ports, port)
+	exposures, err := parseExposePortFlags(exposePorts)
+	if err != nil {
+		return err
 	}
 
 	var execModel sandbox.ServiceExecutionModel
@@ -252,12 +251,12 @@ func runCommand(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid --service-execution-model %q (expected 'in-sandbox' or 'on-host')", serviceExecutionModel)
 	}
 
-	if debug && len(ports) > 0 {
+	if debug && len(exposures) > 0 {
 		modelName := "in-sandbox"
 		if execModel == sandbox.ServiceBindsOnHost {
 			modelName = "on-host"
 		}
-		fencelog.Printf("[fence] Exposing ports: %v (execution model: %s)\n", ports, modelName)
+		fencelog.Printf("[fence] Exposing ports: %s (execution model: %s)\n", formatExposureList(exposures), modelName)
 	}
 
 	// Validate shell mode early to fail before proxy/sandbox initialization.
@@ -286,7 +285,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 
 	manager := sandbox.NewManager(cfg, debug, monitor)
 	manager.SetService(sandbox.ServiceOptions{
-		ExposedPorts:   ports,
+		Exposures:      exposures,
 		ExecutionModel: execModel,
 	})
 	manager.SetShellOptions(shellMode, shellLogin)
@@ -459,6 +458,88 @@ func upsertEnv(env []string, key, value string) []string {
 		}
 	}
 	return append(env, prefix+value)
+}
+
+// parseExposePortFlags converts the raw -p/--port flag values into
+// sandbox.ExposedPort. Accepted forms:
+//
+//	"PORT"            -> bind 127.0.0.1:PORT
+//	"ADDR:PORT"       -> bind ADDR:PORT (e.g. 0.0.0.0:8080, 192.168.1.10:8080)
+//	"[ADDR]:PORT"     -> IPv6 (e.g. [::]:8080, [::1]:8080)
+//
+// Loopback default mirrors `docker -p PORT:PORT` style hardening: a bare
+// integer should not implicitly expose the service to other hosts on the LAN.
+// To explicitly opt into LAN exposure, write `-p 0.0.0.0:PORT`.
+func parseExposePortFlags(raw []string) ([]sandbox.ExposedPort, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make([]sandbox.ExposedPort, 0, len(raw))
+	for _, entry := range raw {
+		exposure, err := parseExposePortFlag(entry)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, exposure)
+	}
+	return out, nil
+}
+
+func parseExposePortFlag(entry string) (sandbox.ExposedPort, error) {
+	trimmed := strings.TrimSpace(entry)
+	if trimmed == "" {
+		return sandbox.ExposedPort{}, fmt.Errorf("invalid --port: empty value")
+	}
+
+	// Bare integer → loopback.
+	if !strings.Contains(trimmed, ":") {
+		port, err := parsePortNumber(trimmed)
+		if err != nil {
+			return sandbox.ExposedPort{}, fmt.Errorf("invalid --port %q: %w", entry, err)
+		}
+		return sandbox.ExposedPort{
+			BindAddress: sandbox.DefaultExposedBindAddress,
+			Port:        port,
+		}, nil
+	}
+
+	// ADDR:PORT or [ADDR]:PORT — net.SplitHostPort handles both.
+	host, portStr, err := net.SplitHostPort(trimmed)
+	if err != nil {
+		return sandbox.ExposedPort{}, fmt.Errorf("invalid --port %q: %w", entry, err)
+	}
+	if host == "" {
+		return sandbox.ExposedPort{}, fmt.Errorf("invalid --port %q: missing bind address (use \"PORT\" alone for loopback)", entry)
+	}
+	if ip := net.ParseIP(host); ip == nil {
+		return sandbox.ExposedPort{}, fmt.Errorf("invalid --port %q: bind address must be a literal IP (got %q); hostnames are not supported", entry, host)
+	}
+	port, err := parsePortNumber(portStr)
+	if err != nil {
+		return sandbox.ExposedPort{}, fmt.Errorf("invalid --port %q: %w", entry, err)
+	}
+	return sandbox.ExposedPort{BindAddress: host, Port: port}, nil
+}
+
+func parsePortNumber(s string) (int, error) {
+	port, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("port must be an integer (got %q)", s)
+	}
+	if port < 1 || port > 65535 {
+		return 0, fmt.Errorf("port out of range 1-65535 (got %d)", port)
+	}
+	return port, nil
+}
+
+// formatExposureList renders an []sandbox.ExposedPort for the
+// "[fence] Exposing ports: …" debug line.
+func formatExposureList(exposures []sandbox.ExposedPort) string {
+	parts := make([]string, len(exposures))
+	for i, e := range exposures {
+		parts[i] = fmt.Sprintf("%s:%d", e.BindAddress, e.Port)
+	}
+	return strings.Join(parts, ", ")
 }
 
 func applyCLIConfigOverrides(cmd *cobra.Command, cfg *config.Config, forceNewSessionValue bool) *config.Config {

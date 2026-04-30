@@ -13,13 +13,18 @@ func TestManagerSetServiceStoresOptions(t *testing.T) {
 	m := NewManager(cfg, false, false)
 
 	opts := ServiceOptions{
-		ExposedPorts:   []int{8080, 8081},
+		Exposures: []ExposedPort{
+			{BindAddress: "127.0.0.1", Port: 8080},
+			{BindAddress: "0.0.0.0", Port: 8081},
+		},
 		ExecutionModel: ServiceBindsOnHost,
 	}
 	m.SetService(opts)
 
-	if len(m.service.ExposedPorts) != 2 || m.service.ExposedPorts[0] != 8080 || m.service.ExposedPorts[1] != 8081 {
-		t.Errorf("SetService did not preserve ExposedPorts: got %v", m.service.ExposedPorts)
+	want := opts.Exposures
+	got := m.service.Exposures
+	if !exposuresEqual(got, want) {
+		t.Errorf("SetService did not preserve Exposures: got %+v want %+v", got, want)
 	}
 	if m.service.ExecutionModel != ServiceBindsOnHost {
 		t.Errorf("SetService did not preserve ExecutionModel: got %v", m.service.ExecutionModel)
@@ -32,11 +37,89 @@ func TestManagerSetServiceDefaultExecutionModel(t *testing.T) {
 
 	// Zero-value ServiceOptions means ServiceBindsInSandbox (the default
 	// for the iota enum).
-	m.SetService(ServiceOptions{ExposedPorts: []int{3000}})
+	m.SetService(ServiceOptions{Exposures: []ExposedPort{LoopbackPort(3000)}})
 
 	if m.service.ExecutionModel != ServiceBindsInSandbox {
 		t.Errorf("default ExecutionModel should be ServiceBindsInSandbox; got %v", m.service.ExecutionModel)
 	}
+}
+
+func TestLoopbackPort(t *testing.T) {
+	got := LoopbackPort(3000)
+	want := ExposedPort{BindAddress: DefaultExposedBindAddress, Port: 3000}
+	if got != want {
+		t.Errorf("LoopbackPort(3000) = %+v, want %+v", got, want)
+	}
+}
+
+func TestServiceOptionsResolvedExposures_FillsEmptyBindAddress(t *testing.T) {
+	opts := ServiceOptions{
+		Exposures: []ExposedPort{
+			{Port: 3000}, // empty bind -> loopback default
+			{BindAddress: "0.0.0.0", Port: 8080},
+			{BindAddress: "::1", Port: 9090},
+		},
+	}
+	got := opts.resolvedExposures()
+	want := []ExposedPort{
+		{BindAddress: "127.0.0.1", Port: 3000},
+		{BindAddress: "0.0.0.0", Port: 8080},
+		{BindAddress: "::1", Port: 9090},
+	}
+	if !exposuresEqual(got, want) {
+		t.Errorf("resolvedExposures() = %+v, want %+v", got, want)
+	}
+}
+
+func TestServiceOptionsResolvedExposures_PreservesExplicitBindAddresses(t *testing.T) {
+	opts := ServiceOptions{
+		Exposures: []ExposedPort{
+			{BindAddress: "192.168.1.10", Port: 8080},
+			{BindAddress: "127.0.0.1", Port: 3000},
+		},
+	}
+	got := opts.resolvedExposures()
+	if !exposuresEqual(got, opts.Exposures) {
+		t.Errorf("resolvedExposures() = %+v, want %+v (no normalization needed)", got, opts.Exposures)
+	}
+}
+
+func TestServiceOptionsResolvedExposures_EmptyReturnsNil(t *testing.T) {
+	if got := (ServiceOptions{}).resolvedExposures(); got != nil {
+		t.Errorf("resolvedExposures() on empty options = %+v, want nil", got)
+	}
+}
+
+func TestServiceOptionsResolvedPorts_OrderMatchesExposures(t *testing.T) {
+	opts := ServiceOptions{
+		Exposures: []ExposedPort{
+			{BindAddress: "0.0.0.0", Port: 8080},
+			{Port: 9090},
+			LoopbackPort(3000),
+		},
+	}
+	got := opts.resolvedPorts()
+	want := []int{8080, 9090, 3000}
+	if len(got) != len(want) {
+		t.Fatalf("resolvedPorts() returned %d entries, want %d (got=%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("resolvedPorts()[%d] = %d, want %d", i, got[i], want[i])
+		}
+	}
+}
+
+func exposuresEqual(a, b []ExposedPort) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestManagerExposeHostPathRejectsEmpty(t *testing.T) {
