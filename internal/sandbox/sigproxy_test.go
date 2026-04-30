@@ -27,6 +27,37 @@ func startSleepingChild(t *testing.T) *exec.Cmd {
 	return cmd
 }
 
+// driveForwarder runs f.run on a fresh goroutine fed by an unbuffered
+// channel, sends each signal in order, and uses a trailing SIGWINCH
+// as a barrier. Because the channel is unbuffered, the (i+1)-th send
+// only completes once the consumer has received the i-th signal; the
+// barrier guarantees that by the time it returns, the consumer has
+// fully finished processing every signal in `sigs`.
+//
+// SIGWINCH is the barrier of choice because it never affects the
+// escalation counter and never invokes OnEscalate, so it does not
+// pollute assertions.
+//
+// The returned stop function tears down the goroutine and waits for
+// it to exit; safe to call from t.Cleanup or defer.
+func driveForwarder(t *testing.T, f *SignalForwarder, sigs ...os.Signal) (stop func()) {
+	t.Helper()
+	sigChan := make(chan os.Signal)
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() { f.run(sigChan, done) })
+
+	for _, s := range sigs {
+		sigChan <- s
+	}
+	sigChan <- syscall.SIGWINCH
+
+	return func() {
+		close(done)
+		wg.Wait()
+	}
+}
+
 func TestSignalForwarder_StopIsIdempotent(t *testing.T) {
 	cmd := startSleepingChild(t)
 	stop := (&SignalForwarder{Cmd: cmd}).Start()
@@ -44,22 +75,8 @@ func TestSignalForwarder_SIGWINCHDoesNotEscalate(t *testing.T) {
 		OnEscalate: func() { escalates.Add(1) },
 	}
 
-	sigChan := make(chan os.Signal, 4)
-	done := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		f.run(sigChan, done)
-	}()
-
-	for i := 0; i < 3; i++ {
-		sigChan <- syscall.SIGWINCH
-	}
-	// Give run() a moment to drain the channel.
-	time.Sleep(20 * time.Millisecond)
-	close(done)
-	wg.Wait()
+	stop := driveForwarder(t, f, syscall.SIGWINCH, syscall.SIGWINCH, syscall.SIGWINCH)
+	stop()
 
 	if got := escalates.Load(); got != 0 {
 		t.Fatalf("OnEscalate fired %d times for SIGWINCH-only stream; want 0", got)
@@ -75,22 +92,25 @@ func TestSignalForwarder_FirstSignalDoesNotEscalate(t *testing.T) {
 		OnEscalate: func() { escalates.Add(1) },
 	}
 
-	sigChan := make(chan os.Signal, 1)
-	done := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		f.run(sigChan, done)
-	}()
-
-	sigChan <- syscall.SIGINT
-	time.Sleep(20 * time.Millisecond)
-	close(done)
-	wg.Wait()
+	stop := driveForwarder(t, f, syscall.SIGINT)
+	stop()
 
 	if got := escalates.Load(); got != 0 {
 		t.Fatalf("OnEscalate fired %d times after 1st signal; want 0", got)
+	}
+}
+
+// awaitChildExit waits up to 2s for cmd.Wait() to return. Use after
+// driving a forwarder with at least 2 escalation signals (SIGINT/
+// SIGTERM/SIGHUP) to confirm the child was actually killed.
+func awaitChildExit(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	waitErrCh := make(chan error, 1)
+	go func() { waitErrCh <- cmd.Wait() }()
+	select {
+	case <-waitErrCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("child did not die within 2s of expected escalation")
 	}
 }
 
@@ -103,27 +123,9 @@ func TestSignalForwarder_SecondSignalEscalates(t *testing.T) {
 		OnEscalate: func() { escalates.Add(1) },
 	}
 
-	sigChan := make(chan os.Signal, 2)
-	done := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		f.run(sigChan, done)
-	}()
-
-	sigChan <- syscall.SIGINT
-	sigChan <- syscall.SIGINT
-	// Wait for child to die so we know run() processed both signals.
-	waitErrCh := make(chan error, 1)
-	go func() { waitErrCh <- cmd.Wait() }()
-	select {
-	case <-waitErrCh:
-	case <-time.After(2 * time.Second):
-		t.Fatal("child did not die after 2nd signal escalation")
-	}
-	close(done)
-	wg.Wait()
+	stop := driveForwarder(t, f, syscall.SIGINT, syscall.SIGINT)
+	awaitChildExit(t, cmd)
+	stop()
 
 	if got := escalates.Load(); got != 1 {
 		t.Fatalf("OnEscalate fired %d times after 2nd signal; want 1", got)
@@ -139,26 +141,9 @@ func TestSignalForwarder_SIGHUPParticipatesInEscalation(t *testing.T) {
 		OnEscalate: func() { escalates.Add(1) },
 	}
 
-	sigChan := make(chan os.Signal, 2)
-	done := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		f.run(sigChan, done)
-	}()
-
-	sigChan <- syscall.SIGHUP // 1st: forwarded
-	sigChan <- syscall.SIGHUP // 2nd: escalation
-	waitErrCh := make(chan error, 1)
-	go func() { waitErrCh <- cmd.Wait() }()
-	select {
-	case <-waitErrCh:
-	case <-time.After(2 * time.Second):
-		t.Fatal("child did not die after 2nd SIGHUP")
-	}
-	close(done)
-	wg.Wait()
+	stop := driveForwarder(t, f, syscall.SIGHUP, syscall.SIGHUP)
+	awaitChildExit(t, cmd)
+	stop()
 
 	if got := escalates.Load(); got != 1 {
 		t.Fatalf("OnEscalate after SIGHUP escalation fired %d times; want 1", got)
@@ -169,46 +154,17 @@ func TestSignalForwarder_NilOnEscalateIsSafe(t *testing.T) {
 	cmd := startSleepingChild(t)
 	f := &SignalForwarder{Cmd: cmd, OnEscalate: nil}
 
-	sigChan := make(chan os.Signal, 2)
-	done := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		f.run(sigChan, done)
-	}()
-
-	sigChan <- syscall.SIGINT
-	sigChan <- syscall.SIGINT
-	waitErrCh := make(chan error, 1)
-	go func() { waitErrCh <- cmd.Wait() }()
-	select {
-	case <-waitErrCh:
-	case <-time.After(2 * time.Second):
-		t.Fatal("child did not die with nil OnEscalate")
-	}
-	close(done)
-	wg.Wait()
+	stop := driveForwarder(t, f, syscall.SIGINT, syscall.SIGINT)
+	awaitChildExit(t, cmd)
+	stop()
 }
 
 func TestSignalForwarder_NilProcessIgnored(t *testing.T) {
 	// f.Cmd.Process is nil before Start(); run() must not panic.
 	f := &SignalForwarder{Cmd: &exec.Cmd{}}
 
-	sigChan := make(chan os.Signal, 2)
-	done := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		f.run(sigChan, done)
-	}()
-
-	sigChan <- syscall.SIGINT
-	sigChan <- syscall.SIGTERM
-	time.Sleep(20 * time.Millisecond)
-	close(done)
-	wg.Wait()
+	stop := driveForwarder(t, f, syscall.SIGINT, syscall.SIGTERM)
+	stop()
 }
 
 func TestKillProcessGroup_NonPositiveLeaderIsNoOp(t *testing.T) {
