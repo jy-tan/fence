@@ -25,7 +25,7 @@ var (
 	)
 	errOpenclawUseImperativeUninstall = errors.New(
 		"`fence hooks uninstall --openclaw` is not supported; " +
-			"run `openclaw plugins remove openclaw-fence` instead",
+			"run `openclaw plugins uninstall openclaw-fence` instead",
 	)
 )
 

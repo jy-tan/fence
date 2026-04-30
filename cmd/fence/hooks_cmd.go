@@ -267,7 +267,7 @@ Examples:
   fence hooks uninstall --opencode --force                          # skip prompt
   fence hooks uninstall --hermes
 
-Note: --openclaw is not supported. Run 'openclaw plugins remove
+Note: --openclaw is not supported. Run 'openclaw plugins uninstall
 openclaw-fence' instead.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -378,7 +378,7 @@ openclaw-fence' instead.`,
 	cmd.Flags().BoolVar(&cursor, "cursor", false, "Remove Cursor hook config")
 	cmd.Flags().BoolVar(&opencode, "opencode", false, "Remove OpenCode plugin config")
 	cmd.Flags().BoolVar(&hermes, "hermes", false, "Remove Hermes shell-hook config")
-	cmd.Flags().BoolVar(&openclaw, "openclaw", false, "Not supported (run `openclaw plugins remove openclaw-fence` instead)")
+	cmd.Flags().BoolVar(&openclaw, "openclaw", false, "Not supported (run `openclaw plugins uninstall openclaw-fence` instead)")
 	cmd.Flags().StringVarP(&path, "file", "f", "", "Path to the settings file to modify (default: ~/.claude/settings.json for --claude, ~/.cursor/hooks.json for --cursor, existing ~/.config/opencode/opencode.{jsonc,json} for --opencode, ~/.hermes/config.yaml for --hermes)")
 	cmd.Flags().BoolVarP(&force, "force", "y", false, "Skip the confirmation prompt when comments would be stripped")
 	cmd.MarkFlagsMutuallyExclusive("claude", "cursor", "opencode", "hermes", "openclaw")
