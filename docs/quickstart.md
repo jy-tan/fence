@@ -171,7 +171,17 @@ If you're running a server that needs to accept connections:
 fence -p 3000 -c "npm run dev"
 ```
 
-This allows external connections to port 3000 while keeping outbound network restricted.
+This allows connections from your machine to port 3000 (the host-side
+listener binds `127.0.0.1` only) while keeping outbound network restricted.
+On WSL2 this is also what makes the server reachable from a Windows browser
+at `http://127.0.0.1:3000/`.
+
+To expose the server to other hosts on your LAN, use `-p 0.0.0.0:3000`
+(or a specific interface IP):
+
+```bash
+fence -p 0.0.0.0:3000 -c "npm run dev"   # reachable from other LAN hosts
+```
 
 ## Next steps
 

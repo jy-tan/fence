@@ -61,6 +61,21 @@ type Manager = sandbox.Manager
 // See Manager.SetService.
 type ServiceOptions = sandbox.ServiceOptions
 
+// ExposedPort describes a single host-facing port exposure with an explicit
+// bind address. See ServiceOptions.Exposures.
+type ExposedPort = sandbox.ExposedPort
+
+// DefaultExposedBindAddress is the default host interface for reverse-bridge
+// listeners (loopback only). Set ExposedPort.BindAddress to "0.0.0.0" or a
+// specific interface address to opt into wider exposure.
+const DefaultExposedBindAddress = sandbox.DefaultExposedBindAddress
+
+// LoopbackPort is a sugar constructor for the common case: expose a port on
+// the host loopback interface.
+func LoopbackPort(port int) ExposedPort {
+	return sandbox.LoopbackPort(port)
+}
+
 // ServiceExecutionModel selects the port-binding workflow fence should assume
 // for the sandboxed service.
 type ServiceExecutionModel = sandbox.ServiceExecutionModel

@@ -383,13 +383,23 @@ flowchart TB
 
 Flow:
 
-1. Host `socat` listens on the requested TCP port
+1. Host `socat` listens on the requested `<bind-address>:<port>` (default
+   `127.0.0.1`; configurable per port via the CLI's `-p ADDR:PORT` syntax
+   or the library's `ServiceOptions.Exposures`)
 2. A shared Unix socket links host and sandbox
 3. Sandbox `socat` forwards from the shared socket to the app
 4. Traffic flows: `outside -> host port -> shared socket -> sandbox app`
 
 If there is no isolated network namespace, a reverse bridge is unnecessary
 because the sandbox shares the host network directly.
+
+The host-side bind defaults to `127.0.0.1` to keep `-p PORT` from
+accidentally exposing a sandboxed dev server to other hosts on the LAN.
+WSL2's automatic localhost forwarding to Windows also requires a
+`127.0.0.1` bind, so loopback-by-default is what makes `fence -p PORT`
+reachable from a Windows browser through WSL2 unchanged. To opt into
+LAN exposure pass `-p 0.0.0.0:PORT` (CLI) or set `Exposures` with
+`BindAddress: "0.0.0.0"` (library).
 
 ## Outbound Connections to Host Loopback (Localhost Bridge)
 

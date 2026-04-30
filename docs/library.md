@@ -161,10 +161,32 @@ before `Initialize`.
 
 ```go
 manager.SetService(fence.ServiceOptions{
-    ExposedPorts:   []int{3000, 8080},
+    Exposures: []fence.ExposedPort{
+        fence.LoopbackPort(3000),
+        fence.LoopbackPort(8080),
+    },
     ExecutionModel: fence.ServiceBindsInSandbox, // default
 })
 ```
+
+`fence.LoopbackPort(port)` is sugar for the common case (bind on
+`127.0.0.1`). For finer control set `BindAddress` directly - pass
+`"0.0.0.0"` for LAN exposure, a specific interface IP, or `"::"` / `"::1"`
+for IPv6:
+
+```go
+manager.SetService(fence.ServiceOptions{
+    Exposures: []fence.ExposedPort{
+        {BindAddress: "127.0.0.1",   Port: 3000},  // loopback (also: LoopbackPort(3000))
+        {BindAddress: "0.0.0.0",     Port: 8080},  // LAN
+        {BindAddress: "192.168.1.10", Port: 9090}, // specific interface
+        {BindAddress: "::1",         Port: 9091},  // IPv6 loopback
+    },
+})
+```
+
+An empty `BindAddress` is normalized to `fence.DefaultExposedBindAddress`
+(`127.0.0.1`).
 
 For services whose start command delegates port binding to an external daemon
 (e.g. `docker compose up`, `podman run`, `systemctl start …`) set
@@ -174,7 +196,7 @@ the host port.
 
 ```go
 manager.SetService(fence.ServiceOptions{
-    ExposedPorts:   []int{8000},
+    Exposures:      []fence.ExposedPort{fence.LoopbackPort(8000)},
     ExecutionModel: fence.ServiceBindsOnHost, // dockerd binds 8000 on the host
 })
 ```
@@ -331,7 +353,9 @@ cfg := &fence.Config{
 
 ```go
 manager := fence.NewManager(cfg, false, false)
-manager.SetService(fence.ServiceOptions{ExposedPorts: []int{3000}})
+manager.SetService(fence.ServiceOptions{
+    Exposures: []fence.ExposedPort{fence.LoopbackPort(3000)},
+})
 defer manager.Cleanup()
 
 wrapped, _ := manager.WrapCommand("npm run dev")
@@ -342,7 +366,7 @@ wrapped, _ := manager.WrapCommand("npm run dev")
 ```go
 manager := fence.NewManager(cfg, false, false)
 manager.SetService(fence.ServiceOptions{
-    ExposedPorts:   []int{8000},
+    Exposures:      []fence.ExposedPort{fence.LoopbackPort(8000)},
     ExecutionModel: fence.ServiceBindsOnHost,
 })
 defer manager.Cleanup()
