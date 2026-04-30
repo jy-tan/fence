@@ -11,12 +11,10 @@ import (
 )
 
 // startSleepingChild spawns a long-lived child whose Process can be
-// observed/signaled, and registers a cleanup to reap it. The child
-// runs in its own pgrp so PgrpBroadcast tests are meaningful.
+// observed/signaled, and registers a cleanup to reap it.
 func startSleepingChild(t *testing.T) *exec.Cmd {
 	t.Helper()
 	cmd := exec.Command("sleep", "30")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: 0}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start child: %v", err)
 	}
@@ -165,13 +163,4 @@ func TestSignalForwarder_NilProcessIgnored(t *testing.T) {
 
 	stop := driveForwarder(t, f, syscall.SIGINT, syscall.SIGTERM)
 	stop()
-}
-
-func TestKillProcessGroup_NonPositiveLeaderIsNoOp(t *testing.T) {
-	if err := killProcessGroup(0, syscall.SIGTERM); err != nil {
-		t.Fatalf("killProcessGroup(0, ...) = %v; want nil", err)
-	}
-	if err := killProcessGroup(-1, syscall.SIGTERM); err != nil {
-		t.Fatalf("killProcessGroup(-1, ...) = %v; want nil", err)
-	}
 }

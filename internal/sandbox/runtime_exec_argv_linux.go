@@ -163,12 +163,11 @@ func RunLinuxArgvExecRunnerFromEnv() (int, error) {
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(), "FENCE_LINUX_ARGV_EXEC_SOCKET="+socketPath)
 	cmd.ExtraFiles = extraFiles
-	// Own pgrp so the signal forwarder can target the whole sandboxed
-	// subtree (bwrap + shim + agent + MCPs) via Kill(-pgrp, sig).
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-		Pgid:    0,
-	}
+	// Inherit the runner's pgrp (i.e. the outer fence's pgrp). The outer
+	// fence already arranges that pgrp to be the controlling terminal's
+	// foreground via tcsetpgrp, so any TUI inside the sandbox can read
+	// from /dev/tty. Putting bwrap in its own pgrp here would cause the
+	// TUI to receive SIGTTIN/SIGTTOU and hang on startup.
 
 	if err := cmd.Start(); err != nil {
 		if filterFile != nil {
@@ -257,15 +256,17 @@ func RunLinuxArgvExecRunnerFromEnv() (int, error) {
 		// Supervisor exited first. If it returned cleanly, that almost
 		// always means all sandboxed tracees have exited (the listener
 		// fd reached POLLHUP), and bwrap is reaping its way to exit
-		// right behind us; just wait briefly. Only escalate if the
-		// supervisor failed (decision error) or bwrap is still around
-		// after the drain window - in either case we have no useful
-		// reason to keep the sandbox alive.
+		// right behind us; just wait briefly. Only escalate if bwrap
+		// is still around after the drain window.
+		//
+		// We signal bwrap directly rather than its pgrp because bwrap
+		// shares the runner's pgrp; bwrap --die-with-parent ensures
+		// descendants follow.
 		select {
 		case waitErr = <-waitErrCh:
 		case <-time.After(linuxArgvExecSupervisorDrainTimeout):
 			if cmd.Process != nil {
-				_ = killProcessGroup(cmd.Process.Pid, syscall.SIGTERM)
+				_ = cmd.Process.Signal(syscall.SIGTERM)
 			}
 			select {
 			case waitErr = <-waitErrCh:
@@ -299,16 +300,19 @@ func RunLinuxArgvExecRunnerFromEnv() (int, error) {
 // startLinuxArgvExecSignalForwarder wires bwrap into the shared
 // SignalForwarder. shutdown may be nil in tests; when present its
 // Begin() is fired on every escalation step so the supervisor
-// goroutine wakes promptly.
+// goroutine wakes promptly. SIGKILL on the 2nd signal plus
+// bwrap --die-with-parent is sufficient to tear down the whole
+// sandboxed subtree (we deliberately do not put bwrap in its own
+// pgrp, since that would steal the controlling terminal's foreground
+// pgrp from sandboxed TUIs and stop them with SIGTTIN/SIGTTOU).
 func startLinuxArgvExecSignalForwarder(cmd *exec.Cmd, shutdown *argvRunnerShutdown) func() {
 	var onEscalate func()
 	if shutdown != nil {
 		onEscalate = shutdown.Begin
 	}
 	return (&SignalForwarder{
-		Cmd:           cmd,
-		PgrpBroadcast: true,
-		OnEscalate:    onEscalate,
+		Cmd:        cmd,
+		OnEscalate: onEscalate,
 	}).Start()
 }
 

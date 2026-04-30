@@ -497,10 +497,6 @@ func startCommandWithSignalProxy(execCmd *exec.Cmd) (func(), error) {
 	if err := execCmd.Start(); err != nil {
 		return nil, err
 	}
-	// Outer fence does not pgrp-broadcast on the 2nd signal: bwrap is
-	// not always placed in its own pgrp here (only when there is a
-	// controlling TTY; see configureHostTTYChildProcessGroup), so a
-	// pgrp send could either be a no-op or hit our own group.
 	stop := (&sandbox.SignalForwarder{Cmd: execCmd}).Start()
 	return stop, nil
 }
