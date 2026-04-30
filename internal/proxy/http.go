@@ -317,6 +317,98 @@ func CreateDomainFilter(cfg *config.Config, debug bool) FilterFunc {
 	}
 }
 
+// URLBlockedError is returned when a URL is blocked by network policy at the
+// hook layer. Wrap-mode equivalent is the in-line filter result inside
+// CreateDomainFilter; this exists so callers can `errors.As` and surface the
+// matched rule.
+type URLBlockedError struct {
+	URL         string
+	Host        string
+	MatchedRule string
+	Reason      string
+}
+
+func (e *URLBlockedError) Error() string {
+	if e.MatchedRule == "" {
+		return fmt.Sprintf("network access to %q blocked: %s", e.URL, e.Reason)
+	}
+	return fmt.Sprintf("network access to %q blocked: %s (matched %q)", e.URL, e.Reason, e.MatchedRule)
+}
+
+// CheckURL is the hook-time predicate paralleling CreateDomainFilter's
+// wrap-mode traffic gate. Both consume cfg.Network.* identically: a URL is
+// allowed iff the host matches AllowedDomains and not DeniedDomains; an
+// empty AllowedDomains denies everything.
+//
+// Caveat: hook-time enforcement is deny-by-intent, not deny-by-traffic.
+// The agent could embed an allowed host in a path
+// (`?next=https://blocked.example/`) and the actual HTTP fetch would not
+// be intercepted — wrap mode (with the proxy in the network path) is the
+// answer for that. Hook mode catches the agent's declared intent only.
+//
+// Adapters that want hook-mode to be permissive when network policy is
+// unconfigured should ship a template (see internal/templates/hermes.json
+// for a worked example) rather than relaxing this predicate.
+func CheckURL(rawURL string, cfg *config.Config) error {
+	if cfg == nil {
+		cfg = config.Default()
+	}
+
+	host, err := hostFromURLString(rawURL)
+	if err != nil {
+		return &URLBlockedError{URL: rawURL, Reason: err.Error()}
+	}
+
+	for _, denied := range cfg.Network.DeniedDomains {
+		if config.MatchesDomain(host, denied) {
+			return &URLBlockedError{
+				URL:         rawURL,
+				Host:        host,
+				MatchedRule: denied,
+				Reason:      "deniedDomains",
+			}
+		}
+	}
+
+	for _, allowed := range cfg.Network.AllowedDomains {
+		if config.MatchesDomain(host, allowed) {
+			return nil
+		}
+	}
+
+	return &URLBlockedError{
+		URL:    rawURL,
+		Host:   host,
+		Reason: "not in allowedDomains",
+	}
+}
+
+// hostFromURLString parses rawURL and returns the lower-cased hostname,
+// stripped of any port. Returns an error if the URL is unparseable, has no
+// host, or uses a non-network scheme (file:, data:, etc.) we'd refuse to
+// reason about.
+func hostFromURLString(rawURL string) (string, error) {
+	if strings.TrimSpace(rawURL) == "" {
+		return "", fmt.Errorf("empty url")
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid url: %w", err)
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https", "ws", "wss":
+	case "":
+		return "", fmt.Errorf("url has no scheme")
+	default:
+		return "", fmt.Errorf("unsupported url scheme %q", parsed.Scheme)
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return "", fmt.Errorf("url has no host")
+	}
+	return strings.ToLower(host), nil
+}
+
 // GetHostFromRequest extracts the hostname from a request.
 func GetHostFromRequest(r *http.Request) string {
 	host := r.Host

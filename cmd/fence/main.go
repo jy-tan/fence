@@ -100,6 +100,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) >= 2 && os.Args[1] == hermesPreToolUseMode {
+		if err := runHermesPreToolUseMode(); err != nil {
+			fencelog.Printf("[fence:hooks] %v\n", err)
+			os.Exit(2)
+		}
+		return
+	}
 
 	rootCmd := &cobra.Command{
 		Use:   "fence [flags] -- [command...]",
