@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"encoding/binary"
 	"sync"
 	"sync/atomic"
 
@@ -50,7 +51,7 @@ func (s *argvRunnerShutdown) Begin() {
 		// EAGAIN here is fine: counter is saturated, reader has a
 		// pending wake.
 		var buf [8]byte
-		buf[7] = 1
+		binary.NativeEndian.PutUint64(buf[:], 1)
 		_, _ = unix.Write(s.wakeFD, buf[:])
 	})
 }
