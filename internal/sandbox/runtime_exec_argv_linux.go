@@ -462,8 +462,12 @@ func errorString(err error) string {
 
 func installLinuxArgvExecNotifyFilter() (int, error) {
 	features := DetectLinuxFeatures()
-	if !features.HasSeccomp || features.SeccompLogLevel < 2 {
-		return -1, errors.New("seccomp user notification is not available on this system")
+	if !features.Seccomp.UserNotify {
+		reason := features.Seccomp.UserNotifyError
+		if reason == "" {
+			reason = "not available"
+		}
+		return -1, fmt.Errorf("seccomp user notification is not available on this system: %s", reason)
 	}
 
 	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {

@@ -62,7 +62,7 @@ var DangerousSyscalls = []string{
 // Returns the path to the generated BPF filter file.
 func (s *SeccompFilter) GenerateBPFFilter() (string, error) {
 	features := DetectLinuxFeatures()
-	if !features.HasSeccomp {
+	if !features.Seccomp.Filter {
 		return "", fmt.Errorf("seccomp not available on this system")
 	}
 

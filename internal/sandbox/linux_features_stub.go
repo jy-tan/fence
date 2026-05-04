@@ -9,6 +9,7 @@ type LinuxFeatures struct {
 	HasSocat        bool
 	HasSeccomp      bool
 	SeccompLogLevel int
+	Seccomp         LinuxSeccompCapabilities
 	HasLandlock     bool
 	LandlockABI     int
 	HasEBPF         bool
@@ -17,6 +18,16 @@ type LinuxFeatures struct {
 	CanUnshareNet   bool
 	KernelMajor     int
 	KernelMinor     int
+}
+
+// LinuxSeccompCapabilities is empty on non-Linux platforms.
+type LinuxSeccompCapabilities struct {
+	Filter          bool
+	UserNotify      bool
+	Log             bool
+	FilterError     string
+	UserNotifyError string
+	LogError        string
 }
 
 // DetectLinuxFeatures returns empty features on non-Linux platforms.

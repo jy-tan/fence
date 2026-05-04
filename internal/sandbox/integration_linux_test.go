@@ -937,7 +937,7 @@ func TestLinux_SeccompBlocksDangerousSyscalls(t *testing.T) {
 	skipIfLandlockNotUsable(t) // Seccomp tests are unreliable in test environments
 
 	features := DetectLinuxFeatures()
-	if !features.HasSeccomp {
+	if !features.Seccomp.Filter {
 		t.Skip("skipping: seccomp not available")
 	}
 

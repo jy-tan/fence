@@ -44,7 +44,7 @@ Fence automatically detects this limitation and falls back to running **without 
 fence --linux-features
 ```
 
-Look for "Network namespace (--unshare-net): true/false"
+Look for the `Network namespace` row. Status `ok` means `bwrap --unshare-net` works; status `unavailable` means Fence will continue without network namespace isolation.
 
 **Solutions if you need full network isolation:**
 

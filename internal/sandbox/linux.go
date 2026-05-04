@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"syscall"
@@ -1017,8 +1018,12 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 	executableInTmp := strings.HasPrefix(fenceExePath, "/tmp/")
 	executableIsFence := strings.Contains(filepath.Base(fenceExePath), "fence")
 	if useArgvRuntimeExecPolicy {
-		if !features.HasSeccomp || features.SeccompLogLevel < 2 {
-			return "", fmt.Errorf("command.runtimeExecPolicy=%q requires Linux seccomp user notification support (kernel 5.0+)", config.RuntimeExecPolicyArgv)
+		if !features.Seccomp.UserNotify {
+			reason := features.Seccomp.UserNotifyError
+			if reason == "" {
+				reason = "not available"
+			}
+			return "", fmt.Errorf("command.runtimeExecPolicy=%q requires Linux seccomp user notification support: %s", config.RuntimeExecPolicyArgv, reason)
 		}
 		if fenceExePath == "" || !executableIsFence {
 			return "", fmt.Errorf("command.runtimeExecPolicy=%q requires the fence CLI binary (current executable cannot host the runtime supervisor)", config.RuntimeExecPolicyArgv)
@@ -1068,7 +1073,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 
 	// Generate seccomp filter if available and requested
 	var seccompFilterPath string
-	if opts.UseSeccomp && features.HasSeccomp {
+	if opts.UseSeccomp && features.Seccomp.Filter {
 		filter := NewSeccompFilter(opts.Debug)
 		filterPath, err := filter.GenerateBPFFilter()
 		if err != nil {
@@ -1083,6 +1088,8 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 			// Add seccomp filter via fd 3 (will be set up via shell redirection)
 			bwrapArgs = append(bwrapArgs, "--seccomp", "3")
 		}
+	} else if opts.UseSeccomp && opts.Debug && features.Seccomp.FilterError != "" {
+		fencelog.Printf("[fence:linux] Skipping seccomp filter: %s\n", features.Seccomp.FilterError)
 	}
 
 	defaultDenyRead := cfg != nil && cfg.Filesystem.DefaultDenyRead
@@ -1493,7 +1500,7 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 			featureList = append(featureList, "bwrap(pid,fs)")
 		}
 		featureList = append(featureList, "dev:"+string(deviceMode))
-		if features.HasSeccomp && opts.UseSeccomp && seccompFilterPath != "" {
+		if features.Seccomp.Filter && opts.UseSeccomp && seccompFilterPath != "" {
 			featureList = append(featureList, "seccomp")
 		}
 		featureList = append(featureList, "runtime-exec:"+string(runtimeExecPolicy))
@@ -1547,7 +1554,7 @@ func StartLinuxMonitor(pid int, opts LinuxSandboxOptions) (*LinuxMonitors, error
 	// To enable seccomp logging, the filter would need to use SECCOMP_RET_LOG (allows syscall)
 	// or SECCOMP_RET_KILL (logs but kills process) or SECCOMP_RET_USER_NOTIF (complex).
 	// For now, we rely on the eBPF monitor to detect syscall failures.
-	if opts.Debug && opts.Monitor && features.SeccompLogLevel >= 1 {
+	if opts.Debug && opts.Monitor && features.Seccomp.Log {
 		fencelog.Printf("[fence:linux] Note: seccomp violations are blocked but not logged (SECCOMP_RET_ERRNO is silent)\n")
 	}
 
@@ -1586,55 +1593,170 @@ func (m *LinuxMonitors) Stop() {
 	}
 }
 
+type linuxFeatureTableRow struct {
+	Capability  string
+	RequiredFor string
+	Status      string
+	Details     string
+}
+
 // PrintLinuxFeatures prints available Linux sandbox features.
 func PrintLinuxFeatures() {
 	features := DetectLinuxFeatures()
-	fmt.Printf("Linux Sandbox Features:\n")
-	fmt.Printf("  Kernel: %d.%d\n", features.KernelMajor, features.KernelMinor)
-	fmt.Printf("  Bubblewrap (bwrap): %v\n", features.HasBwrap)
-	fmt.Printf("  Socat: %v\n", features.HasSocat)
-	fmt.Printf("  Network namespace (--unshare-net): %v\n", features.CanUnshareNet)
-	fmt.Printf("  Seccomp: %v (log level: %d)\n", features.HasSeccomp, features.SeccompLogLevel)
-	fmt.Printf("  Landlock: %v (ABI v%d)\n", features.HasLandlock, features.LandlockABI)
-	fmt.Printf("  eBPF: %v (CAP_BPF: %v, root: %v)\n", features.HasEBPF, features.HasCapBPF, features.HasCapRoot)
+	printLinuxFeatureTable(linuxFeatureTableRows(features))
+}
 
-	fmt.Printf("\nFeature Status:\n")
-	if features.MinimumViable() {
-		fmt.Printf("  ✓ Minimum requirements met (bwrap + socat)\n")
-	} else {
-		fmt.Printf("  ✗ Missing requirements: ")
-		if !features.HasBwrap {
-			fmt.Printf("bwrap ")
-		}
-		if !features.HasSocat {
-			fmt.Printf("socat ")
-		}
-		fmt.Println()
+func linuxFeatureTableRows(features *LinuxFeatures) []linuxFeatureTableRow {
+	rows := []linuxFeatureTableRow{
+		{
+			Capability:  "Kernel",
+			RequiredFor: "Linux sandbox baseline",
+			Status:      "info",
+			Details:     fmt.Sprintf("%d.%d (linux/%s)", features.KernelMajor, features.KernelMinor, runtime.GOARCH),
+		},
+		{
+			Capability:  "Bubblewrap",
+			RequiredFor: "core sandbox",
+			Status:      linuxFeatureStatus(features.HasBwrap),
+			Details:     linuxCommandDetail("bwrap", features.HasBwrap),
+		},
+		{
+			Capability:  "Socat",
+			RequiredFor: "proxy bridges",
+			Status:      linuxFeatureStatus(features.HasSocat),
+			Details:     linuxCommandDetail("socat", features.HasSocat),
+		},
+		{
+			Capability:  "Network namespace",
+			RequiredFor: "direct network isolation",
+			Status:      linuxFeatureStatus(features.CanUnshareNet),
+			Details:     linuxNetworkNamespaceDetail(features),
+		},
+		{
+			Capability:  "Seccomp filter",
+			RequiredFor: "syscall hardening",
+			Status:      linuxFeatureStatus(features.Seccomp.Filter),
+			Details:     linuxSeccompDetail(features.Seccomp.Filter, "Fence BPF filter installs", features.Seccomp.FilterError),
+		},
+		{
+			Capability:  "Seccomp log action",
+			RequiredFor: "violation diagnostics",
+			Status:      linuxFeatureStatus(features.Seccomp.Log),
+			Details:     linuxSeccompDetail(features.Seccomp.Log, "SECCOMP_RET_LOG accepted", features.Seccomp.LogError),
+		},
+		{
+			Capability:  "Seccomp user notification",
+			RequiredFor: `runtimeExecPolicy: "argv"`,
+			Status:      linuxFeatureStatus(features.Seccomp.UserNotify),
+			Details:     linuxSeccompDetail(features.Seccomp.UserNotify, "listener filter installs", features.Seccomp.UserNotifyError),
+		},
+		{
+			Capability:  "Landlock",
+			RequiredFor: "extra filesystem enforcement",
+			Status:      linuxFeatureStatus(features.CanUseLandlock()),
+			Details:     linuxLandlockDetail(features),
+		},
+		{
+			Capability:  "eBPF monitor",
+			RequiredFor: "enhanced monitor mode",
+			Status:      linuxFeatureStatus(features.HasEBPF),
+			Details:     linuxEBPFDetail(features),
+		},
+	}
+	if features.IsWSL {
+		rows = append(rows, linuxFeatureTableRow{
+			Capability:  "WSL interop",
+			RequiredFor: "Windows executable handling",
+			Status:      "detected",
+			Details:     "wslInterop rules may apply",
+		})
+	}
+	return rows
+}
+
+func printLinuxFeatureTable(rows []linuxFeatureTableRow) {
+	fmt.Println("Linux Sandbox Features:")
+	fmt.Println()
+	headers := linuxFeatureTableRow{
+		Capability:  "Capability",
+		RequiredFor: "Required For",
+		Status:      "Status",
+		Details:     "Details",
 	}
 
+	capabilityWidth := len(headers.Capability)
+	requiredForWidth := len(headers.RequiredFor)
+	statusWidth := len(headers.Status)
+	for _, row := range rows {
+		capabilityWidth = max(capabilityWidth, len(row.Capability))
+		requiredForWidth = max(requiredForWidth, len(row.RequiredFor))
+		statusWidth = max(statusWidth, len(row.Status))
+	}
+
+	fmt.Printf("  %-*s  %-*s  %-*s  %s\n", capabilityWidth, headers.Capability, requiredForWidth, headers.RequiredFor, statusWidth, headers.Status, headers.Details)
+	fmt.Printf("  %-*s  %-*s  %-*s  %s\n",
+		capabilityWidth, strings.Repeat("-", capabilityWidth),
+		requiredForWidth, strings.Repeat("-", requiredForWidth),
+		statusWidth, strings.Repeat("-", statusWidth),
+		strings.Repeat("-", len(headers.Details)),
+	)
+	for _, row := range rows {
+		fmt.Printf("  %-*s  %-*s  %-*s  %s\n", capabilityWidth, row.Capability, requiredForWidth, row.RequiredFor, statusWidth, row.Status, row.Details)
+	}
+}
+
+func linuxFeatureStatus(ok bool) string {
+	if ok {
+		return "ok"
+	}
+	return "unavailable"
+}
+
+func linuxCommandDetail(name string, ok bool) string {
+	if !ok {
+		return "not found in PATH"
+	}
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return "found during detection"
+	}
+	return path
+}
+
+func linuxNetworkNamespaceDetail(features *LinuxFeatures) string {
 	if features.CanUnshareNet {
-		fmt.Printf("  ✓ Network namespace isolation available\n")
-	} else if features.HasBwrap {
-		fmt.Printf("  ⚠ Network namespace unavailable (containerized environment?)\n")
-		fmt.Printf("    Sandbox will still work but with reduced network isolation.\n")
-		fmt.Printf("    This is common in Docker, GitHub Actions, and other CI systems.\n")
+		return "bwrap --unshare-net works"
 	}
+	if !features.HasBwrap {
+		return "requires bubblewrap"
+	}
+	return "sandbox continues without network namespace isolation"
+}
 
+func linuxSeccompDetail(ok bool, successDetail string, errDetail string) string {
+	if ok {
+		return successDetail
+	}
+	if errDetail != "" {
+		return errDetail
+	}
+	return "not available"
+}
+
+func linuxLandlockDetail(features *LinuxFeatures) string {
 	if features.CanUseLandlock() {
-		fmt.Printf("  ✓ Landlock available for enhanced filesystem control\n")
-	} else {
-		fmt.Printf("  ○ Landlock not available (kernel 5.13+ required)\n")
+		return fmt.Sprintf("ABI v%d", features.LandlockABI)
 	}
+	return "kernel support or permissions unavailable"
+}
 
-	if features.CanMonitorViolations() {
-		fmt.Printf("  ✓ Violation monitoring available\n")
-	} else {
-		fmt.Printf("  ○ Violation monitoring limited (kernel 4.14+ for seccomp logging)\n")
-	}
-
-	if features.HasEBPF {
-		fmt.Printf("  ✓ eBPF monitoring available (enhanced visibility)\n")
-	} else {
-		fmt.Printf("  ○ eBPF monitoring not available (needs CAP_BPF or root)\n")
+func linuxEBPFDetail(features *LinuxFeatures) string {
+	switch {
+	case features.HasCapRoot:
+		return "available as root"
+	case features.HasCapBPF:
+		return "CAP_BPF available"
+	default:
+		return "needs root or CAP_BPF"
 	}
 }

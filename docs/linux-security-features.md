@@ -23,24 +23,24 @@ fence --linux-features
 
 # Example output:
 # Linux Sandbox Features:
-#   Kernel: 6.8
-#   Bubblewrap (bwrap): true
-#   Socat: true
-#   Seccomp: true (log level: 2)
-#   Landlock: true (ABI v4)
-#   eBPF: true (CAP_BPF: true, root: true)
-#
-# Feature Status:
-#   ✓ Minimum requirements met (bwrap + socat)
-#   ✓ Landlock available for enhanced filesystem control
-#   ✓ Violation monitoring available
-#   ✓ eBPF monitoring available (enhanced visibility)
+#   Capability                 Required For                  Status  Details
+#   ----------                 ------------                  ------  -------
+#   Kernel                     Linux sandbox baseline        info    6.8 (linux/arm64)
+#   Bubblewrap                 core sandbox                  ok      /usr/bin/bwrap
+#   Socat                      proxy bridges                 ok      /usr/bin/socat
+#   Network namespace          direct network isolation      ok      bwrap --unshare-net works
+#   Seccomp filter             syscall hardening             ok      Fence BPF filter installs
+#   Seccomp log action         violation diagnostics         ok      SECCOMP_RET_LOG accepted
+#   Seccomp user notification  runtimeExecPolicy: "argv"    ok      listener filter installs
+#   Landlock                   extra filesystem enforcement  ok      ABI v4
+#   eBPF monitor               enhanced monitor mode         ok      available as root
 ```
 
 Seccomp feature levels:
 
-- `Seccomp: true (log level: 1)` means seccomp filtering is available and the kernel supports `SECCOMP_RET_LOG`
-- `Seccomp: true (log level: 2)` means seccomp user notification is available; Fence uses this for `command.runtimeExecPolicy: "argv"` on Linux
+- `Seccomp filter` with status `ok` means Fence has proved it can install the BPF syscall filter it gives to bubblewrap
+- `Seccomp log action` with status `ok` means the kernel accepts `SECCOMP_RET_LOG`
+- `Seccomp user notification` with status `ok` means Fence can install a listener filter; Fence uses this for `command.runtimeExecPolicy: "argv"` on Linux
 
 ## Landlock Integration
 
@@ -83,11 +83,11 @@ Failure mode:
 - **Fallback**: Uses bwrap mount-based restrictions only
 - **Security**: Still protected by bwrap's read-only mounts
 
-### When seccomp logging is not available (kernel < 4.14)
+### When seccomp filter or logging is not available
 
-- **Impact**: Blocked syscalls are not logged
-- **Fallback**: Syscalls are still blocked, just silently
-- **Workaround**: Use `dmesg` manually to check for blocked syscalls
+- **Impact**: If filter installation is unavailable, Fence skips the optional seccomp hardening layer; if only logging is unavailable, blocked syscalls are not logged
+- **Fallback**: The sandbox still uses bubblewrap filesystem/PID/network isolation and Landlock where available
+- **Cause**: Older kernels, restricted containers, or emulation environments may reject seccomp filter installation even when the kernel version looks new enough
 
 ### When seccomp user notification is not available (kernel < 5.0 or restricted environment)
 
@@ -109,7 +109,7 @@ Failure mode:
 - **Impact**: `--unshare-net` is skipped; network is not fully isolated
 - **Cause**: Running in Docker, GitHub Actions, or other environments without `CAP_NET_ADMIN`
 - **Fallback**: Proxy-based filtering still works; filesystem/PID/seccomp isolation still active
-- **Check**: Run `fence --linux-features` and look for "Network namespace (--unshare-net): false"
+- **Check**: Run `fence --linux-features` and look for `Network namespace` with status `unavailable`
 - **Workaround**: Run with `sudo`, or in Docker use `--cap-add=NET_ADMIN`
 
 > [!NOTE]

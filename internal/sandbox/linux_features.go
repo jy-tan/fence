@@ -3,6 +3,7 @@
 package sandbox
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,6 +24,7 @@ type LinuxFeatures struct {
 	// Kernel features
 	HasSeccomp      bool
 	SeccompLogLevel int // 0=none, 1=LOG, 2=USER_NOTIF
+	Seccomp         LinuxSeccompCapabilities
 	HasLandlock     bool
 	LandlockABI     int // 0=none, 1-4 = ABI version
 
@@ -43,10 +45,48 @@ type LinuxFeatures struct {
 	KernelMinor int
 }
 
+// LinuxSeccompCapabilities describes seccomp features that Fence has proved it
+// can actually install in this process family. Probe failures are kept for
+// diagnostics because emulators and container runtimes often fail differently.
+type LinuxSeccompCapabilities struct {
+	Filter          bool
+	UserNotify      bool
+	Log             bool
+	FilterError     string
+	UserNotifyError string
+	LogError        string
+}
+
 var (
 	detectedFeatures *LinuxFeatures
 	detectOnce       sync.Once
 )
+
+type linuxSeccompProbeKind string
+
+const (
+	linuxSeccompProbeEnv        = "FENCE_INTERNAL_SECCOMP_PROBE"
+	linuxSeccompProbeFilter     = linuxSeccompProbeKind("filter")
+	linuxSeccompProbeUserNotify = linuxSeccompProbeKind("user-notify")
+)
+
+type linuxSeccompProbeFunc func(linuxSeccompProbeKind) error
+type linuxSeccompActionProbeFunc func(uint32) error
+
+var (
+	linuxSeccompProbe       linuxSeccompProbeFunc       = runLinuxSeccompProbeProcess
+	linuxSeccompActionProbe linuxSeccompActionProbeFunc = probeLinuxSeccompAction
+)
+
+func init() {
+	if probe := os.Getenv(linuxSeccompProbeEnv); probe != "" {
+		if err := runLinuxSeccompProbeHelper(linuxSeccompProbeKind(probe)); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+}
 
 // DetectLinuxFeatures checks what sandboxing features are available.
 // Results are cached for subsequent calls.
@@ -99,23 +139,176 @@ func (f *LinuxFeatures) parseKernelVersion() {
 }
 
 func (f *LinuxFeatures) detectSeccomp() {
-	// Check if seccomp is supported via prctl
-	// PR_GET_SECCOMP returns 0 if seccomp is disabled, 1/2 if enabled, -1 on error
-	_, _, err := unix.Syscall(unix.SYS_PRCTL, unix.PR_GET_SECCOMP, 0, 0)
-	if err == 0 || err == unix.EINVAL {
-		// EINVAL means seccomp is supported but not enabled for this process
-		f.HasSeccomp = true
-	}
+	f.Seccomp = detectLinuxSeccompCapabilities()
+	f.HasSeccomp = f.Seccomp.Filter
 
-	// SECCOMP_RET_LOG available since kernel 4.14
-	if f.KernelMajor > 4 || (f.KernelMajor == 4 && f.KernelMinor >= 14) {
-		f.SeccompLogLevel = 1
-	}
-
-	// SECCOMP_RET_USER_NOTIF available since kernel 5.0
-	if f.KernelMajor >= 5 {
+	switch {
+	case f.Seccomp.UserNotify:
 		f.SeccompLogLevel = 2
+	case f.Seccomp.Log:
+		f.SeccompLogLevel = 1
+	default:
+		f.SeccompLogLevel = 0
 	}
+}
+
+func detectLinuxSeccompCapabilities() LinuxSeccompCapabilities {
+	var caps LinuxSeccompCapabilities
+
+	if err := linuxSeccompProbe(linuxSeccompProbeFilter); err != nil {
+		caps.FilterError = err.Error()
+		return caps
+	}
+	caps.Filter = true
+
+	if err := linuxSeccompActionProbe(uint32(unix.SECCOMP_RET_LOG)); err != nil {
+		caps.LogError = err.Error()
+	} else {
+		caps.Log = true
+	}
+
+	if err := linuxSeccompProbe(linuxSeccompProbeUserNotify); err != nil {
+		caps.UserNotifyError = err.Error()
+	} else {
+		caps.UserNotify = true
+	}
+
+	return caps
+}
+
+func runLinuxSeccompProbeProcess(kind linuxSeccompProbeKind) error {
+	exePath, err := os.Executable()
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command(exePath) // #nosec G204 - re-executes the current binary as a private probe helper.
+	cmd.Env = append(os.Environ(), linuxSeccompProbeEnv+"="+string(kind))
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+
+	msg := strings.TrimSpace(string(output))
+	if msg == "" {
+		return err
+	}
+	return errors.New(msg)
+}
+
+func runLinuxSeccompProbeHelper(kind linuxSeccompProbeKind) error {
+	switch kind {
+	case linuxSeccompProbeFilter:
+		return probeLinuxSeccompFilter()
+	case linuxSeccompProbeUserNotify:
+		return probeLinuxSeccompUserNotify()
+	default:
+		return fmt.Errorf("unknown seccomp probe %q", kind)
+	}
+}
+
+func probeLinuxSeccompFilter() error {
+	filter, err := buildLinuxSeccompFilterProbeProgram()
+	if err != nil {
+		return err
+	}
+	if err := setLinuxNoNewPrivs(); err != nil {
+		return err
+	}
+	return prctlSetLinuxSeccompFilter(filter)
+}
+
+func probeLinuxSeccompUserNotify() error {
+	filter := []unix.SockFilter{
+		{Code: BPF_LD | BPF_W | BPF_ABS, K: seccompDataSyscallOffset},
+		{Code: BPF_JMP | BPF_JEQ | BPF_K, Jt: 0, Jf: 1, K: ^uint32(0)},
+		{Code: BPF_RET | BPF_K, K: unix.SECCOMP_RET_USER_NOTIF},
+		{Code: BPF_RET | BPF_K, K: unix.SECCOMP_RET_ALLOW},
+	}
+	if err := setLinuxNoNewPrivs(); err != nil {
+		return err
+	}
+	prog, err := sockFprog(filter)
+	if err != nil {
+		return err
+	}
+	fd, _, errno := linuxSeccompSetModeFilter(uintptr(unix.SECCOMP_FILTER_FLAG_NEW_LISTENER), prog)
+	if errno != 0 {
+		return errno
+	}
+	_ = unix.Close(int(fd)) //nolint:gosec // file descriptor returned by seccomp fits in int.
+	return nil
+}
+
+func buildLinuxSeccompFilterProbeProgram() ([]unix.SockFilter, error) {
+	program, err := NewSeccompFilter(false).buildBPFProgram()
+	if err != nil {
+		return nil, err
+	}
+	filter := make([]unix.SockFilter, len(program))
+	for i, inst := range program {
+		filter[i] = unix.SockFilter{
+			Code: inst.code,
+			Jt:   inst.jt,
+			Jf:   inst.jf,
+			K:    inst.k,
+		}
+	}
+	return filter, nil
+}
+
+func setLinuxNoNewPrivs() error {
+	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
+		return fmt.Errorf("prctl(PR_SET_NO_NEW_PRIVS): %w", err)
+	}
+	return nil
+}
+
+func prctlSetLinuxSeccompFilter(filter []unix.SockFilter) error {
+	prog, err := sockFprog(filter)
+	if err != nil {
+		return err
+	}
+	if err := unix.Prctl(
+		unix.PR_SET_SECCOMP,
+		uintptr(unix.SECCOMP_MODE_FILTER),
+		uintptr(unsafe.Pointer(prog)),
+		0,
+		0,
+	); err != nil {
+		return fmt.Errorf("prctl(PR_SET_SECCOMP): %w", err)
+	}
+	return nil
+}
+
+func probeLinuxSeccompAction(action uint32) error {
+	_, _, errno := unix.Syscall(
+		unix.SYS_SECCOMP,
+		uintptr(unix.SECCOMP_GET_ACTION_AVAIL),
+		0,
+		uintptr(unsafe.Pointer(&action)),
+	)
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+func sockFprog(filter []unix.SockFilter) (*unix.SockFprog, error) {
+	if len(filter) == 0 {
+		return nil, fmt.Errorf("seccomp filter is empty")
+	}
+	if len(filter) > int(^uint16(0)) {
+		return nil, fmt.Errorf("seccomp filter too large: %d instructions", len(filter))
+	}
+	var filterLen uint16
+	for range filter {
+		filterLen++
+	}
+	return &unix.SockFprog{
+		Len:    filterLen,
+		Filter: &filter[0],
+	}, nil
 }
 
 func (f *LinuxFeatures) detectLandlock() {
@@ -272,7 +465,8 @@ func (f *LinuxFeatures) Summary() string {
 
 // CanMonitorViolations returns true if we can monitor sandbox violations.
 func (f *LinuxFeatures) CanMonitorViolations() bool {
-	// seccomp LOG requires kernel 4.14+
+	// seccomp LOG availability is probed because containers and emulators can
+	// reject actions that the kernel version would otherwise imply.
 	// eBPF monitoring requires CAP_BPF or root
 	return f.SeccompLogLevel >= 1 || f.HasEBPF
 }
