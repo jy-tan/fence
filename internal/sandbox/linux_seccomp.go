@@ -155,7 +155,8 @@ func (s *SeccompFilter) buildBPFProgram() ([]bpfInstruction, error) {
 	// TIOCSTI specifically so sandboxed processes cannot inject keystrokes into
 	// the caller's terminal. Only the low 32 bits are relevant for ioctl cmds.
 	if ioctlNum, ok := getSyscallNumber("ioctl"); ok {
-		program = append(program,
+		program = append(
+			program,
 			bpfInstruction{
 				code: BPF_JMP | BPF_JEQ | BPF_K,
 				jt:   0,

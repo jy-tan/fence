@@ -11,7 +11,8 @@ import (
 )
 
 func TestDetectSeccompRequiresFilterProbeSuccess(t *testing.T) {
-	restore := stubLinuxSeccompProbes(t,
+	restore := stubLinuxSeccompProbes(
+		t,
 		func(kind linuxSeccompProbeKind) error {
 			if kind == linuxSeccompProbeFilter {
 				return unix.EINVAL
@@ -47,7 +48,8 @@ func TestDetectSeccompRequiresFilterProbeSuccess(t *testing.T) {
 }
 
 func TestDetectSeccompKeepsFilterWhenOptionalProbesFail(t *testing.T) {
-	restore := stubLinuxSeccompProbes(t,
+	restore := stubLinuxSeccompProbes(
+		t,
 		func(kind linuxSeccompProbeKind) error {
 			switch kind {
 			case linuxSeccompProbeFilter:
@@ -92,7 +94,8 @@ func TestDetectSeccompKeepsFilterWhenOptionalProbesFail(t *testing.T) {
 }
 
 func TestDetectSeccompReportsUserNotifyAsHighestCapability(t *testing.T) {
-	restore := stubLinuxSeccompProbes(t,
+	restore := stubLinuxSeccompProbes(
+		t,
 		func(kind linuxSeccompProbeKind) error {
 			switch kind {
 			case linuxSeccompProbeFilter, linuxSeccompProbeUserNotify:

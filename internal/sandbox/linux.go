@@ -711,7 +711,8 @@ func appendLinuxBootstrapExecutableMounts(args []string, mounts []linuxBootstrap
 		return args
 	}
 
-	args = append(args,
+	args = append(
+		args,
 		"--dir", linuxBootstrapDir,
 		"--dir", linuxBootstrapBinDir,
 	)
@@ -788,7 +789,8 @@ trap cleanup EXIT
 	script.WriteString(linuxRuntimeEnvScript())
 
 	if bridge != nil {
-		_, _ = fmt.Fprintf(&script, `
+		_, _ = fmt.Fprintf(
+			&script, `
 # Start HTTP proxy listener (port 3128 -> Unix socket -> host HTTP proxy)
 fence_start_helper %s
 HTTP_PID=$!
@@ -826,7 +828,8 @@ export FENCE_SANDBOX=1
 		script.WriteString("\n# Start reverse bridge listeners for inbound connections\n")
 		for i, port := range reverseBridge.Ports {
 			socketPath := reverseBridge.SocketPaths[i]
-			_, _ = fmt.Fprintf(&script, "fence_start_helper %s\n",
+			_, _ = fmt.Fprintf(
+				&script, "fence_start_helper %s\n",
 				ShellQuote([]string{
 					bootstrapExecs.Socat,
 					fmt.Sprintf("UNIX-LISTEN:%s,fork,reuseaddr", socketPath),
@@ -842,7 +845,8 @@ export FENCE_SANDBOX=1
 		script.WriteString("\n# Start localhost-outbound bridge listeners so sandbox 127.0.0.1:<port> reaches host 127.0.0.1:<port>\n")
 		for i, port := range opts.LocalOutboundBridge.Ports {
 			socketPath := opts.LocalOutboundBridge.SocketPaths[i]
-			_, _ = fmt.Fprintf(&script, "fence_start_helper %s\n",
+			_, _ = fmt.Fprintf(
+				&script, "fence_start_helper %s\n",
 				ShellQuote([]string{
 					bootstrapExecs.Socat,
 					fmt.Sprintf("TCP-LISTEN:%d,bind=127.0.0.1,fork,reuseaddr", port),
@@ -1430,7 +1434,8 @@ func WrapCommandLinuxWithOptions(cfg *config.Config, command string, bridge *Lin
 
 	// Bind the outbound Unix sockets into the sandbox (need to be writable)
 	if bridge != nil {
-		bwrapArgs = append(bwrapArgs,
+		bwrapArgs = append(
+			bwrapArgs,
 			"--bind", bridge.HTTPSocketPath, bridge.HTTPSocketPath,
 			"--bind", bridge.SOCKSSocketPath, bridge.SOCKSSocketPath,
 		)
@@ -1694,7 +1699,8 @@ func printLinuxFeatureTable(rows []linuxFeatureTableRow) {
 	}
 
 	fmt.Printf("  %-*s  %-*s  %-*s  %s\n", capabilityWidth, headers.Capability, requiredForWidth, headers.RequiredFor, statusWidth, headers.Status, headers.Details)
-	fmt.Printf("  %-*s  %-*s  %-*s  %s\n",
+	fmt.Printf(
+		"  %-*s  %-*s  %-*s  %s\n",
 		capabilityWidth, strings.Repeat("-", capabilityWidth),
 		requiredForWidth, strings.Repeat("-", requiredForWidth),
 		statusWidth, strings.Repeat("-", statusWidth),

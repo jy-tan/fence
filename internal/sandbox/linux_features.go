@@ -274,7 +274,7 @@ func prctlSetLinuxSeccompFilter(filter []unix.SockFilter) error {
 	if err := unix.Prctl(
 		unix.PR_SET_SECCOMP,
 		uintptr(unix.SECCOMP_MODE_FILTER),
-		uintptr(unsafe.Pointer(prog)),
+		uintptr(unsafe.Pointer(prog)), //nolint:gosec // prctl(PR_SET_SECCOMP) requires a pointer to struct sock_fprog.
 		0,
 		0,
 	); err != nil {
@@ -288,7 +288,7 @@ func probeLinuxSeccompAction(action uint32) error {
 		unix.SYS_SECCOMP,
 		uintptr(unix.SECCOMP_GET_ACTION_AVAIL),
 		0,
-		uintptr(unsafe.Pointer(&action)),
+		uintptr(unsafe.Pointer(&action)), //nolint:gosec // seccomp(2) requires a pointer to the queried action value.
 	)
 	if errno != 0 {
 		return errno
