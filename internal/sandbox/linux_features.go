@@ -70,8 +70,10 @@ const (
 	linuxSeccompProbeUserNotify = linuxSeccompProbeKind("user-notify")
 )
 
-type linuxSeccompProbeFunc func(linuxSeccompProbeKind) error
-type linuxSeccompActionProbeFunc func(uint32) error
+type (
+	linuxSeccompProbeFunc       func(linuxSeccompProbeKind) error
+	linuxSeccompActionProbeFunc func(uint32) error
+)
 
 var (
 	linuxSeccompProbe       linuxSeccompProbeFunc       = runLinuxSeccompProbeProcess
