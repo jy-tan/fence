@@ -12,6 +12,7 @@ Fence is a sandboxing tool that restricts network and filesystem access for arbi
 - [Concepts](concepts.md) - Mental model: OS sandbox + local proxies + config
 - [Troubleshooting](troubleshooting.md) - Common failure modes and fixes
 - [Using Fence with AI agents](agents.md) - Defense-in-depth and policy standardization
+- [Agent Hooks](hooks.md) - Hook integrations and per-agent enforcement capabilities
 - [Recipes](recipes/README.md) - Common workflows (npm/pip/git/CI)
 - [Templates](./templates.md) - Copy/paste templates you can start from
 

@@ -187,6 +187,7 @@ Quick links:
 
 - [Quickstart](https://fencesandbox.com/docs/quickstart) ([source](docs/quickstart.md))
 - [Configuration Reference](https://fencesandbox.com/docs/reference/configuration) ([source](docs/configuration.md))
+- [Agent Hooks](https://fencesandbox.com/docs/guides/hooks) ([source](docs/hooks.md))
 - [Security Model](https://fencesandbox.com/docs/reference/security-model) ([source](docs/security-model.md))
 - [Go Library Usage](https://fencesandbox.com/docs/reference/library) ([source](docs/library.md))
 - [Architecture](https://fencesandbox.com/docs/reference/architecture) ([source](ARCHITECTURE.md))

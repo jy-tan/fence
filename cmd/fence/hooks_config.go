@@ -32,6 +32,17 @@ func writeCursorHooksConfigWithOptions(w io.Writer, hookOptions hookFenceOptions
 	return err
 }
 
+func writeWindsurfHooksConfigWithOptions(w io.Writer, hookOptions hookFenceOptions) error {
+	config := buildWindsurfHooksConfigWithOptions(hookOptions)
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal Windsurf hook config: %w", err)
+	}
+
+	_, err = fmt.Fprintln(w, string(data))
+	return err
+}
+
 // writeOpencodeHooksConfig prints a minimal opencode.json snippet that
 // registers the Fence plugin via OpenCode's `plugin: [...]` array. Policy
 // pinning is not supported here; for that, see the local plugin shim flow
@@ -53,6 +64,14 @@ func defaultCursorHooksPath() string {
 		return ""
 	}
 	return filepath.Join(home, ".cursor", "hooks.json")
+}
+
+func defaultWindsurfHooksPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".codeium", "windsurf", "hooks.json")
 }
 
 // resolveOpencodeConfigPath returns the OpenCode config path to install into,
@@ -106,6 +125,14 @@ func buildCursorHooksConfigWithOptions(hookOptions hookFenceOptions) map[string]
 	}
 }
 
+func buildWindsurfHooksConfigWithOptions(hookOptions hookFenceOptions) map[string]any {
+	hooks := map[string]any{}
+	for _, eventName := range windsurfHookEventNames() {
+		hooks[eventName] = []any{buildWindsurfHookWithOptions(hookOptions)}
+	}
+	return map[string]any{"hooks": hooks}
+}
+
 func buildClaudePreToolUseHookGroupWithOptions(hookOptions hookFenceOptions) map[string]any {
 	return map[string]any{
 		"matcher": "Bash",
@@ -125,6 +152,13 @@ func buildCursorPreToolUseHookGroupWithOptions(hookOptions hookFenceOptions) map
 	}
 }
 
+func buildWindsurfHookWithOptions(hookOptions hookFenceOptions) map[string]any {
+	return map[string]any{
+		"command":     windsurfHookCommandWithOptions(hookOptions),
+		"show_output": true,
+	}
+}
+
 func claudeHookCommand() string {
 	return claudeHookCommandWithOptions(hookFenceOptions{})
 }
@@ -141,6 +175,16 @@ func cursorHookCommand() string {
 
 func cursorHookCommandWithOptions(hookOptions hookFenceOptions) string {
 	args := []string{"fence", cursorPreToolUseMode}
+	args = append(args, hookOptions.fenceArgs()...)
+	return sandbox.ShellQuote(args)
+}
+
+func windsurfHookCommand() string {
+	return windsurfHookCommandWithOptions(hookFenceOptions{})
+}
+
+func windsurfHookCommandWithOptions(hookOptions hookFenceOptions) string {
+	args := []string{"fence", windsurfHookMode}
 	args = append(args, hookOptions.fenceArgs()...)
 	return sandbox.ShellQuote(args)
 }
@@ -246,6 +290,51 @@ func installCursorHookWithOptions(path string, hookOptions hookFenceOptions) (bo
 	return true, nil
 }
 
+func installWindsurfHook(path string, hookOptions hookFenceOptions) (bool, error) {
+	doc, err := loadHookConfigDocument(path, "Windsurf hooks config")
+	if err != nil {
+		return false, err
+	}
+
+	hooks, err := ensureJSONObjectField(doc, "hooks", "Windsurf hooks config")
+	if err != nil {
+		return false, err
+	}
+
+	desiredCommand := windsurfHookCommandWithOptions(hookOptions)
+	changed := false
+	for _, eventName := range windsurfHookEventNames() {
+		entries, err := getJSONArrayField(hooks, eventName, "Windsurf hooks config")
+		if err != nil {
+			return false, err
+		}
+		summary := summarizeHookCommands(entries, desiredCommand, isWindsurfHookCommand)
+		if summary.Total == 1 && summary.Exact == 1 {
+			continue
+		}
+
+		filtered := entries
+		if summary.Total > 0 {
+			var removed bool
+			filtered, removed = removeHookCommands(entries, isWindsurfHookCommand)
+			if !removed {
+				filtered = entries
+			}
+		}
+		hooks[eventName] = append(filtered, buildWindsurfHookWithOptions(hookOptions))
+		changed = true
+	}
+	if !changed {
+		return false, nil
+	}
+	doc["hooks"] = hooks
+
+	if err := writeHookConfigDocument(path, doc, "Windsurf hooks config"); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func uninstallClaudeHook(path string) (bool, error) {
 	doc, err := loadHookConfigDocument(path, "Claude settings")
 	if err != nil {
@@ -346,12 +435,90 @@ func uninstallCursorHook(path string) (bool, error) {
 	return true, nil
 }
 
+func uninstallWindsurfHook(path string) (bool, error) {
+	doc, err := loadHookConfigDocument(path, "Windsurf hooks config")
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	hooksValue, ok := doc["hooks"]
+	if !ok {
+		return false, nil
+	}
+	hooks, ok := hooksValue.(map[string]any)
+	if !ok {
+		return false, fmt.Errorf("invalid Windsurf hooks config: hooks must be an object")
+	}
+
+	changed := false
+	for _, eventName := range windsurfHookEventNames() {
+		entriesValue, ok := hooks[eventName]
+		if !ok {
+			continue
+		}
+		entries, ok := entriesValue.([]any)
+		if !ok {
+			return false, fmt.Errorf("invalid Windsurf hooks config: hooks.%s must be an array", eventName)
+		}
+		filtered, removed := removeHookCommands(entries, isWindsurfHookCommand)
+		if !removed {
+			continue
+		}
+		changed = true
+		if len(filtered) == 0 {
+			delete(hooks, eventName)
+		} else {
+			hooks[eventName] = filtered
+		}
+	}
+	if !changed {
+		return false, nil
+	}
+
+	if len(hooks) == 0 {
+		delete(doc, "hooks")
+	} else {
+		doc["hooks"] = hooks
+	}
+
+	if err := writeHookConfigDocument(path, doc, "Windsurf hooks config"); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func isClaudeHookCommand(command string) bool {
 	return containsHelperMode(command, claudePreToolUseMode)
 }
 
 func isCursorHookCommand(command string) bool {
 	return containsHelperMode(command, cursorPreToolUseMode)
+}
+
+func isWindsurfHookCommand(command string) bool {
+	return containsHelperMode(command, windsurfHookMode)
+}
+
+func windsurfHookEventNames() []string {
+	return []string{"pre_run_command", "pre_write_code"}
+}
+
+func windsurfEmptyPolicyAdvice(hookOptions hookFenceOptions) []string {
+	audit, err := loadActiveConfigAudit("", hookOptions.SettingsPath, hookOptions.TemplateName)
+	if err != nil || audit == nil || audit.Config == nil {
+		return nil
+	}
+	if len(audit.Config.Filesystem.AllowWrite) != 0 {
+		return nil
+	}
+	return []string{
+		"filesystem.allowWrite is empty: Windsurf pre_write_code hooks will be denied",
+		"To start with sane defaults for coding agents, run:",
+		"  fence hooks install --windsurf --template code",
+	}
 }
 
 // installOpencodePlugin adds the Fence plugin package to opencode.json's

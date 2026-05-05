@@ -21,7 +21,7 @@ Fence can also reduce the risk of running agents with fewer interactive permissi
 > **Command policy and child processes.** When you wrap a long-running agent (`fence -t code -- claude`), Fence's `command.deny` rules catch the literal command Fence is told to run, plus — at runtime — single-token denies (e.g. `sudo`) on any descendant process. Multi-token rules like `gh repo create`, `git push`, or `npm publish` are only enforced at runtime when:
 >
 > - you're on Linux with `command.runtimeExecPolicy: "argv"` (opt-in), or
-> - you've installed an agent hook (see [Hooks](#hooks)) that re-pipes each shell tool call through `fence -c`.
+> - you've installed an agent hook (see [Agent Hooks](hooks.md)) that re-pipes each shell tool call through `fence -c`.
 >
 > On macOS in the default mode, multi-token denies apply to commands you type directly to `fence` but not to commands an agent spawns as a child process. This is a property of macOS Seatbelt's exec model, not a config bug - see [Enforcement Across Child Processes](configuration.md#enforcement-across-child-processes) for the full matrix and recommended workarounds.
 
@@ -56,7 +56,7 @@ You can use it like `fence -t code -- claude`.
 | Agent | Works with template | Notes |
 |-------|--------| ----- |
 | Claude Code | `code` | - |
-| Codex | `code` | - |
+| Codex CLI | `code` | - |
 | Gemini CLI | `code` | - |
 | OpenCode | `code` | - |
 | Amp | `code` | - |
@@ -72,148 +72,15 @@ Note: On Linux, if OpenCode or Gemini CLI is installed via Linuxbrew, Landlock c
 
 ## Hooks
 
-Hook-based wrapping uses the agent/editor's own hook system to rewrite shell tool invocations up front so they run through `fence -c`, instead of trying to catch child execs at the OS exec boundary. It is the recommended way to enforce **multi-token command policy** (e.g. `gh repo create`, `git push`) inside agents on macOS, and on Linux when `runtimeExecPolicy: "argv"` is not enabled — see [Enforcement Across Child Processes](configuration.md#enforcement-across-child-processes) for why this gap exists.
+Hook-based wrapping uses the agent/editor's own hook system to inspect tool
+calls before they run. For Claude Code, Cursor, and OpenCode, Fence can rewrite
+allowed shell commands to `fence -c ...`, so the command runs inside the
+sandbox. Hermes and Windsurf have broader but intent-only hook surfaces for
+checking declared tool inputs before they run.
 
-Prefer whole-agent wrapping (`fence -- <agent>`) when possible — it is the stronger isolation model for filesystem and network policy. Hooks are the right addition when you want multi-token command denies to apply to the agent's tool-issued shell calls; the two approaches compose.
-
-`print` emits the hook snippet, and `install`/`uninstall` manage the default
-settings file for that integration.
-
-If you want hook-invoked shell commands to use a specific Fence policy instead
-of resolving config at runtime, generate or install the hook with
-`--settings /path/to/fence.json` or `--template code`. Supported on
-`--claude` and `--cursor`; the `--opencode` install path uses a different
-mechanism (see below).
-
-Commands that already violate Fence command policy are denied directly at hook
-time instead of being rewritten to a nested `fence -c ...` invocation.
-
-If the agent is already running inside Fence, the helper avoids launching a
-second nested sandbox and only applies Fence's command policy at hook time.
-
-### Claude Code
-
-Claude Code uses `PreToolUse` for `Bash` and calls
-`fence --claude-pre-tool-use`:
-
-```bash
-fence hooks print --claude
-fence hooks install --claude
-fence hooks uninstall --claude
-```
-
-Default file: `~/.claude/settings.json`
-
-### Cursor
-
-Cursor uses `preToolUse` for `Shell` and calls
-`fence --cursor-pre-tool-use`:
-
-```bash
-fence hooks print --cursor
-fence hooks install --cursor
-fence hooks uninstall --cursor
-```
-
-Default file: `~/.cursor/hooks.json`
-
-Cursor may also run Claude Code hook commands if Claude settings are present.
-Fence handles that too by accepting either Cursor or Claude hook payloads.
-
-### OpenCode
-
-OpenCode loads plugins from npm packages listed in its `plugin` array, so the
-Fence integration ships as the [`@use-tusk/opencode-fence`](https://github.com/Use-Tusk/opencode-fence)
-plugin. It hooks `tool.execute.before` for the `bash` tool and calls
-`fence --opencode-pre-tool-use`:
-
-```bash
-fence hooks print --opencode
-fence hooks install --opencode
-fence hooks uninstall --opencode
-```
-
-Default file: `~/.config/opencode/opencode.jsonc` if it exists, otherwise
-`~/.config/opencode/opencode.json` (created on first install). Override with
-`--file` to target a project-local `opencode.{json,jsonc}`.
-
-`install --opencode` only adds `@use-tusk/opencode-fence` to the `plugin`
-array; OpenCode's npm-package plugin loader does not accept options, so
-`--settings` and `--template` are not supported with `--opencode`. To pin a
-specific config or template, write a local plugin shim under
-`~/.config/opencode/plugins/` that constructs `FencePlugin({...})` directly -
-see the plugin's [README](https://github.com/Use-Tusk/opencode-fence#configuration).
-
-> [!NOTE]
-> **OpenCode `!`-prefixed commands bypass the plugin.** OpenCode's plugin
-> lifecycle currently does not fire `tool.execute.before` for commands the
-> user types directly into the TUI with the `!` prefix, so those bypass the
-> Fence plugin even when installed. Whole-agent wrapping
-> (`fence -t code -- opencode`) still applies its filesystem and network
-> policy to those commands; only multi-token command denies are missed for
-> the `!` path.
-
-### Hermes Agent
-
-Hermes Agent has a YAML-declared shell-hook system (`~/.hermes/config.yaml`)
-that pipes JSON to a subprocess on stdin and reads JSON on stdout, so the
-Fence integration ships as the `fence` binary itself, no separate package.
-It registers `pre_tool_call` hooks for Hermes' `terminal`, `write_file`,
-`patch`, and `web_extract` tools and calls `fence --hermes-pre-tool-use`:
-
-```bash
-fence hooks print --hermes
-fence hooks install --hermes --template hermes       # recommended starting point
-fence hooks install --hermes --settings ./fence.json # pin a project config
-fence hooks uninstall --hermes
-```
-
-The `hermes` template extends `code` with messaging-platform domains
-(Telegram, Discord, Slack, Feishu, ...), Hermes-specific LLM providers,
-and writable `~/.hermes/**`. Use it as a starting point and override
-locally as needed; refine over time as Hermes' tool surface evolves.
-
-Default file: `~/.hermes/config.yaml`. Override with `--file` to target a
-project-local config or alternate profile.
-
-Unlike the coding-agent integrations above, the Hermes hook surface goes
-**beyond bash**. Each Hermes tool maps to one of Fence's existing config
-domains:
-
-| Hermes tool | Fence policy domain | Reads |
-|-------------|---------------------|-------|
-| `terminal` | `command.deny` / `command.allow` | `tool_input.command` |
-| `write_file` | `filesystem.allowWrite` / `denyWrite` (+ dangerous-files protection) | `tool_input.path` |
-| `patch` | `filesystem.allowWrite` / `denyWrite` (+ dangerous-files protection) | `tool_input.path` |
-| `web_extract` | `network.allowedDomains` / `deniedDomains` | `tool_input.url` |
-
-Tools not in this table — including channel sends (`send_message`,
-`discord_tool`, `feishu_doc_tool`, ...), MCP calls (`mcp_tool`),
-subagent spawning (`delegate_tool`), memory, todos, and image/TTS
-generation — are passed through unmodified at the hook layer. They
-don't fit Fence's filesystem/network/command vocabulary today.
-Wrap mode (`fence -t hermes -- hermes`) does cover their network
-traffic at the proxy layer; the two modes compose.
-
-> [!NOTE]
-> **Hermes hook mode is intent-only, not traffic-enforced.** Fence sees what
-> the agent declared it wants to do (which path, which URL) and decides
-> against your config; it doesn't sit in the syscall or HTTP path. If a
-> tool's actual implementation does something different from its declared
-> arguments (`web_extract` follows a redirect to a blocked host, for
-> example), the hook can't catch that. For traffic-time enforcement, also
-> wrap the gateway with `fence -- hermes` — the two compose.
-
-> [!NOTE]
-> **Consent / non-TTY runs.** Hermes prompts once per `(event, command)`
-> pair before running it. For the gateway, cron, or CI, run with
-> `HERMES_ACCEPT_HOOKS=1`, set `hooks_auto_accept: true` in
-> `~/.hermes/config.yaml`, or run `hermes` once interactively to record
-> the approval. See the Hermes
-> [Shell Hooks docs](https://docs.hermes-agent.com/docs/user-guide/features/hooks)
-> for the full consent model.
-
-If your coding agent has a hook or plugin system you'd like Fence to support, feel free to open an issue or pull request.
+See [Agent Hooks](hooks.md) for install commands, pinning options, limitations,
+and a capability matrix that shows which integrations provide runtime
+network/filesystem enforcement for allowed shell commands.
 
 ## Protecting your environment
 

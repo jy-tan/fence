@@ -408,7 +408,7 @@ Concretely, this means: with the default `code` template on macOS (or Linux in `
 To close this gap on a given platform, in order of preference:
 
 1. **Linux**: set `command.runtimeExecPolicy: "argv"`. Multi-token denies are then enforced against every descendant exec.
-2. **Use agent hooks** (cross-platform): for agents that expose a pre-tool-use hook (Claude Code, Cursor, etc.), `fence hooks install --claude` / `--cursor` reroutes each tool-issued shell call back through `fence -c`, which re-triggers preflight on the actual command string. See [Hooks](agents.md#hooks).
+2. **Use agent hooks** (cross-platform): for agents that expose a pre-tool-use hook (Claude Code, Cursor, etc.), `fence hooks install --claude` / `--cursor` reroutes each tool-issued shell call back through `fence -c`, which re-triggers preflight on the actual command string. See [Agent Hooks](hooks.md).
 3. **macOS, no agent hook available**: deny the whole executable as a single-token rule (e.g. add `gh` to `command.deny`) when you don't need any subcommand of it. This is blunt but reliable at runtime.
 
 Filesystem isolation, network egress allowlisting, and denied-credential rules apply to every descendant on every platform regardless of `runtimeExecPolicy`. This section is specifically about command-policy enforcement.

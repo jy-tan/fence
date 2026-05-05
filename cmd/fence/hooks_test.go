@@ -124,6 +124,43 @@ func TestHooksPrintCmd_PrintsCursorHookConfig(t *testing.T) {
 	}
 }
 
+func TestHooksPrintCmd_PrintsWindsurfHookConfig(t *testing.T) {
+	cmd := newHooksPrintCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetArgs([]string{"--windsurf"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("cmd.Execute() error = %v", err)
+	}
+
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+
+	hooksValue, ok := output["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected hooks object, got %#v", output["hooks"])
+	}
+	for _, eventName := range windsurfHookEventNames() {
+		entries, ok := hooksValue[eventName].([]any)
+		if !ok || len(entries) != 1 {
+			t.Fatalf("expected one %s hook, got %#v", eventName, hooksValue[eventName])
+		}
+		entry, ok := entries[0].(map[string]any)
+		if !ok {
+			t.Fatalf("expected %s hook object, got %#v", eventName, entries[0])
+		}
+		if got := entry["command"]; got != windsurfHookCommand() {
+			t.Fatalf("expected Windsurf helper command, got %#v", got)
+		}
+		if got := entry["show_output"]; got != true {
+			t.Fatalf("expected show_output=true, got %#v", got)
+		}
+	}
+}
+
 func TestHooksPrintCmd_RequiresTargetFlag(t *testing.T) {
 	cmd := newHooksPrintCmd()
 	cmd.SetArgs(nil)
@@ -360,6 +397,115 @@ func TestUninstallCursorHook_RemovesOnlyFenceHook(t *testing.T) {
 	group := preToolUse[0].(map[string]any)
 	if got := group["command"]; got != "echo keep" {
 		t.Fatalf("expected custom hook to be preserved, got %#v", got)
+	}
+}
+
+func TestInstallWindsurfHook_CreatesHooksFile(t *testing.T) {
+	hooksPath := filepath.Join(t.TempDir(), ".codeium", "windsurf", "hooks.json")
+
+	changed, err := installWindsurfHook(hooksPath, hookFenceOptions{})
+	if err != nil {
+		t.Fatalf("installWindsurfHook() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("expected install to create the Windsurf hooks")
+	}
+
+	doc := readHooksTestJSONFile(t, hooksPath)
+	hooks, ok := doc["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected hooks object, got %#v", doc["hooks"])
+	}
+	for _, eventName := range windsurfHookEventNames() {
+		entries, ok := hooks[eventName].([]any)
+		if !ok || len(entries) != 1 {
+			t.Fatalf("expected one %s hook, got %#v", eventName, hooks[eventName])
+		}
+	}
+}
+
+func TestInstallWindsurfHook_IsIdempotent(t *testing.T) {
+	hooksPath := filepath.Join(t.TempDir(), ".codeium", "windsurf", "hooks.json")
+
+	changed, err := installWindsurfHook(hooksPath, hookFenceOptions{})
+	if err != nil {
+		t.Fatalf("first installWindsurfHook() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("expected first install to change the file")
+	}
+
+	changed, err = installWindsurfHook(hooksPath, hookFenceOptions{})
+	if err != nil {
+		t.Fatalf("second installWindsurfHook() error = %v", err)
+	}
+	if changed {
+		t.Fatal("expected second install to be a no-op")
+	}
+}
+
+func TestUninstallWindsurfHook_RemovesOnlyFenceHooks(t *testing.T) {
+	hooksPath := filepath.Join(t.TempDir(), ".codeium", "windsurf", "hooks.json")
+	content := `{
+  "hooks": {
+    "pre_run_command": [
+      {
+        "command": "` + windsurfHookCommandWithOptions(hookFenceOptions{SettingsPath: "/tmp/fence policy.json"}) + `",
+        "show_output": true
+      },
+      {
+        "command": "echo keep"
+      }
+    ],
+    "pre_write_code": [
+      {
+        "command": "` + windsurfHookCommand() + `",
+        "show_output": true
+      }
+    ],
+    "post_run_command": [
+      {
+        "command": "echo audit"
+      }
+    ]
+  },
+  "theme": "dark"
+}`
+
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o750); err != nil {
+		t.Fatalf("os.MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(hooksPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	changed, err := uninstallWindsurfHook(hooksPath)
+	if err != nil {
+		t.Fatalf("uninstallWindsurfHook() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("expected uninstall to remove Windsurf hooks")
+	}
+
+	doc := readHooksTestJSONFile(t, hooksPath)
+	if got := doc["theme"]; got != "dark" {
+		t.Fatalf("expected unrelated top-level settings to be preserved, got %#v", got)
+	}
+
+	hooks := doc["hooks"].(map[string]any)
+	preRun := hooks["pre_run_command"].([]any)
+	if len(preRun) != 1 {
+		t.Fatalf("expected one remaining pre_run_command hook, got %d", len(preRun))
+	}
+	entry := preRun[0].(map[string]any)
+	if got := entry["command"]; got != "echo keep" {
+		t.Fatalf("expected custom pre_run_command hook to be preserved, got %#v", got)
+	}
+	if _, ok := hooks["pre_write_code"]; ok {
+		t.Fatalf("expected empty pre_write_code hooks to be removed, got %#v", hooks["pre_write_code"])
+	}
+	if _, ok := hooks["post_run_command"]; !ok {
+		t.Fatal("expected unrelated post_run_command hooks to be preserved")
 	}
 }
 
