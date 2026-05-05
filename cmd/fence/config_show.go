@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -82,7 +83,7 @@ func loadActiveConfigAudit(startDir, settingsPath, templateName string) (*active
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve settings path: %w", err)
 		}
-		return loadFileConfigAudit(resolvedPath, activeConfigRootSourceSettings)
+		return loadSettingsConfigAudit(resolvedPath)
 	default:
 		configPath, err := config.ResolveConfigPath(startDir)
 		if err != nil {
@@ -94,6 +95,34 @@ func loadActiveConfigAudit(startDir, settingsPath, templateName string) (*active
 		}
 		return loadFileConfigAudit(configPath, rootSource)
 	}
+}
+
+func loadSettingsConfigAudit(path string) (*activeConfigAudit, error) {
+	if info, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("settings file not found: %s", path)
+		}
+		return nil, fmt.Errorf("failed to stat settings file %q: %w", path, err)
+	} else if info.IsDir() {
+		return nil, fmt.Errorf("settings path is a directory: %s", path)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+	if cfg == nil {
+		return &activeConfigAudit{
+			Root: config.ResolutionStep{
+				Kind: config.ResolutionStepKindFile,
+				Path: path,
+			},
+			RootSource: activeConfigRootSourceSettings,
+			Config:     config.Default(),
+		}, nil
+	}
+
+	return loadedFileConfigAudit(path, activeConfigRootSourceSettings, cfg)
 }
 
 func loadFileConfigAudit(path string, rootSource activeConfigRootSource) (*activeConfigAudit, error) {
@@ -112,6 +141,10 @@ func loadFileConfigAudit(path string, rootSource activeConfigRootSource) (*activ
 		}, nil
 	}
 
+	return loadedFileConfigAudit(path, rootSource, cfg)
+}
+
+func loadedFileConfigAudit(path string, rootSource activeConfigRootSource, cfg *config.Config) (*activeConfigAudit, error) {
 	trace, err := templates.ResolveExtendsFromPathTrace(cfg, path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve extends: %w", err)

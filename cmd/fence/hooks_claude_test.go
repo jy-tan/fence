@@ -143,6 +143,10 @@ func TestBuildClaudePreToolUseResponse_LeavesCommandUnchangedInsideFence(t *test
 
 func TestBuildClaudePreToolUseResponse_UsesPinnedSettings(t *testing.T) {
 	t.Setenv(fenceSandboxEnvVar, "")
+	settingsPath := filepath.Join(t.TempDir(), "fence policy.json")
+	if err := os.WriteFile(settingsPath, []byte(`{}`), 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
 
 	input := `{
 		"hook_event_name": "PreToolUse",
@@ -155,7 +159,7 @@ func TestBuildClaudePreToolUseResponse_UsesPinnedSettings(t *testing.T) {
 	response, changed, err := buildClaudePreToolUseResponse(
 		strings.NewReader(input),
 		"/usr/local/bin/fence",
-		[]string{"--settings", "/tmp/fence policy.json"},
+		[]string{"--settings", settingsPath},
 	)
 	if err != nil {
 		t.Fatalf("buildClaudePreToolUseResponse() error = %v", err)
@@ -169,7 +173,7 @@ func TestBuildClaudePreToolUseResponse_UsesPinnedSettings(t *testing.T) {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
 
-	wantCommand := sandbox.ShellQuote([]string{"/usr/local/bin/fence", "--settings", "/tmp/fence policy.json", "-c", "npm test"})
+	wantCommand := sandbox.ShellQuote([]string{"/usr/local/bin/fence", "--settings", settingsPath, "-c", "npm test"})
 	if got := decoded.HookSpecificOutput.UpdatedInput["command"]; got != wantCommand {
 		t.Fatalf("expected wrapped command %q, got %#v", wantCommand, got)
 	}

@@ -246,6 +246,60 @@ func TestConfigureHostTTYChildProcessGroup_PTYRelay(t *testing.T) {
 	}
 }
 
+func TestConfigureRootFlagParsing_StopsAtFirstCommandArg(t *testing.T) {
+	var settingsPath string
+	var gotArgs []string
+	cmd := &cobra.Command{
+		Use:  "fence",
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			gotArgs = args
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&settingsPath, "settings", "s", "", "")
+	configureRootFlagParsing(cmd)
+	cmd.SetArgs([]string{"/bin/echo", "-s", "child-settings.json", "child"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("cmd.Execute() error = %v", err)
+	}
+	if settingsPath != "" {
+		t.Fatalf("expected child -s to remain unparsed by Fence, got settingsPath=%q", settingsPath)
+	}
+	wantArgs := []string{"/bin/echo", "-s", "child-settings.json", "child"}
+	if !slices.Equal(gotArgs, wantArgs) {
+		t.Fatalf("args = %v, want %v", gotArgs, wantArgs)
+	}
+}
+
+func TestConfigureRootFlagParsing_ParsesFlagsBeforeCommand(t *testing.T) {
+	var settingsPath string
+	var gotArgs []string
+	cmd := &cobra.Command{
+		Use:  "fence",
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			gotArgs = args
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&settingsPath, "settings", "s", "", "")
+	configureRootFlagParsing(cmd)
+	cmd.SetArgs([]string{"--settings", "fence.json", "/bin/echo", "child"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("cmd.Execute() error = %v", err)
+	}
+	if settingsPath != "fence.json" {
+		t.Fatalf("settingsPath = %q, want %q", settingsPath, "fence.json")
+	}
+	wantArgs := []string{"/bin/echo", "child"}
+	if !slices.Equal(gotArgs, wantArgs) {
+		t.Fatalf("args = %v, want %v", gotArgs, wantArgs)
+	}
+}
+
 func TestApplyCLIConfigOverrides_NilConfigWithForceNewSessionFlag(t *testing.T) {
 	cmd := &cobra.Command{Use: "test"}
 	cmd.Flags().Bool("force-new-session", false, "")

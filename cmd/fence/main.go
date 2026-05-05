@@ -182,7 +182,7 @@ Configuration file format:
 	rootCmd.Flags().BoolVarP(&showVersion, "version", "v", false, "Show version information")
 	rootCmd.Flags().BoolVar(&linuxFeatures, "linux-features", false, "Show available Linux security features and exit")
 
-	rootCmd.Flags().SetInterspersed(true)
+	configureRootFlagParsing(rootCmd)
 
 	rootCmd.AddCommand(newImportCmd())
 	rootCmd.AddCommand(newConfigCmd())
@@ -578,6 +578,12 @@ func configureHostTTYChildProcessGroup(execCmd *exec.Cmd, isTTY bool, usePTY boo
 
 func shouldManageHostTTYForeground(isTTY bool, usePTY bool) bool {
 	return isTTY && !usePTY
+}
+
+func configureRootFlagParsing(rootCmd *cobra.Command) {
+	// Fence is a command wrapper: once the child command starts, flags belong to
+	// the child and must not be consumed as Fence options.
+	rootCmd.Flags().SetInterspersed(false)
 }
 
 func startCommandWithSignalProxy(execCmd *exec.Cmd) (func(), error) {

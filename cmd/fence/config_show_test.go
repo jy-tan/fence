@@ -193,6 +193,18 @@ func TestConfigShowCmd_UsesSettingsFlag(t *testing.T) {
 	}
 }
 
+func TestLoadActiveConfigAudit_MissingSettingsFileErrors(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "missing.json")
+
+	_, err := loadActiveConfigAudit("", settingsPath, "")
+	if err == nil {
+		t.Fatal("expected missing --settings path to return an error")
+	}
+	if got := err.Error(); !strings.Contains(got, "settings file not found: "+settingsPath) {
+		t.Fatalf("expected missing settings error to include path, got %q", got)
+	}
+}
+
 func TestLoadActiveConfigAudit_FallsBackToUserConfig(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
