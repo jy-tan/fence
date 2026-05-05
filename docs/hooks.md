@@ -28,13 +28,15 @@ turn an allowed shell tool call into `fence -c "..."`. That nested Fence process
 is what applies runtime filesystem and network policy to the command.
 
 Some hook systems only let a pre-hook allow or block an action, usually via an
-exit code. Windsurf is in this category: Fence can block denied commands and
-write paths, but it cannot sandbox an allowed command unless Windsurf adds
-command rewriting or wrapper execution support.
+exit code or a block response. Hermes and Windsurf are in this category: Fence
+can block denied commands, write paths, or URLs, but it cannot sandbox an
+allowed command unless the agent also supports command rewriting or wrapper
+execution.
 
 ## How It Works
 
-For shell-command hooks, the Fence helper decides per invocation whether to:
+For shell-command rewriting hooks, the Fence helper decides per invocation
+whether to:
 
 - **Deny the command** if it violates Fence command policy. The hook returns an
   error and the agent never runs the command.
@@ -48,7 +50,14 @@ time instead of being rewritten to a nested `fence -c ...` invocation.
 If the agent is already running inside Fence, the helper avoids launching a
 second nested sandbox and only applies Fence's command policy at hook time.
 
-## Claude Code
+## Shell Command Rewriting
+
+Claude Code, Cursor, and OpenCode let Fence replace an allowed shell command
+with `fence -c "..."`. That means the shell command itself runs inside Fence,
+so runtime filesystem and network policy apply to the command after the hook
+allows it.
+
+### Claude Code
 
 Claude Code uses `PreToolUse` for `Bash` and calls
 `fence --claude-pre-tool-use`:
@@ -61,7 +70,7 @@ fence hooks uninstall --claude
 
 Default file: `~/.claude/settings.json`.
 
-## Cursor
+### Cursor
 
 Cursor uses `preToolUse` for `Shell` and calls
 `fence --cursor-pre-tool-use`:
@@ -77,7 +86,7 @@ Default file: `~/.cursor/hooks.json`.
 Cursor may also run Claude Code hook commands if Claude settings are present.
 Fence handles either Cursor or Claude hook payloads.
 
-## OpenCode
+### OpenCode
 
 OpenCode loads plugins from npm packages listed in its `plugin` array, so the
 Fence integration ships as the
@@ -112,7 +121,14 @@ See the plugin's
 > policy to those commands; only multi-token command denies are missed for
 > the `!` path.
 
-## Hermes Agent
+## Intent/Preflight Hooks
+
+Hermes and Windsurf expose hooks for declared tool inputs. Fence can block
+commands, write paths, or URLs that violate policy, but allowed actions do not
+run inside a nested `fence -c ...` sandbox unless the whole agent is also
+wrapped.
+
+### Hermes Agent
 
 Hermes Agent has a YAML-declared shell-hook system (`~/.hermes/config.yaml`)
 that pipes JSON to a subprocess on stdin and reads JSON on stdout, so the
@@ -128,7 +144,10 @@ fence hooks uninstall --hermes
 ```
 
 Default file: `~/.hermes/config.yaml`. Override with `--file` to target a
-project-local config or alternate profile.
+project-local config or alternate profile. The `hermes` template is the
+recommended starting point because Hermes may need provider, messaging, cache,
+and `~/.hermes/**` write access that plain coding-agent templates do not
+include.
 
 Unlike the shell-command integrations above, the Hermes hook surface goes
 beyond bash. Each Hermes tool maps to one of Fence's existing config domains:
@@ -153,7 +172,7 @@ at the proxy layer; the two modes compose.
 > something different from its declared arguments, the hook cannot catch that.
 > For traffic-time enforcement, also wrap Hermes with `fence -- hermes`.
 
-## Windsurf Cascade
+### Windsurf Cascade
 
 Windsurf Cascade runs shell commands from `hooks.json` and blocks pre-hooks
 when the hook exits with code `2`. Fence registers `pre_run_command` and
