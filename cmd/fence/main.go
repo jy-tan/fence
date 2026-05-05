@@ -108,6 +108,12 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) >= 2 && os.Args[1] == windsurfHookMode {
+		if err := runWindsurfHookMode(); err != nil {
+			os.Exit(2)
+		}
+		return
+	}
 
 	rootCmd := &cobra.Command{
 		Use:   "fence [flags] -- [command...]",
