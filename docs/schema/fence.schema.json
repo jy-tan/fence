@@ -230,6 +230,10 @@
         "socksProxyPort": {
           "description": "Port for the internal SOCKS proxy used to enforce domain filtering. Set automatically by fence; only override for advanced configurations.",
           "type": "integer"
+        },
+        "upstreamProxy": {
+          "description": "Optional upstream HTTP proxy URL (e.g. http://127.0.0.1:8080). When set, traffic that does not match allowedDomains (but is not hard-blocked by deniedDomains) is forwarded to this proxy instead of being denied. Intended for use with tools like mitmproxy for interactive inspection of grey-zone traffic.",
+          "type": "string"
         }
       },
       "type": "object"

@@ -99,6 +99,7 @@ func TestNewSOCKSProxy(t *testing.T) {
 }
 
 func TestSOCKSProxyStartStop(t *testing.T) {
+	skipIfCannotBind(t)
 	filter := func(host string, port int) bool { return true }
 	proxy := NewSOCKSProxy(filter, false, false)
 

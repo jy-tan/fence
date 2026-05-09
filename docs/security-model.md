@@ -29,6 +29,7 @@ Fence combines OS-level enforcement with proxy-based allowlisting:
 
 - The OS sandbox / network namespace is expected to block direct outbound connections.
 - Domain allowlisting happens via local HTTP/SOCKS proxies and proxy environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`).
+- Optionally, a `network.upstreamProxy` can be configured so that grey-zone traffic (not matched by `allowedDomains`, not hard-blocked by `deniedDomains`) is forwarded to an external HTTP proxy (e.g. mitmproxy) for interactive inspection rather than being denied. `deniedDomains` are always hard-blocked and never forwarded upstream.
 
 If a program does not use proxy env vars (or uses a custom protocol/stack), it may not benefit from domain allowlisting. In that case it typically fails with connection errors rather than being "selectively allowed."
 

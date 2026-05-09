@@ -159,8 +159,54 @@ See [templates.md](templates.md) for available templates.
 | `allowLocalOutboundPorts` | **Linux only.** TCP ports on the host's `127.0.0.1` that the sandbox may reach when `allowLocalOutbound` is true (e.g. `[5432, 6379]`). Each listed port is forwarded from sandbox loopback to host loopback via an internal socat bridge. Ignored on macOS, which allows any localhost port when `allowLocalOutbound` is true. |
 | `httpProxyPort` | Fixed port for HTTP proxy (default: random available port) |
 | `socksProxyPort` | Fixed port for SOCKS5 proxy (default: random available port) |
+| `upstreamProxy` | Optional upstream HTTP proxy URL (e.g. `http://127.0.0.1:8080`). When set, traffic in the grey zone (not matched by `allowedDomains`, not hard-blocked by `deniedDomains`) is forwarded to this proxy instead of being denied. See [Upstream Proxy / mitmproxy](#upstream-proxy--mitmproxy). |
+
+### Upstream Proxy / mitmproxy
+
+Setting `network.upstreamProxy` connects fence's internal HTTP proxy to an external upstream HTTP proxy for traffic that falls outside the explicit allowlist. This is designed for interactive inspection workflows such as [mitmproxy](https://mitmproxy.org/).
+
+**Routing logic (in priority order):**
+
+| Traffic | Result |
+|---------|--------|
+| Matches `deniedDomains` | Hard 403 — never forwarded upstream |
+| Matches `allowedDomains` | Connected directly to target |
+| Everything else (grey zone) | Forwarded to `upstreamProxy` if set, otherwise 403 |
+
+**Example — fence + mitmproxy:**
+
+```json
+{
+  "network": {
+    "allowedDomains": ["api.openai.com", "*.npmjs.org"],
+    "deniedDomains": ["169.254.169.254"],
+    "upstreamProxy": "http://127.0.0.1:8080"
+  }
+}
+```
+
+Start mitmproxy externally before running fence:
+
+```bash
+mitmproxy --listen-port 8080
+```
+
+One mitmproxy instance can serve multiple fence instances simultaneously because fence only connects to it for grey-zone traffic.
+
+**Key properties:**
+
+- `deniedDomains` remains a hard block — mitmproxy never sees those requests.
+- `allowedDomains` traffic bypasses mitmproxy entirely (direct connection).
+- Only `http` and `https` upstream proxy URLs are supported.
+- If the upstream proxy denies a connection, fence returns `403` to the client.
+- If the upstream proxy is unreachable, fence returns `502`.
+- SOCKS5 proxy traffic (via `ALL_PROXY`) is not forwarded upstream in this release; only HTTP/HTTPS clients using `HTTP_PROXY`/`HTTPS_PROXY` are affected.
+
+> [!NOTE]
+> Only HTTP and HTTPS proxy schemes are supported for `upstreamProxy`. SOCKS5 upstream chaining is not supported yet.
 
 ### Wildcard Domain Access
+
 
 Setting `allowedDomains: ["*"]` enables **relaxed network mode**:
 

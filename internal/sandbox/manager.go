@@ -186,7 +186,9 @@ func (m *Manager) Initialize() error {
 
 	filter := proxy.CreateDomainFilter(m.config, m.debug)
 
-	m.httpProxy = proxy.NewHTTPProxy(filter, m.debug, m.monitor)
+	route := proxy.CreateRouteFunc(m.config, m.debug)
+	upstreamURL := proxy.ParseUpstreamProxyURL(m.config)
+	m.httpProxy = proxy.NewHTTPProxy(route, upstreamURL, m.debug, m.monitor)
 	httpPort, err := m.httpProxy.Start()
 	if err != nil {
 		return fmt.Errorf("failed to start HTTP proxy: %w", err)
