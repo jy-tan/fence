@@ -45,14 +45,16 @@ type RouteFunc func(host string, port int) RouteDecision
 
 // HTTPProxy is an HTTP/HTTPS proxy server with domain filtering.
 type HTTPProxy struct {
-	server      *http.Server
-	listener    net.Listener
-	route       RouteFunc
-	upstreamURL *url.URL // nil when no upstream is configured
-	debug       bool
-	monitor     bool
-	mu          sync.RWMutex
-	running     bool
+	server         *http.Server
+	listener       net.Listener
+	route          RouteFunc
+	upstreamURL    *url.URL // nil when no upstream is configured
+	directClient   *http.Client
+	upstreamClient *http.Client
+	debug          bool
+	monitor        bool
+	mu             sync.RWMutex
+	running        bool
 }
 
 // NewHTTPProxy creates a new HTTP proxy with the given route function.
@@ -60,11 +62,25 @@ type HTTPProxy struct {
 // If monitor is true, only blocked requests are logged.
 // If debug is true, all requests and filter rules are logged.
 func NewHTTPProxy(route RouteFunc, upstreamURL *url.URL, debug, monitor bool) *HTTPProxy {
+	noRedirect := func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	directTransport := &http.Transport{}
+	directClient := &http.Client{Transport: directTransport, Timeout: 30 * time.Second, CheckRedirect: noRedirect}
+
+	var upstreamClient *http.Client
+	if upstreamURL != nil {
+		upstreamTransport := &http.Transport{Proxy: http.ProxyURL(upstreamURL)}
+		upstreamClient = &http.Client{Transport: upstreamTransport, Timeout: 30 * time.Second, CheckRedirect: noRedirect}
+	}
+
 	return &HTTPProxy{
-		route:       route,
-		upstreamURL: upstreamURL,
-		debug:       debug,
-		monitor:     monitor,
+		route:          route,
+		upstreamURL:    upstreamURL,
+		directClient:   directClient,
+		upstreamClient: upstreamClient,
+		debug:          debug,
+		monitor:        monitor,
 	}
 }
 
@@ -151,6 +167,11 @@ func (p *HTTPProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case RouteDecisionUpstream:
+		if p.upstreamURL == nil {
+			p.logRequest("CONNECT", fmt.Sprintf("https://%s:%d", host, port), host, 502, "UPSTREAM_ERROR", time.Since(start))
+			http.Error(w, "Bad Gateway: no upstream proxy configured", http.StatusBadGateway)
+			return
+		}
 		p.handleConnectViaUpstream(w, r, host, port, start)
 		return
 	}
@@ -366,11 +387,6 @@ func (p *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	transport := &http.Transport{}
-	if decision == RouteDecisionUpstream {
-		transport.Proxy = http.ProxyURL(p.upstreamURL)
-	}
-
 	proxyReq, err := http.NewRequest(r.Method, r.RequestURI, r.Body) // #nosec G704 - validated by route() allowlist
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -387,12 +403,14 @@ func (p *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	proxyReq.Header.Del("Proxy-Connection")
 	proxyReq.Header.Del("Proxy-Authorization")
 
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+	client := p.directClient
+	if decision == RouteDecisionUpstream {
+		if p.upstreamClient == nil {
+			p.logRequest(r.Method, r.RequestURI, host, 502, "UPSTREAM_ERROR", time.Since(start))
+			http.Error(w, "Bad Gateway: no upstream proxy configured", http.StatusBadGateway)
+			return
+		}
+		client = p.upstreamClient
 	}
 
 	resp, err := client.Do(proxyReq) // #nosec G704 - validated by route() allowlist
@@ -538,8 +556,15 @@ func CreateRouteFunc(cfg *config.Config, debug bool) RouteFunc {
 			}
 		}
 
-		// Grey zone: forward upstream if configured, otherwise deny.
-		if cfg.Network.UpstreamProxy != "" {
+		// Grey zone: consult DefaultAction.
+		// The second condition is a backward-compatibility path: configs written
+		// before DefaultAction existed set only UpstreamProxy. Validate() now
+		// requires DefaultAction:"proxy" when UpstreamProxy is set, but configs
+		// loaded without going through Validate() (e.g. programmatic use) must
+		// still behave sensibly — presence of UpstreamProxy implies proxy intent.
+		wantUpstream := cfg.Network.DefaultAction == config.DefaultActionProxy ||
+			(cfg.Network.DefaultAction == "" && cfg.Network.UpstreamProxy != "")
+		if wantUpstream {
 			if debug {
 				fencelog.Printf("[fence:filter] No matching rule, forwarding upstream: %s:%d\n", host, port)
 			}

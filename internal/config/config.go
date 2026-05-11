@@ -28,6 +28,17 @@ type Config struct {
 	ForceNewSession *bool            `json:"forceNewSession,omitempty"`
 }
 
+// DefaultActionType controls what happens to traffic that does not match
+// allowedDomains or deniedDomains (the "grey zone").
+type DefaultActionType string
+
+const (
+	// DefaultActionDeny blocks grey-zone traffic (default when field is absent).
+	DefaultActionDeny DefaultActionType = "deny"
+	// DefaultActionProxy forwards grey-zone traffic to the configured upstreamProxy.
+	DefaultActionProxy DefaultActionType = "proxy"
+)
+
 // NetworkConfig defines network restrictions.
 type NetworkConfig struct {
 	AllowedDomains      []string `json:"allowedDomains" description:"Domains the sandbox may connect to. Supports wildcards (e.g. *.example.com). Use \"*\" to allow all outbound connections. If empty, all outbound connections are blocked."`
@@ -40,10 +51,11 @@ type NetworkConfig struct {
 	// macOS reaches any localhost port when allowLocalOutbound is true; Linux
 	// keeps --unshare-net so the sandbox's loopback is isolated from the
 	// host's, and each listed port is bridged back to host 127.0.0.1:<port>.
-	AllowLocalOutboundPorts []int  `json:"allowLocalOutboundPorts,omitempty" description:"Linux-only. TCP ports on the host's 127.0.0.1 that the sandbox may connect to when allowLocalOutbound is true. Each listed port is forwarded from sandbox loopback to host loopback via a per-port bridge. Ignored on macOS (which allows arbitrary localhost ports when allowLocalOutbound is true)."`
-	HTTPProxyPort           int    `json:"httpProxyPort,omitempty" description:"Port for the internal HTTP proxy used to enforce domain filtering. Set automatically by fence; only override for advanced configurations."`
-	SOCKSProxyPort          int    `json:"socksProxyPort,omitempty" description:"Port for the internal SOCKS proxy used to enforce domain filtering. Set automatically by fence; only override for advanced configurations."`
-	UpstreamProxy           string `json:"upstreamProxy,omitempty" description:"Optional upstream HTTP proxy URL (e.g. http://127.0.0.1:8080). When set, traffic that does not match allowedDomains (but is not hard-blocked by deniedDomains) is forwarded to this proxy instead of being denied. Intended for use with tools like mitmproxy for interactive inspection of grey-zone traffic."`
+	AllowLocalOutboundPorts []int             `json:"allowLocalOutboundPorts,omitempty" description:"Linux-only. TCP ports on the host's 127.0.0.1 that the sandbox may connect to when allowLocalOutbound is true. Each listed port is forwarded from sandbox loopback to host loopback via a per-port bridge. Ignored on macOS (which allows arbitrary localhost ports when allowLocalOutbound is true)."`
+	HTTPProxyPort           int               `json:"httpProxyPort,omitempty" description:"Port for the internal HTTP proxy used to enforce domain filtering. Set automatically by fence; only override for advanced configurations."`
+	SOCKSProxyPort          int               `json:"socksProxyPort,omitempty" description:"Port for the internal SOCKS proxy used to enforce domain filtering. Set automatically by fence; only override for advanced configurations."`
+	UpstreamProxy           string            `json:"upstreamProxy,omitempty" description:"Optional upstream HTTP proxy URL (e.g. http://127.0.0.1:8080). When set, grey-zone traffic (not matched by allowedDomains, not hard-blocked by deniedDomains) is forwarded to this proxy instead of being denied. Intended for use with tools like mitmproxy for interactive inspection."`
+	DefaultAction           DefaultActionType `json:"defaultAction,omitempty" description:"Action for traffic not matched by allowedDomains or deniedDomains. Allowed values: \"deny\" (default), \"proxy\" (requires upstreamProxy)." schema:"enum=deny|proxy"`
 }
 
 // EffectiveAllowLocalOutbound returns whether outbound connections to
@@ -401,6 +413,16 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("invalid network.upstreamProxy: %w", err)
 		}
 	}
+	switch c.Network.DefaultAction {
+	case "", DefaultActionDeny:
+		// valid; "" is treated as DefaultActionDeny
+	case DefaultActionProxy:
+		if c.Network.UpstreamProxy == "" {
+			return fmt.Errorf("network.defaultAction %q requires network.upstreamProxy to be set", DefaultActionProxy)
+		}
+	default:
+		return fmt.Errorf("invalid network.defaultAction %q: must be %q or %q", c.Network.DefaultAction, DefaultActionDeny, DefaultActionProxy)
+	}
 	for _, port := range c.Network.AllowLocalOutboundPorts {
 		if port < 1 || port > 65535 {
 			return fmt.Errorf("invalid network.allowLocalOutboundPorts entry %d (expected 1-65535)", port)
@@ -503,16 +525,22 @@ func (c *CommandConfig) EffectiveRuntimeExecPolicy() RuntimeExecPolicy {
 }
 
 // validateUpstreamProxyURL checks that an upstream proxy URL is a valid
-// http or https URL with a host and no path beyond "/".
+// http:// URL with a host. Returns nil for empty string (disabled).
 func validateUpstreamProxyURL(rawURL string) error {
+	if rawURL == "" {
+		return nil
+	}
+	// Catch URLs that look like "host:port" with no scheme — url.Parse accepts
+	// them but misparses the host as the scheme.
+	if !strings.Contains(rawURL, "://") {
+		return fmt.Errorf("missing scheme: URL must start with http:// (got %q)", rawURL)
+	}
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("invalid URL: %w", err)
 	}
-	switch strings.ToLower(parsed.Scheme) {
-	case "http", "https":
-	default:
-		return fmt.Errorf("scheme %q is not supported; use http or https", parsed.Scheme)
+	if strings.ToLower(parsed.Scheme) != "http" {
+		return fmt.Errorf("scheme %q is not supported; only http:// upstream proxies are supported", parsed.Scheme)
 	}
 	if parsed.Hostname() == "" {
 		return fmt.Errorf("URL has no host")
@@ -751,8 +779,9 @@ func Merge(base, override *Config) *Config {
 			HTTPProxyPort:  mergeInt(base.Network.HTTPProxyPort, override.Network.HTTPProxyPort),
 			SOCKSProxyPort: mergeInt(base.Network.SOCKSProxyPort, override.Network.SOCKSProxyPort),
 
-			// String field: override wins if non-empty
+			// String fields: override wins if non-empty
 			UpstreamProxy: mergeString(base.Network.UpstreamProxy, override.Network.UpstreamProxy),
+			DefaultAction: mergeDefaultAction(base.Network.DefaultAction, override.Network.DefaultAction),
 		},
 
 		Filesystem: FilesystemConfig{
@@ -908,4 +937,11 @@ func mergeInts(base, override []int) []int {
 		}
 	}
 	return result
+}
+
+func mergeDefaultAction(base, override DefaultActionType) DefaultActionType {
+	if override != "" {
+		return override
+	}
+	return base
 }

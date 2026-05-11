@@ -1862,3 +1862,82 @@ func TestNetworkConfig_EffectiveAllowLocalOutbound(t *testing.T) {
 		}
 	})
 }
+
+func TestValidateUpstreamProxyURL_OnlyHTTP(t *testing.T) {
+	tests := []struct {
+		name      string
+		upstream  string
+		wantError bool
+	}{
+		{"empty string is valid (disabled)", "", false},
+		{"valid http URL", "http://127.0.0.1:8080", false},
+		{"valid http with hostname", "http://mitm.local:8080", false},
+		{"https scheme rejected", "https://proxy.example.com:8080", true},
+		{"missing scheme", "127.0.0.1:8080", true},
+		{"unsupported scheme socks5", "socks5://127.0.0.1:1080", true},
+		{"no host", "http://", true},
+		{"ftp scheme", "ftp://proxy.example.com", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateUpstreamProxyURL(tt.upstream)
+			if tt.wantError && err == nil {
+				t.Errorf("validateUpstreamProxyURL(%q) expected error, got nil", tt.upstream)
+			}
+			if !tt.wantError && err != nil {
+				t.Errorf("validateUpstreamProxyURL(%q) unexpected error: %v", tt.upstream, err)
+			}
+		})
+	}
+}
+
+func TestValidate_DefaultAction(t *testing.T) {
+	tests := []struct {
+		name      string
+		network   NetworkConfig
+		wantError bool
+	}{
+		{
+			name:      "defaultAction omitted is valid (implicit deny)",
+			network:   NetworkConfig{AllowedDomains: []string{"example.com"}},
+			wantError: false,
+		},
+		{
+			name:      "defaultAction deny is valid",
+			network:   NetworkConfig{DefaultAction: DefaultActionDeny},
+			wantError: false,
+		},
+		{
+			name: "defaultAction proxy with upstreamProxy is valid",
+			network: NetworkConfig{
+				DefaultAction: DefaultActionProxy,
+				UpstreamProxy: "http://127.0.0.1:8080",
+			},
+			wantError: false,
+		},
+		{
+			name:      "defaultAction proxy without upstreamProxy is invalid",
+			network:   NetworkConfig{DefaultAction: DefaultActionProxy},
+			wantError: true,
+		},
+		{
+			name:      "unknown defaultAction value is invalid",
+			network:   NetworkConfig{DefaultAction: "allow"},
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{Network: tt.network}
+			err := cfg.Validate()
+			if tt.wantError && err == nil {
+				t.Errorf("Validate() expected error, got nil")
+			}
+			if !tt.wantError && err != nil {
+				t.Errorf("Validate() unexpected error: %v", err)
+			}
+		})
+	}
+}

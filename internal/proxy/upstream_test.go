@@ -3,9 +3,9 @@ package proxy
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
-	"io"
 	"net/url"
 	"sync"
 	"testing"
@@ -136,7 +136,7 @@ func TestNetworkConfigUpstreamProxyValidation(t *testing.T) {
 	}{
 		{"empty string is valid (disabled)", "", false},
 		{"valid http URL", "http://127.0.0.1:8080", false},
-		{"valid https URL", "https://proxy.example.com:8080", false},
+		{"https scheme rejected", "https://proxy.example.com:8080", true},
 		{"valid http with hostname", "http://mitm.local:8080", false},
 		{"missing scheme", "127.0.0.1:8080", true},
 		{"unsupported scheme socks5", "socks5://127.0.0.1:1080", true},
@@ -704,7 +704,8 @@ func TestHTTPProxy_ConnectUpstream_EarlyDataForwarded(t *testing.T) {
 
 	// Send CONNECT and read the 200 response.
 	_, _ = fmt.Fprintf(conn, "CONNECT target.example.com:443 HTTP/1.1\r\nHost: target.example.com:443\r\n\r\n")
-	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, nil)
 	if err != nil {
 		t.Fatalf("read CONNECT response: %v", err)
 	}
@@ -715,10 +716,214 @@ func TestHTTPProxy_ConnectUpstream_EarlyDataForwarded(t *testing.T) {
 	// Read the early data that the upstream sent right after its 200.
 	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	got := make([]byte, len(earlyData))
-	if _, err := io.ReadFull(conn, got); err != nil {
+	if _, err := io.ReadFull(br, got); err != nil {
 		t.Fatalf("reading early data from proxied conn: %v", err)
 	}
 	if string(got) != string(earlyData) {
 		t.Errorf("early data = %q, want %q", got, earlyData)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CreateRouteFunc – DefaultAction behaviour
+// ---------------------------------------------------------------------------
+
+func TestCreateRouteFunc_DefaultAction(t *testing.T) {
+	upstreamProxy := "http://127.0.0.1:8080"
+
+	tests := []struct {
+		name string
+		cfg  *config.Config
+		host string
+		port int
+		want RouteDecision
+	}{
+		{
+			name: "defaultAction deny – unmatched → deny",
+			cfg: &config.Config{Network: config.NetworkConfig{
+				AllowedDomains: []string{"example.com"},
+				DefaultAction:  config.DefaultActionDeny,
+			}},
+			host: "other.com", port: 443,
+			want: RouteDecisionDeny,
+		},
+		{
+			name: "defaultAction proxy – unmatched → upstream",
+			cfg: &config.Config{Network: config.NetworkConfig{
+				AllowedDomains: []string{"example.com"},
+				DefaultAction:  config.DefaultActionProxy,
+				UpstreamProxy:  upstreamProxy,
+			}},
+			host: "other.com", port: 443,
+			want: RouteDecisionUpstream,
+		},
+		{
+			name: "defaultAction proxy – deniedDomain still hard-blocked",
+			cfg: &config.Config{Network: config.NetworkConfig{
+				AllowedDomains: []string{"example.com"},
+				DeniedDomains:  []string{"evil.com"},
+				DefaultAction:  config.DefaultActionProxy,
+				UpstreamProxy:  upstreamProxy,
+			}},
+			host: "evil.com", port: 443,
+			want: RouteDecisionDeny,
+		},
+		{
+			name: "defaultAction proxy – allowedDomain still direct",
+			cfg: &config.Config{Network: config.NetworkConfig{
+				AllowedDomains: []string{"example.com"},
+				DefaultAction:  config.DefaultActionProxy,
+				UpstreamProxy:  upstreamProxy,
+			}},
+			host: "example.com", port: 443,
+			want: RouteDecisionDirect,
+		},
+		{
+			// Backward-compat: if defaultAction is empty but upstreamProxy is
+			// set, unmatched traffic must still go upstream (legacy behaviour).
+			name: "no defaultAction + upstreamProxy – unmatched → upstream (compat)",
+			cfg: &config.Config{Network: config.NetworkConfig{
+				AllowedDomains: []string{"example.com"},
+				UpstreamProxy:  upstreamProxy,
+			}},
+			host: "other.com", port: 443,
+			want: RouteDecisionUpstream,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			route := CreateRouteFunc(tt.cfg, false)
+			got := route(tt.host, tt.port)
+			if got != tt.want {
+				t.Errorf("CreateRouteFunc()(%q, %d) = %v, want %v", tt.host, tt.port, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Transport pooling: same transport instance must be reused across requests
+// ---------------------------------------------------------------------------
+
+func TestHTTPProxy_TransportReuse(t *testing.T) {
+	skipIfCannotBind(t)
+
+	// Origin server that counts how many distinct connections it receives.
+	var connCount int
+	var connMu sync.Mutex
+	originLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("origin listen: %v", err)
+	}
+	originServer := &http.Server{
+		ReadHeaderTimeout: 5 * time.Second,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+		ConnState: func(conn net.Conn, state http.ConnState) {
+			if state == http.StateNew {
+				connMu.Lock()
+				connCount++
+				connMu.Unlock()
+			}
+		},
+	}
+	go func() { _ = originServer.Serve(originLn) }()
+	defer func() { _ = originServer.Close() }()
+	originPort := originLn.Addr().(*net.TCPAddr).Port
+
+	route := func(host string, port int) RouteDecision { return RouteDecisionDirect }
+	p := NewHTTPProxy(route, nil, false, false)
+	proxyPort, err := p.Start()
+	if err != nil {
+		t.Fatalf("proxy start: %v", err)
+	}
+	defer p.Stop() //nolint:errcheck
+
+	proxyURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", proxyPort))
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
+
+	targetURL := fmt.Sprintf("http://127.0.0.1:%d/", originPort)
+	for i := 0; i < 3; i++ {
+		resp, err := client.Get(targetURL)
+		if err != nil {
+			t.Fatalf("request %d: %v", i, err)
+		}
+		_ = resp.Body.Close()
+	}
+
+	connMu.Lock()
+	got := connCount
+	connMu.Unlock()
+
+	// With connection pooling the transport reuses the existing TCP connection.
+	// We assert strictly fewer connections than requests: if every request opened
+	// a new connection (got == 3) the transport is not pooling.
+	if got >= 3 {
+		t.Errorf("origin received %d distinct connections for 3 requests; transport pooling broken (want < 3)", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// nil upstreamClient safety: RouteDecisionUpstream with no upstream URL
+// ---------------------------------------------------------------------------
+
+// TestHTTPProxy_UpstreamDecisionWithNilURL verifies that a proxy constructed
+// without an upstreamURL (nil) does not panic when the RouteFunc returns
+// RouteDecisionUpstream. It should return 502 Bad Gateway instead.
+func TestHTTPProxy_UpstreamDecisionWithNilURL(t *testing.T) {
+	skipIfCannotBind(t)
+
+	// Route everything upstream, but proxy has no upstreamURL.
+	route := func(host string, port int) RouteDecision { return RouteDecisionUpstream }
+	p := NewHTTPProxy(route, nil, false, false)
+	port, err := p.Start()
+	if err != nil {
+		t.Fatalf("proxy start: %v", err)
+	}
+	defer p.Stop() //nolint:errcheck
+
+	// CONNECT request — should not panic, should return a non-2xx error.
+	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	_, _ = fmt.Fprintf(conn, "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n")
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	if resp.StatusCode == http.StatusOK {
+		t.Errorf("expected non-200 status when upstreamURL is nil, got 200")
+	}
+}
+
+// TestHTTPProxy_PlainHTTP_UpstreamDecisionWithNilURL verifies the same safety
+// for plain HTTP (non-CONNECT) requests.
+func TestHTTPProxy_PlainHTTP_UpstreamDecisionWithNilURL(t *testing.T) {
+	skipIfCannotBind(t)
+
+	route := func(host string, port int) RouteDecision { return RouteDecisionUpstream }
+	p := NewHTTPProxy(route, nil, false, false)
+	proxyPort, err := p.Start()
+	if err != nil {
+		t.Fatalf("proxy start: %v", err)
+	}
+	defer p.Stop() //nolint:errcheck
+
+	proxyURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", proxyPort))
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
+
+	resp, err := client.Get("http://example.com/")
+	if err != nil {
+		// A transport-level error is also acceptable (no panic is the key invariant).
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusOK {
+		t.Errorf("expected non-200 status when upstreamURL is nil, got 200")
 	}
 }

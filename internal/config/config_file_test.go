@@ -105,3 +105,68 @@ func TestMarshalConfigJSON_IncludesExtendedSections(t *testing.T) {
 	assert.Contains(t, output, `"ls"`)
 	assert.Contains(t, output, `"inheritDeny": true`)
 }
+
+func TestMarshalConfigJSON_IncludesUpstreamProxy(t *testing.T) {
+	cfg := &Config{
+		Network: NetworkConfig{
+			AllowedDomains: []string{"api.openai.com"},
+			UpstreamProxy:  "http://127.0.0.1:8080",
+		},
+	}
+
+	data, err := MarshalConfigJSON(cfg)
+	require.NoError(t, err)
+
+	output := string(data)
+	assert.Contains(t, output, `"upstreamProxy": "http://127.0.0.1:8080"`)
+	assert.Contains(t, output, `"network"`)
+}
+
+func TestMarshalConfigJSON_UpstreamProxyOnlyIsNotEmpty(t *testing.T) {
+	// A config with only upstreamProxy set must still emit a "network" section.
+	cfg := &Config{
+		Network: NetworkConfig{
+			UpstreamProxy: "http://127.0.0.1:8080",
+		},
+	}
+
+	data, err := MarshalConfigJSON(cfg)
+	require.NoError(t, err)
+
+	output := string(data)
+	assert.Contains(t, output, `"network"`)
+	assert.Contains(t, output, `"upstreamProxy"`)
+}
+
+func TestMarshalConfigJSON_IncludesDefaultAction(t *testing.T) {
+	cfg := &Config{
+		Network: NetworkConfig{
+			AllowedDomains: []string{"api.openai.com"},
+			DefaultAction:  DefaultActionProxy,
+			UpstreamProxy:  "http://127.0.0.1:8080",
+		},
+	}
+
+	data, err := MarshalConfigJSON(cfg)
+	require.NoError(t, err)
+
+	output := string(data)
+	assert.Contains(t, output, `"defaultAction": "proxy"`)
+}
+
+func TestMarshalConfigJSON_DefaultActionDenyOmitted(t *testing.T) {
+	// defaultAction "deny" is the zero value and should be omitted from output
+	// (it is the implicit default when the field is absent).
+	cfg := &Config{
+		Network: NetworkConfig{
+			AllowedDomains: []string{"api.openai.com"},
+			DefaultAction:  DefaultActionDeny,
+		},
+	}
+
+	data, err := MarshalConfigJSON(cfg)
+	require.NoError(t, err)
+
+	output := string(data)
+	assert.NotContains(t, output, `"defaultAction"`)
+}
