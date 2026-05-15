@@ -184,6 +184,17 @@ func TestMacOS_MachLookupRules(t *testing.T) {
 	}
 }
 
+func TestMacOS_DefaultMachLookupAllowsDNSConfiguration(t *testing.T) {
+	profile := GenerateSandboxProfile(MacOSSandboxParams{
+		Command: "node -e 'require(\"node:dns\").lookup(\"example.com\", () => {})'",
+	})
+
+	want := `(global-name "com.apple.SystemConfiguration.DNSConfiguration")`
+	if !strings.Contains(profile, want) {
+		t.Fatalf("default profile should allow DNS configuration lookup %q, got:\n%s", want, profile)
+	}
+}
+
 func TestMacOS_MachRegisterRules(t *testing.T) {
 	tests := []struct {
 		name         string

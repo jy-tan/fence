@@ -440,6 +440,7 @@ func GenerateSandboxProfile(params MacOSSandboxParams) string {
   (global-name "com.apple.FSEvents")
   (global-name "com.apple.fseventsd")
   (global-name "com.apple.SystemConfiguration.configd")
+  (global-name "com.apple.SystemConfiguration.DNSConfiguration")
 )
 
 ; POSIX IPC
