@@ -52,6 +52,7 @@ flowchart TB
 fence/
 ├── cmd/fence/                  # CLI entry point and runtime helpers
 │   ├── main.go                 # Main CLI, config/import/completion commands, internal helper modes
+│   ├── jobcontrol.go           # Stop-aware wait loop for Ctrl-Z / fg transparency on the direct-exec path
 │   ├── pty_runtime_linux.go    # Linux PTY + signal relay for interactive sessions
 │   └── pty_runtime_stub.go     # Non-Linux PTY stub
 ├── internal/                   # Private implementation

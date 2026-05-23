@@ -1,0 +1,113 @@
+//go:build darwin
+
+package sandbox
+
+import (
+	"bytes"
+	"io"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/creack/pty"
+)
+
+// TestMacOS_CtrlZSuspendsFence verifies that pressing Ctrl-Z (0x1A) while a
+// blocking child is running inside `fence` causes both the child *and* fence
+// itself to enter the stopped (T) state, and that delivering SIGCONT to
+// fence's pgrp resumes both.
+//
+// Before the SIGTSTP/SIGCONT handshake was added, fence would keep blocking
+// in Wait() while the inner pgrp was stopped, leaving the user's outer
+// shell wedged with no `[1]+ Stopped …` notification. This test pins that
+// regression down.
+func TestMacOS_CtrlZSuspendsFence(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+
+	fenceBin := t.TempDir() + "/fence"
+	// #nosec G204 -- fixed args; output path is in TempDir.
+	build := exec.Command("go", "build", "-o", fenceBin, "../../cmd/fence")
+	build.Stdout = os.Stdout
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		t.Fatalf("failed to build fence: %v", err)
+	}
+
+	// `fence sleep 30` is the smallest reproducer from the spec: a plain
+	// blocking child with no job-control logic of its own.
+	// #nosec G204 -- fenceBin built into TempDir above.
+	cmd := exec.Command(fenceBin, "sleep", "30")
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		t.Fatalf("failed to start fence sleep with PTY: %v", err)
+	}
+	defer func() {
+		_ = ptmx.Close()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		_ = cmd.Wait()
+	}()
+
+	var output bytes.Buffer
+	go func() { _, _ = io.Copy(&output, ptmx) }()
+
+	// Give fence a moment to spawn the child and hand off the TTY.
+	time.Sleep(500 * time.Millisecond)
+
+	// Send Ctrl-Z (0x1A) on the master side. The TTY driver delivers
+	// SIGTSTP to the foreground pgrp (the child), the wait4 loop in
+	// fence sees the stop and SIGSTOPs fence itself.
+	if _, err := ptmx.Write([]byte{0x1A}); err != nil {
+		t.Fatalf("failed to write Ctrl-Z: %v", err)
+	}
+
+	// Poll up to 2s for fence to enter stopped state.
+	if !waitForProcessState(t, cmd.Process.Pid, "T", 2*time.Second) {
+		t.Fatalf("fence (pid %d) did not enter stopped state after Ctrl-Z\noutput so far:\n%s", cmd.Process.Pid, output.String())
+	}
+
+	// Now resume fence; its wait4 loop should resume the child too.
+	if err := syscall.Kill(cmd.Process.Pid, syscall.SIGCONT); err != nil {
+		t.Fatalf("failed to SIGCONT fence: %v", err)
+	}
+
+	if !waitForProcessState(t, cmd.Process.Pid, "R|S", 2*time.Second) {
+		t.Fatalf("fence (pid %d) did not resume after SIGCONT\noutput so far:\n%s", cmd.Process.Pid, output.String())
+	}
+
+	// Tear down: kill the inner sleep so fence exits cleanly.
+	_ = cmd.Process.Kill()
+}
+
+// waitForProcessState polls `ps -o state= -p <pid>` until the reported
+// state matches one of the pipe-separated patterns in want, or timeout
+// elapses. macOS `ps` reports a single-letter state code (R, S, T, etc.).
+func waitForProcessState(t *testing.T, pid int, want string, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	wants := strings.Split(want, "|")
+	for time.Now().Before(deadline) {
+		// #nosec G204 -- pid is an int from this test's own exec.Cmd.
+		out, err := exec.Command("ps", "-o", "state=", "-p", strconv.Itoa(pid)).Output()
+		if err == nil && len(out) > 0 {
+			state := strings.TrimSpace(string(out))
+			// `ps` returns codes like "T+" — first char is the canonical state.
+			if len(state) > 0 {
+				first := string(state[0])
+				for _, w := range wants {
+					if first == w {
+						return true
+					}
+				}
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	return false
+}

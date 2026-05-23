@@ -381,6 +381,11 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	// call tcsetpgrp. We ignore SIGTTOU so we don't get stopped when we
 	// later reclaim the foreground (at that point we'll be in the background
 	// process group).
+	var (
+		jobControlEnabled   bool
+		jobControlStdinFd   int
+		jobControlChildPgrp int
+	)
 	if shouldManageHostTTYForeground(isTTY, usePTY) && execCmd.Process != nil {
 		stdinFd := int(os.Stdin.Fd()) // #nosec G115 - fd fits in int on all supported platforms
 
@@ -406,6 +411,10 @@ func runCommand(cmd *cobra.Command, args []string) error {
 				_ = unix.IoctlSetPointerInt(stdinFd, unix.TIOCSPGRP, savedFgPgrp)
 				signal.Reset(syscall.SIGTTOU)
 			}()
+
+			jobControlEnabled = true
+			jobControlStdinFd = stdinFd
+			jobControlChildPgrp = childPgrp
 		}
 	}
 
@@ -428,7 +437,18 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	// For now, filesystem isolation relies on bwrap mount namespaces.
 	// Landlock code exists for future integration (e.g., via a wrapper binary).
 
-	// Wait for command to finish
+	// Wait for command to finish. When we're managing the host TTY
+	// foreground, use a stop-aware wait loop so Ctrl-Z / fg are transparent
+	// (fence itself suspends instead of leaving the user wedged).
+	if jobControlEnabled {
+		code, err := waitWithJobControl(execCmd, jobControlStdinFd, jobControlChildPgrp, debug)
+		if err != nil {
+			return fmt.Errorf("command failed: %w", err)
+		}
+		exitCode = code
+		return nil
+	}
+
 	if err := execCmd.Wait(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			// Set exit code but don't os.Exit() here - let deferred cleanup run
