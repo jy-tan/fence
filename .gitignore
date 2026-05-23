@@ -29,3 +29,5 @@ coverage.out
 cpu.out
 mem.out
 
+# Draft design docs
+design/
