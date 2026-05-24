@@ -85,6 +85,77 @@ func TestMacOS_CtrlZSuspendsFence(t *testing.T) {
 	_ = cmd.Process.Kill()
 }
 
+// TestMacOS_CtrlZSuspendsFenceAndResumesChild verifies the full Ctrl-Z / fg
+// round-trip: after the child is stopped and then resumed via SIGCONT, it
+// finishes and fence exits cleanly (not blocked forever in waitWithJobControl).
+func TestMacOS_CtrlZSuspendsFenceAndResumesChild(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+
+	fenceBin := t.TempDir() + "/fence"
+	// #nosec G204 -- fixed args; output path is in TempDir.
+	build := exec.Command("go", "build", "-o", fenceBin, "../../cmd/fence")
+	build.Stdout = os.Stdout
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		t.Fatalf("failed to build fence: %v", err)
+	}
+
+	// #nosec G204 -- fenceBin built into TempDir above.
+	cmd := exec.Command(fenceBin, "sh", "-c", "printf 'READY\\n'; sleep 1; printf 'DONE\\n'")
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		t.Fatalf("failed to start fence command with PTY: %v", err)
+	}
+
+	var output lockedBuffer
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&output, ptmx)
+		close(done)
+	}()
+
+	defer func() {
+		_ = ptmx.Close()
+		if cmd.Process != nil {
+			// SIGCONT first so Kill/Wait cleanup cannot leave a stopped child behind.
+			_ = syscall.Kill(cmd.Process.Pid, syscall.SIGCONT)
+			_ = cmd.Process.Kill()
+		}
+		_ = cmd.Wait()
+	}()
+
+	if !waitForOutput(&output, "READY", 2*time.Second) {
+		t.Fatalf("command did not become ready\noutput so far:\n%s", output.String())
+	}
+
+	if _, err := ptmx.Write([]byte{0x1A}); err != nil {
+		t.Fatalf("failed to write Ctrl-Z: %v", err)
+	}
+
+	if !waitForProcessState(t, cmd.Process.Pid, "T", 2*time.Second) {
+		t.Fatalf("fence did not enter stopped state after Ctrl-Z\noutput so far:\n%s", output.String())
+	}
+
+	if err := syscall.Kill(cmd.Process.Pid, syscall.SIGCONT); err != nil {
+		t.Fatalf("failed to SIGCONT fence: %v", err)
+	}
+
+	if !waitForOutput(&output, "DONE", 5*time.Second) {
+		t.Fatalf("child did not resume and complete\noutput so far:\n%s", output.String())
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("PTY output did not finish after child completed\noutput so far:\n%s", output.String())
+	}
+
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("fence exited with error: %v\noutput:\n%s", err, output.String())
+	}
+}
+
 // waitForProcessState polls `ps -o state= -p <pid>` until the reported
 // state matches one of the pipe-separated patterns in want, or timeout
 // elapses. macOS `ps` reports a single-letter state code (R, S, T, etc.).
