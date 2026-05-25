@@ -89,11 +89,21 @@ func waitWithJobControl(execCmd *exec.Cmd, stdinFd, childPgrp int, debug bool) (
 			if err := syscall.Kill(os.Getpid(), syscall.SIGSTOP); err != nil && debug {
 				fencelog.Printf("[fence:jobctl] kill(self, SIGSTOP) err=%v\n", err)
 			}
-			if debug {
-				fencelog.Printf("[fence:jobctl] resumed; re-granting TTY to child pgrp %d\n", childPgrp)
-			}
-			if err := unix.IoctlSetPointerInt(stdinFd, unix.TIOCSPGRP, childPgrp); err != nil && debug {
-				fencelog.Printf("[fence:jobctl] tcsetpgrp(child=%d) err=%v\n", childPgrp, err)
+			// Re-grant the TTY to the child only when we were brought
+			// to the foreground (fg). With `bg`, the shell is still the
+			// terminal foreground owner; calling TIOCSPGRP here would
+			// steal the TTY from it, causing the shell's stdin read to
+			// return EIO and the shell to treat it as EOF and exit.
+			currentFg, fgErr := unix.IoctlGetInt(stdinFd, unix.TIOCGPGRP)
+			if fgErr == nil && currentFg == selfPgrp {
+				if debug {
+					fencelog.Printf("[fence:jobctl] resumed as fg; re-granting TTY to child pgrp %d\n", childPgrp)
+				}
+				if err := unix.IoctlSetPointerInt(stdinFd, unix.TIOCSPGRP, childPgrp); err != nil && debug {
+					fencelog.Printf("[fence:jobctl] tcsetpgrp(child=%d) err=%v\n", childPgrp, err)
+				}
+			} else if debug {
+				fencelog.Printf("[fence:jobctl] resumed as bg (currentFg=%d); skipping TTY re-grant\n", currentFg)
 			}
 			if err := syscall.Kill(-childPgrp, syscall.SIGCONT); err != nil && debug {
 				fencelog.Printf("[fence:jobctl] kill(-%d, SIGCONT) err=%v\n", childPgrp, err)

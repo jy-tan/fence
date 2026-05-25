@@ -408,7 +408,14 @@ func runCommand(cmd *cobra.Command, args []string) error {
 				}
 			} else {
 				defer func() {
-					_ = unix.IoctlSetPointerInt(stdinFd, unix.TIOCSPGRP, savedFgPgrp)
+					// Only restore if the child's pgrp is still the terminal
+					// foreground. In the Ctrl-Z → bg path the shell reclaims the
+					// TTY after the stop; calling TIOCSPGRP here would steal it
+					// back right before exit, leaving an empty foreground pgrp
+					// and causing the shell's next read to return EIO.
+					if fg, err := unix.IoctlGetInt(stdinFd, unix.TIOCGPGRP); err == nil && fg == childPgrp {
+						_ = unix.IoctlSetPointerInt(stdinFd, unix.TIOCSPGRP, savedFgPgrp)
+					}
 					signal.Reset(syscall.SIGTTOU)
 				}()
 
