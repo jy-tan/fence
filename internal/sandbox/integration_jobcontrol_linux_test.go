@@ -118,7 +118,7 @@ func TestLinux_CtrlZSuspendsFence(t *testing.T) {
 		_ = cmd.Wait()
 	}()
 
-	var output bytes.Buffer
+	var output linuxLockedBuffer
 	go func() { _, _ = io.Copy(&output, ptmx) }()
 
 	// Give fence a moment to spawn the child and hand off the TTY.
