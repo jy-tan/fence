@@ -75,11 +75,21 @@ func waitWithJobControl(execCmd *exec.Cmd, stdinFd, childPgrp int, debug bool) (
 
 		switch {
 		case ws.Stopped():
-			// Child stopped (typically from Ctrl-Z on the TTY). Hand the
-			// terminal back to fence's pgrp so the outer shell can resume
-			// control, then stop ourselves so the shell prints
-			// "[1]+ Stopped …". SIGTTOU stays ignored from the caller's
-			// existing handshake.
+			// SIGTTIN means the child read from the terminal while it was
+			// still in the background — a race between Start() and the
+			// initial TIOCSPGRP call in the caller. The child is now the
+			// foreground pgrp, so resume it; do not treat this as Ctrl-Z.
+			if ws.StopSignal() == syscall.SIGTTIN {
+				if debug {
+					fencelog.Printf("[fence:jobctl] child stopped on SIGTTIN (start race); resuming\n")
+				}
+				_ = syscall.Kill(-childPgrp, syscall.SIGCONT)
+				continue
+			}
+			// Child stopped from Ctrl-Z (SIGTSTP). Hand the terminal back
+			// to fence's pgrp so the outer shell can resume control, then
+			// stop ourselves so the shell prints "[1]+ Stopped …".
+			// SIGTTOU stays ignored from the caller's existing handshake.
 			if err := unix.IoctlSetPointerInt(stdinFd, unix.TIOCSPGRP, selfPgrp); err != nil && debug {
 				fencelog.Printf("[fence:jobctl] tcsetpgrp(self=%d) err=%v\n", selfPgrp, err)
 			}
