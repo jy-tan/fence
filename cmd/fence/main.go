@@ -451,6 +451,10 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	// (fence itself suspends instead of leaving the user wedged).
 	if jobControlEnabled {
 		code, err := waitWithJobControl(execCmd, jobControlStdinFd, jobControlChildPgrp, debug)
+		// waitWithJobControl has already reaped the child via wait4. Stop the
+		// signal forwarder now (idempotent) so it can't deliver a signal to a
+		// reaped/recycled PID during the remaining deferred cleanup.
+		cleanup()
 		if err != nil {
 			return fmt.Errorf("command failed: %w", err)
 		}
