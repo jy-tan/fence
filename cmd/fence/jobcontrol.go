@@ -135,6 +135,13 @@ func waitWithJobControl(execCmd *exec.Cmd, stdinFd, childPgrp int, debug bool) (
 				fencelog.Printf("[fence:jobctl] child signaled sig=%d\n", int(ws.Signal()))
 			}
 			return 128 + int(ws.Signal()), nil
+		default:
+			// WUNTRACED only reports stop/exit/terminate, so this should be
+			// unreachable; log it under debug rather than silently re-waiting
+			// if the platform's wait status assumptions ever shift.
+			if debug {
+				fencelog.Printf("[fence:jobctl] unhandled wait status ws=0x%x; re-waiting\n", uint32(ws))
+			}
 		}
 	}
 }
