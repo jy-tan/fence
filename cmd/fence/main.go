@@ -465,13 +465,24 @@ func runCommand(cmd *cobra.Command, args []string) error {
 	if err := execCmd.Wait(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			// Set exit code but don't os.Exit() here - let deferred cleanup run
-			exitCode = exitErr.ExitCode()
+			exitCode = resolveExitCode(exitErr)
 			return nil
 		}
 		return fmt.Errorf("command failed: %w", err)
 	}
 
 	return nil
+}
+
+// resolveExitCode maps an exec.ExitError to fence's exit code. For a child
+// terminated by a signal it uses the shell convention (128+signal), matching
+// the job-control path in waitWithJobControl; exitErr.ExitCode() alone reports
+// -1 for a signaled child.
+func resolveExitCode(exitErr *exec.ExitError) int {
+	if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return 128 + int(ws.Signal())
+	}
+	return exitErr.ExitCode()
 }
 
 func presentWrapCommandError(err error) error {
