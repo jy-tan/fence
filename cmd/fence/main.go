@@ -413,9 +413,7 @@ func runCommand(cmd *cobra.Command, args []string) error {
 					// TTY after the stop; calling TIOCSPGRP here would steal it
 					// back right before exit, leaving an empty foreground pgrp
 					// and causing the shell's next read to return EIO.
-					if fg, err := unix.IoctlGetInt(stdinFd, unix.TIOCGPGRP); err == nil && fg == childPgrp {
-						_ = unix.IoctlSetPointerInt(stdinFd, unix.TIOCSPGRP, savedFgPgrp)
-					}
+					setForegroundIfOwner(stdinFd, childPgrp, savedFgPgrp)
 					signal.Reset(syscall.SIGTTOU)
 				}()
 

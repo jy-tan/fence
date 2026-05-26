@@ -104,16 +104,13 @@ func waitWithJobControl(execCmd *exec.Cmd, stdinFd, childPgrp int, debug bool) (
 			// terminal foreground owner; calling TIOCSPGRP here would
 			// steal the TTY from it, causing the shell's stdin read to
 			// return EIO and the shell to treat it as EOF and exit.
-			currentFg, fgErr := unix.IoctlGetInt(stdinFd, unix.TIOCGPGRP)
-			if fgErr == nil && currentFg == selfPgrp {
-				if debug {
-					fencelog.Printf("[fence:jobctl] resumed as fg; re-granting TTY to child pgrp %d\n", childPgrp)
+			currentFg, applied := setForegroundIfOwner(stdinFd, selfPgrp, childPgrp)
+			if debug {
+				if applied {
+					fencelog.Printf("[fence:jobctl] resumed as fg; re-granted TTY to child pgrp %d\n", childPgrp)
+				} else {
+					fencelog.Printf("[fence:jobctl] resumed as bg (currentFg=%d); skipping TTY re-grant\n", currentFg)
 				}
-				if err := unix.IoctlSetPointerInt(stdinFd, unix.TIOCSPGRP, childPgrp); err != nil && debug {
-					fencelog.Printf("[fence:jobctl] tcsetpgrp(child=%d) err=%v\n", childPgrp, err)
-				}
-			} else if debug {
-				fencelog.Printf("[fence:jobctl] resumed as bg (currentFg=%d); skipping TTY re-grant\n", currentFg)
 			}
 			if err := syscall.Kill(-childPgrp, syscall.SIGCONT); err != nil && debug {
 				fencelog.Printf("[fence:jobctl] kill(-%d, SIGCONT) err=%v\n", childPgrp, err)
@@ -130,4 +127,20 @@ func waitWithJobControl(execCmd *exec.Cmd, stdinFd, childPgrp int, debug bool) (
 			return 128 + int(ws.Signal()), nil
 		}
 	}
+}
+
+// setForegroundIfOwner sets newOwner as the terminal foreground process group
+// on fd, but only if the current foreground pgrp is still expectedOwner. This
+// guards every "hand off the TTY" site against stealing the terminal from
+// whoever currently owns it (e.g. the shell after a Ctrl-Z -> bg). It returns
+// the observed current foreground pgrp and whether the change was applied.
+func setForegroundIfOwner(fd, expectedOwner, newOwner int) (current int, applied bool) {
+	current, err := unix.IoctlGetInt(fd, unix.TIOCGPGRP)
+	if err != nil || current != expectedOwner {
+		return current, false
+	}
+	if err := unix.IoctlSetPointerInt(fd, unix.TIOCSPGRP, newOwner); err != nil {
+		return current, false
+	}
+	return current, true
 }
