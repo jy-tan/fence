@@ -75,16 +75,26 @@ func waitWithJobControl(execCmd *exec.Cmd, stdinFd, childPgrp int, debug bool) (
 
 		switch {
 		case ws.Stopped():
-			// SIGTTIN means the child read from the terminal while it was
-			// still in the background — a race between Start() and the
-			// initial TIOCSPGRP call in the caller. The child is now the
-			// foreground pgrp, so resume it; do not treat this as Ctrl-Z.
+			// A SIGTTIN stop only warrants an automatic resume when the child
+			// is already the terminal foreground pgrp — the Start()/TIOCSPGRP
+			// foreground-handoff race. After Ctrl-Z -> bg the shell owns the
+			// terminal and the child is in the background; auto-SIGCONTing it
+			// would just let it read, stop on SIGTTIN again, and spin. Gate on
+			// TIOCGPGRP == childPgrp before resuming; otherwise fall through and
+			// treat it as a job-control stop so the child stays stopped and the
+			// outer shell can fg it later.
 			if ws.StopSignal() == syscall.SIGTTIN {
-				if debug {
-					fencelog.Printf("[fence:jobctl] child stopped on SIGTTIN (start race); resuming\n")
+				currentFg, fgErr := unix.IoctlGetInt(stdinFd, unix.TIOCGPGRP)
+				if fgErr == nil && currentFg == childPgrp {
+					if debug {
+						fencelog.Printf("[fence:jobctl] child stopped on SIGTTIN after foreground handoff; resuming\n")
+					}
+					_ = syscall.Kill(-childPgrp, syscall.SIGCONT)
+					continue
 				}
-				_ = syscall.Kill(-childPgrp, syscall.SIGCONT)
-				continue
+				if debug {
+					fencelog.Printf("[fence:jobctl] child stopped on SIGTTIN while not foreground (currentFg=%d); treating as job-control stop\n", currentFg)
+				}
 			}
 			// Child stopped from Ctrl-Z (SIGTSTP). Hand the terminal back
 			// to fence's pgrp so the outer shell can resume control, then
