@@ -2,11 +2,13 @@
 package proxy
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
@@ -18,27 +20,67 @@ import (
 )
 
 // FilterFunc determines if a connection to host:port should be allowed.
+// Used by SOCKSProxy and legacy callers; HTTPProxy uses RouteFunc instead.
 type FilterFunc func(host string, port int) bool
+
+// RouteDecision is the tri-state routing outcome for an HTTP proxy request.
+type RouteDecision int
+
+const (
+	// RouteDecisionDeny rejects the request with 403. Applied to deniedDomains
+	// and to unmatched traffic when no upstream proxy is configured.
+	RouteDecisionDeny RouteDecision = iota
+
+	// RouteDecisionDirect connects to the target host directly.
+	// Applied to hosts matching allowedDomains.
+	RouteDecisionDirect
+
+	// RouteDecisionUpstream forwards the request to the configured upstream
+	// proxy. Applied to unmatched (grey-zone) traffic when upstreamProxy is set.
+	RouteDecisionUpstream
+)
+
+// RouteFunc maps a host:port to a RouteDecision.
+type RouteFunc func(host string, port int) RouteDecision
 
 // HTTPProxy is an HTTP/HTTPS proxy server with domain filtering.
 type HTTPProxy struct {
-	server   *http.Server
-	listener net.Listener
-	filter   FilterFunc
-	debug    bool
-	monitor  bool
-	mu       sync.RWMutex
-	running  bool
+	server         *http.Server
+	listener       net.Listener
+	route          RouteFunc
+	upstreamURL    *url.URL // nil when no upstream is configured
+	directClient   *http.Client
+	upstreamClient *http.Client
+	debug          bool
+	monitor        bool
+	mu             sync.RWMutex
+	running        bool
 }
 
-// NewHTTPProxy creates a new HTTP proxy with the given filter.
+// NewHTTPProxy creates a new HTTP proxy with the given route function.
+// upstreamURL may be nil when no upstream proxy is configured.
 // If monitor is true, only blocked requests are logged.
 // If debug is true, all requests and filter rules are logged.
-func NewHTTPProxy(filter FilterFunc, debug, monitor bool) *HTTPProxy {
+func NewHTTPProxy(route RouteFunc, upstreamURL *url.URL, debug, monitor bool) *HTTPProxy {
+	noRedirect := func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	directTransport := &http.Transport{}
+	directClient := &http.Client{Transport: directTransport, Timeout: 30 * time.Second, CheckRedirect: noRedirect}
+
+	var upstreamClient *http.Client
+	if upstreamURL != nil {
+		upstreamTransport := &http.Transport{Proxy: http.ProxyURL(upstreamURL)}
+		upstreamClient = &http.Client{Transport: upstreamTransport, Timeout: 30 * time.Second, CheckRedirect: noRedirect}
+	}
+
 	return &HTTPProxy{
-		filter:  filter,
-		debug:   debug,
-		monitor: monitor,
+		route:          route,
+		upstreamURL:    upstreamURL,
+		directClient:   directClient,
+		upstreamClient: upstreamClient,
+		debug:          debug,
+		monitor:        monitor,
 	}
 }
 
@@ -116,17 +158,28 @@ func (p *HTTPProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check if allowed
-	if !p.filter(host, port) {
+	decision := p.route(host, port)
+
+	switch decision {
+	case RouteDecisionDeny:
 		p.logRequest("CONNECT", fmt.Sprintf("https://%s:%d", host, port), host, 403, "BLOCKED", time.Since(start))
 		http.Error(w, "Connection blocked by network allowlist", http.StatusForbidden)
 		return
+
+	case RouteDecisionUpstream:
+		if p.upstreamURL == nil {
+			p.logRequest("CONNECT", fmt.Sprintf("https://%s:%d", host, port), host, 502, "UPSTREAM_ERROR", time.Since(start))
+			http.Error(w, "Bad Gateway: no upstream proxy configured", http.StatusBadGateway)
+			return
+		}
+		p.handleConnectViaUpstream(w, r, host, port, start)
+		return
 	}
 
+	// RouteDecisionDirect: connect to target directly.
 	p.logRequest("CONNECT", fmt.Sprintf("https://%s:%d", host, port), host, 200, "ALLOWED", time.Since(start))
 
-	// Connect to target
-	targetConn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), 10*time.Second) // #nosec G704 - validated by p.filter() allowlist
+	targetConn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), 10*time.Second) // #nosec G704 - validated by route() allowlist
 	if err != nil {
 		p.logDebug("CONNECT dial failed: %s:%d: %v", host, port, err)
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
@@ -134,7 +187,6 @@ func (p *HTTPProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = targetConn.Close() }()
 
-	// Hijack the connection
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
@@ -159,14 +211,153 @@ func (p *HTTPProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 		_, _ = io.Copy(targetConn, clientConn)
+		_ = closeWrite(targetConn)
 	}()
 
 	go func() {
 		defer wg.Done()
 		_, _ = io.Copy(clientConn, targetConn)
+		_ = closeWrite(clientConn)
 	}()
 
 	wg.Wait()
+}
+
+// handleConnectViaUpstream tunnels a CONNECT request through the upstream proxy.
+func (p *HTTPProxy) handleConnectViaUpstream(w http.ResponseWriter, r *http.Request, host string, port int, start time.Time) {
+	// Open a TCP connection to the upstream proxy.
+	upstreamAddr := p.upstreamURL.Host
+	if p.upstreamURL.Port() == "" {
+		switch strings.ToLower(p.upstreamURL.Scheme) {
+		case "https":
+			upstreamAddr = p.upstreamURL.Hostname() + ":443"
+		default:
+			upstreamAddr = p.upstreamURL.Hostname() + ":80"
+		}
+	}
+
+	upstreamConn, err := net.DialTimeout("tcp", upstreamAddr, 10*time.Second)
+	if err != nil {
+		p.logDebug("UPSTREAM CONNECT dial failed: %s: %v", upstreamAddr, err)
+		p.logRequest("CONNECT", fmt.Sprintf("https://%s:%d", host, port), host, 502, "UPSTREAM_ERROR", time.Since(start))
+		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		return
+	}
+	defer func() { _ = upstreamConn.Close() }()
+
+	// Send CONNECT to the upstream proxy.
+	connectReq := fmt.Sprintf("CONNECT %s:%d HTTP/1.1\r\nHost: %s:%d\r\n\r\n", host, port, host, port)
+	if _, err := upstreamConn.Write([]byte(connectReq)); err != nil {
+		p.logDebug("UPSTREAM CONNECT write failed: %v", err)
+		p.logRequest("CONNECT", fmt.Sprintf("https://%s:%d", host, port), host, 502, "UPSTREAM_ERROR", time.Since(start))
+		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		return
+	}
+
+	// Read the upstream proxy's response line.
+	upstreamStatus, upstreamReader, err := readProxyResponseStatus(upstreamConn)
+	if err != nil {
+		p.logDebug("UPSTREAM CONNECT response read failed: %v", err)
+		p.logRequest("CONNECT", fmt.Sprintf("https://%s:%d", host, port), host, 502, "UPSTREAM_ERROR", time.Since(start))
+		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		return
+	}
+
+	if upstreamStatus != http.StatusOK {
+		p.logRequest("CONNECT", fmt.Sprintf("https://%s:%d", host, port), host, upstreamStatus, "UPSTREAM_DENIED", time.Since(start))
+		http.Error(w, "Upstream proxy denied connection", http.StatusForbidden)
+		return
+	}
+
+	p.logRequest("CONNECT", fmt.Sprintf("https://%s:%d", host, port), host, 200, "UPSTREAM_OK", time.Since(start))
+
+	// Hijack the client connection and pipe client <-> upstream.
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
+		return
+	}
+
+	clientConn, _, err := hijacker.Hijack()
+	if err != nil {
+		http.Error(w, "Failed to hijack connection", http.StatusInternalServerError)
+		return
+	}
+	defer func() { _ = clientConn.Close() }()
+
+	if _, err := clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
+		return
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(upstreamConn, clientConn)
+		_ = closeWrite(upstreamConn)
+	}()
+
+	go func() {
+		defer wg.Done()
+		// Use upstreamReader (not the raw conn) so any bytes buffered during
+		// header parsing are not lost before piping begins.
+		_, _ = io.Copy(clientConn, upstreamReader)
+		_ = closeWrite(clientConn)
+	}()
+
+	wg.Wait()
+}
+
+// closeWrite attempts a half-close (FIN) on the write side of conn.
+// Works for *net.TCPConn and anything that implements CloseWrite.
+func closeWrite(conn net.Conn) error {
+	type closeWriter interface {
+		CloseWrite() error
+	}
+	if cw, ok := conn.(closeWriter); ok {
+		return cw.CloseWrite()
+	}
+	return nil
+}
+
+// readProxyResponseStatus reads the HTTP status line from a raw connection
+// (used after sending CONNECT to an upstream proxy) and returns the status code.
+// It consumes headers up to and including the blank line, and returns the
+// *bufio.Reader that must be used for all subsequent reads from conn — it may
+// contain bytes buffered beyond the header terminator.
+func readProxyResponseStatus(conn net.Conn) (int, *bufio.Reader, error) {
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+
+	br := bufio.NewReader(conn)
+
+	// Read and parse the status line, e.g. "HTTP/1.1 200 Connection Established".
+	statusLine, err := br.ReadString('\n')
+	if err != nil {
+		return 0, nil, fmt.Errorf("reading status line: %w", err)
+	}
+	statusLine = strings.TrimRight(statusLine, "\r\n")
+	parts := strings.SplitN(statusLine, " ", 3)
+	if len(parts) < 2 {
+		return 0, nil, fmt.Errorf("malformed status line: %q", statusLine)
+	}
+	code, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, nil, fmt.Errorf("invalid status code %q: %w", parts[1], err)
+	}
+
+	// Drain the response headers.
+	tp := textproto.NewReader(br)
+	if _, err := tp.ReadMIMEHeader(); err != nil && err.Error() != "EOF" {
+		// ReadMIMEHeader returns an error on the blank terminating line only when
+		// there are no headers at all; treat that as success.
+		if _, ok := err.(textproto.ProtocolError); !ok {
+			_ = err // non-fatal; headers are informational here
+		}
+	}
+
+	return code, br, nil
 }
 
 // handleHTTP handles regular HTTP proxy requests.
@@ -188,55 +379,65 @@ func (p *HTTPProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		port = 443
 	}
 
-	if !p.filter(host, port) {
+	decision := p.route(host, port)
+
+	if decision == RouteDecisionDeny {
 		p.logRequest(r.Method, r.RequestURI, host, 403, "BLOCKED", time.Since(start))
 		http.Error(w, "Connection blocked by network allowlist", http.StatusForbidden)
 		return
 	}
 
-	// Create new request and copy headers
-	proxyReq, err := http.NewRequest(r.Method, r.RequestURI, r.Body) // #nosec G704 - validated by p.filter() allowlist
+	proxyReq, err := http.NewRequest(r.Method, r.RequestURI, r.Body) // #nosec G704 - validated by route() allowlist
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+	proxyReq.Host = targetURL.Host
 	for key, values := range r.Header {
 		for _, value := range values {
 			proxyReq.Header.Add(key, value)
 		}
 	}
-	proxyReq.Host = targetURL.Host
 
 	// Remove hop-by-hop headers
 	proxyReq.Header.Del("Proxy-Connection")
 	proxyReq.Header.Del("Proxy-Authorization")
 
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
+	client := p.directClient
+	if decision == RouteDecisionUpstream {
+		if p.upstreamClient == nil {
+			p.logRequest(r.Method, r.RequestURI, host, 502, "UPSTREAM_ERROR", time.Since(start))
+			http.Error(w, "Bad Gateway: no upstream proxy configured", http.StatusBadGateway)
+			return
+		}
+		client = p.upstreamClient
 	}
 
-	resp, err := client.Do(proxyReq) // #nosec G704 - validated by p.filter() allowlist
+	resp, err := client.Do(proxyReq) // #nosec G704 - validated by route() allowlist
 	if err != nil {
-		p.logRequest(r.Method, r.RequestURI, host, 502, "ERROR", time.Since(start))
+		action := "ERROR"
+		if decision == RouteDecisionUpstream {
+			action = "UPSTREAM_ERROR"
+		}
+		p.logRequest(r.Method, r.RequestURI, host, 502, action, time.Since(start))
 		http.Error(w, "Bad Gateway", http.StatusBadGateway)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Copy response headers
 	for key, values := range resp.Header {
 		for _, value := range values {
 			w.Header().Add(key, value)
 		}
 	}
-
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
 
-	p.logRequest(r.Method, r.RequestURI, host, resp.StatusCode, "ALLOWED", time.Since(start))
+	action := "ALLOWED"
+	if decision == RouteDecisionUpstream {
+		action = "UPSTREAM_OK"
+	}
+	p.logRequest(r.Method, r.RequestURI, host, resp.StatusCode, action, time.Since(start))
 }
 
 func (p *HTTPProxy) logDebug(format string, args ...interface{}) {
@@ -249,7 +450,7 @@ func (p *HTTPProxy) logDebug(format string, args ...interface{}) {
 // In monitor mode (-m), only blocked/error requests are logged.
 // In debug mode (-d), all requests are logged.
 func (p *HTTPProxy) logRequest(method, url, host string, status int, action string, duration time.Duration) {
-	isBlocked := action == "BLOCKED" || action == "ERROR"
+	isBlocked := action == "BLOCKED" || action == "ERROR" || action == "UPSTREAM_ERROR" || action == "UPSTREAM_DENIED"
 
 	if p.monitor && !p.debug && !isBlocked {
 		return
@@ -262,10 +463,12 @@ func (p *HTTPProxy) logRequest(method, url, host string, status int, action stri
 	timestamp := time.Now().Format("15:04:05")
 	statusIcon := "✓"
 	switch action {
-	case "BLOCKED":
+	case "BLOCKED", "UPSTREAM_DENIED":
 		statusIcon = "✗"
-	case "ERROR":
+	case "ERROR", "UPSTREAM_ERROR":
 		statusIcon = "!"
+	case "UPSTREAM", "UPSTREAM_OK":
+		statusIcon = "→"
 	}
 	fencelog.Printf("[fence:http] %s %s %-7s %d %s %s (%v)\n", timestamp, statusIcon, method, status, host, truncateURL(url, 60), duration.Round(time.Millisecond))
 }
@@ -278,12 +481,12 @@ func truncateURL(url string, maxLen int) string {
 	return url[:maxLen-3] + "..."
 }
 
-// CreateDomainFilter creates a filter function from a config.
+// CreateDomainFilter creates a boolean FilterFunc from a config.
+// Used by SOCKSProxy and hook-mode evaluator; HTTP proxy uses CreateRouteFunc.
 // When debug is true, logs filter rule matches to stderr.
 func CreateDomainFilter(cfg *config.Config, debug bool) FilterFunc {
 	return func(host string, port int) bool {
 		if cfg == nil {
-			// No config = deny all
 			if debug {
 				fencelog.Printf("[fence:filter] No config, denying: %s:%d\n", host, port)
 			}
@@ -314,6 +517,64 @@ func CreateDomainFilter(cfg *config.Config, debug bool) FilterFunc {
 			fencelog.Printf("[fence:filter] No matching rule, denying: %s:%d\n", host, port)
 		}
 		return false
+	}
+}
+
+// CreateRouteFunc creates a RouteFunc from a config for use by HTTPProxy.
+//
+// Decision logic:
+//   - deniedDomains  → RouteDecisionDeny      (hard block, never forwarded upstream)
+//   - allowedDomains → RouteDecisionDirect     (connect directly to target)
+//   - otherwise      → RouteDecisionUpstream   (if upstreamProxy configured)
+//   - otherwise      → RouteDecisionDeny       (no upstream configured)
+func CreateRouteFunc(cfg *config.Config, debug bool) RouteFunc {
+	return func(host string, port int) RouteDecision {
+		if cfg == nil {
+			if debug {
+				fencelog.Printf("[fence:filter] No config, denying: %s:%d\n", host, port)
+			}
+			return RouteDecisionDeny
+		}
+
+		// Hard block: deniedDomains always denied, even if upstream is configured.
+		for _, denied := range cfg.Network.DeniedDomains {
+			if config.MatchesDomain(host, denied) {
+				if debug {
+					fencelog.Printf("[fence:filter] Denied by rule: %s:%d (matched %s)\n", host, port, denied)
+				}
+				return RouteDecisionDeny
+			}
+		}
+
+		// Direct allow.
+		for _, allowed := range cfg.Network.AllowedDomains {
+			if config.MatchesDomain(host, allowed) {
+				if debug {
+					fencelog.Printf("[fence:filter] Allowed by rule: %s:%d (matched %s)\n", host, port, allowed)
+				}
+				return RouteDecisionDirect
+			}
+		}
+
+		// Grey zone: consult DefaultAction.
+		// The second condition is a backward-compatibility path: configs written
+		// before DefaultAction existed set only UpstreamProxy. Validate() now
+		// requires DefaultAction:"proxy" when UpstreamProxy is set, but configs
+		// loaded without going through Validate() (e.g. programmatic use) must
+		// still behave sensibly — presence of UpstreamProxy implies proxy intent.
+		wantUpstream := cfg.Network.DefaultAction == config.DefaultActionProxy ||
+			(cfg.Network.DefaultAction == "" && cfg.Network.UpstreamProxy != "")
+		if wantUpstream {
+			if debug {
+				fencelog.Printf("[fence:filter] No matching rule, forwarding upstream: %s:%d\n", host, port)
+			}
+			return RouteDecisionUpstream
+		}
+
+		if debug {
+			fencelog.Printf("[fence:filter] No matching rule, denying: %s:%d\n", host, port)
+		}
+		return RouteDecisionDeny
 	}
 }
 
@@ -407,6 +668,19 @@ func hostFromURLString(rawURL string) (string, error) {
 		return "", fmt.Errorf("url has no host")
 	}
 	return strings.ToLower(host), nil
+}
+
+// ParseUpstreamProxyURL parses the upstream proxy URL from the config.
+// Returns nil when no upstream is configured or the URL is invalid.
+func ParseUpstreamProxyURL(cfg *config.Config) *url.URL {
+	if cfg == nil || cfg.Network.UpstreamProxy == "" {
+		return nil
+	}
+	parsed, err := url.Parse(cfg.Network.UpstreamProxy)
+	if err != nil {
+		return nil
+	}
+	return parsed
 }
 
 // GetHostFromRequest extracts the hostname from a request.

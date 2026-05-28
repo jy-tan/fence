@@ -258,6 +258,8 @@ type NetworkConfig struct {
     AllowLocalOutbound  *bool    // Allow outbound to localhost (defaults to AllowLocalBinding)
     HTTPProxyPort       int      // Override HTTP proxy port (0 = auto)
     SOCKSProxyPort      int      // Override SOCKS proxy port (0 = auto)
+    UpstreamProxy       string   // Optional upstream HTTP proxy URL for grey-zone traffic (e.g. "http://127.0.0.1:8080")
+    DefaultAction       string   // Grey-zone fallback: "" or "deny" = block, "proxy" = forward to UpstreamProxy
 }
 ```
 

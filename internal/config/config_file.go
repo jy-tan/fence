@@ -16,15 +16,17 @@ type FileWriteOptions struct {
 
 // cleanNetworkConfig is used for JSON output with omitempty to skip empty fields.
 type cleanNetworkConfig struct {
-	AllowedDomains          []string `json:"allowedDomains,omitempty"`
-	DeniedDomains           []string `json:"deniedDomains,omitempty"`
-	AllowUnixSockets        []string `json:"allowUnixSockets,omitempty"`
-	AllowAllUnixSockets     bool     `json:"allowAllUnixSockets,omitempty"`
-	AllowLocalBinding       bool     `json:"allowLocalBinding,omitempty"`
-	AllowLocalOutbound      *bool    `json:"allowLocalOutbound,omitempty"`
-	AllowLocalOutboundPorts []int    `json:"allowLocalOutboundPorts,omitempty"`
-	HTTPProxyPort           int      `json:"httpProxyPort,omitempty"`
-	SOCKSProxyPort          int      `json:"socksProxyPort,omitempty"`
+	AllowedDomains          []string          `json:"allowedDomains,omitempty"`
+	DeniedDomains           []string          `json:"deniedDomains,omitempty"`
+	AllowUnixSockets        []string          `json:"allowUnixSockets,omitempty"`
+	AllowAllUnixSockets     bool              `json:"allowAllUnixSockets,omitempty"`
+	AllowLocalBinding       bool              `json:"allowLocalBinding,omitempty"`
+	AllowLocalOutbound      *bool             `json:"allowLocalOutbound,omitempty"`
+	AllowLocalOutboundPorts []int             `json:"allowLocalOutboundPorts,omitempty"`
+	HTTPProxyPort           int               `json:"httpProxyPort,omitempty"`
+	SOCKSProxyPort          int               `json:"socksProxyPort,omitempty"`
+	UpstreamProxy           string            `json:"upstreamProxy,omitempty"`
+	DefaultAction           DefaultActionType `json:"defaultAction,omitempty"`
 }
 
 // cleanFilesystemConfig is used for JSON output with omitempty to skip empty fields.
@@ -109,6 +111,9 @@ func MarshalConfigJSON(cfg *Config) ([]byte, error) {
 		AllowLocalOutboundPorts: cfg.Network.AllowLocalOutboundPorts,
 		HTTPProxyPort:           cfg.Network.HTTPProxyPort,
 		SOCKSProxyPort:          cfg.Network.SOCKSProxyPort,
+		UpstreamProxy:           cfg.Network.UpstreamProxy,
+		// DefaultActionDeny is the implicit default; omit it so configs stay minimal.
+		DefaultAction: serializeDefaultAction(cfg.Network.DefaultAction),
 	}
 	if !isNetworkEmpty(network) {
 		clean.Network = &network
@@ -187,7 +192,9 @@ func isNetworkEmpty(n cleanNetworkConfig) bool {
 		n.AllowLocalOutbound == nil &&
 		len(n.AllowLocalOutboundPorts) == 0 &&
 		n.HTTPProxyPort == 0 &&
-		n.SOCKSProxyPort == 0
+		n.SOCKSProxyPort == 0 &&
+		n.UpstreamProxy == "" &&
+		n.DefaultAction == ""
 }
 
 func isFilesystemEmpty(f cleanFilesystemConfig) bool {
@@ -257,4 +264,13 @@ func WriteConfigFile(cfg *Config, path string, opts FileWriteOptions) error {
 	}
 
 	return nil
+}
+
+// serializeDefaultAction maps DefaultActionDeny to "" so it is omitted by
+// omitempty — it is the implicit default and need not appear in output.
+func serializeDefaultAction(a DefaultActionType) DefaultActionType {
+	if a == DefaultActionDeny {
+		return ""
+	}
+	return a
 }

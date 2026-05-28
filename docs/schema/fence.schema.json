@@ -216,6 +216,14 @@
           },
           "type": "array"
         },
+        "defaultAction": {
+          "description": "Action for traffic not matched by allowedDomains or deniedDomains. Allowed values: \"deny\" (default), \"proxy\" (requires upstreamProxy).",
+          "enum": [
+            "deny",
+            "proxy"
+          ],
+          "type": "string"
+        },
         "deniedDomains": {
           "description": "Domains explicitly blocked even if they match allowedDomains. Evaluated before allowedDomains.",
           "items": {
@@ -230,6 +238,10 @@
         "socksProxyPort": {
           "description": "Port for the internal SOCKS proxy used to enforce domain filtering. Set automatically by fence; only override for advanced configurations.",
           "type": "integer"
+        },
+        "upstreamProxy": {
+          "description": "Optional upstream HTTP proxy URL (e.g. http://127.0.0.1:8080). When set, grey-zone traffic (not matched by allowedDomains, not hard-blocked by deniedDomains) is forwarded to this proxy instead of being denied. Intended for use with tools like mitmproxy for interactive inspection.",
+          "type": "string"
         }
       },
       "type": "object"
