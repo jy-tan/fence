@@ -75,45 +75,45 @@ func waitWithJobControl(execCmd *exec.Cmd, stdinFd, childPgrp int, debug bool) (
 
 		switch {
 		case ws.Stopped():
-			// A SIGTTIN stop only warrants an automatic resume when the child
-			// is already the terminal foreground pgrp — the Start()/TIOCSPGRP
-			// foreground-handoff race. After Ctrl-Z -> bg the shell owns the
-			// terminal and the child is in the background; auto-SIGCONTing it
-			// would just let it read, stop on SIGTTIN again, and spin. Gate on
-			// TIOCGPGRP == childPgrp before resuming; otherwise fall through and
-			// treat it as a job-control stop so the child stays stopped and the
-			// outer shell can fg it later.
 			if ws.StopSignal() == syscall.SIGTTIN {
 				currentFg, fgErr := unix.IoctlGetInt(stdinFd, unix.TIOCGPGRP)
 				if fgErr == nil && currentFg == childPgrp {
+					// Start()/TIOCSPGRP race: child is already the TTY fg pgrp,
+					// so it just needs a SIGCONT to proceed.
 					if debug {
 						fencelog.Printf("[fence:jobctl] child stopped on SIGTTIN after foreground handoff; resuming\n")
 					}
 					_ = syscall.Kill(-childPgrp, syscall.SIGCONT)
 					continue
 				}
+				// Child stopped on SIGTTIN while not the TTY fg (Ctrl-Z → bg
+				// scenario). The shell owns the terminal — calling TIOCSPGRP(self)
+				// here would steal it, the same class of bug fixed in b5d31f7.
+				// Self-stop without claiming the TTY so the shell can fg fence;
+				// the resume path below re-grants the TTY to the child.
 				if debug {
-					fencelog.Printf("[fence:jobctl] child stopped on SIGTTIN while not foreground (currentFg=%d); treating as job-control stop\n", currentFg)
+					fencelog.Printf("[fence:jobctl] child stopped on SIGTTIN while not foreground (currentFg=%d); self-stopping without TTY claim\n", currentFg)
+				}
+				if err := syscall.Kill(os.Getpid(), syscall.SIGSTOP); err != nil && debug {
+					fencelog.Printf("[fence:jobctl] kill(self, SIGSTOP) err=%v\n", err)
+				}
+			} else {
+				// Normal job-control stop (SIGTSTP from Ctrl-Z). Hand the
+				// terminal to fence's own pgrp so the outer shell sees
+				// "[1]+ Stopped …", then stop ourselves.
+				if err := unix.IoctlSetPointerInt(stdinFd, unix.TIOCSPGRP, selfPgrp); err != nil && debug {
+					fencelog.Printf("[fence:jobctl] tcsetpgrp(self=%d) err=%v\n", selfPgrp, err)
+				}
+				if debug {
+					fencelog.Printf("[fence:jobctl] stopping self (pid=%d)\n", os.Getpid())
+				}
+				if err := syscall.Kill(os.Getpid(), syscall.SIGSTOP); err != nil && debug {
+					fencelog.Printf("[fence:jobctl] kill(self, SIGSTOP) err=%v\n", err)
 				}
 			}
-			// Child stopped from Ctrl-Z (SIGTSTP). Hand the terminal back
-			// to fence's pgrp so the outer shell can resume control, then
-			// stop ourselves so the shell prints "[1]+ Stopped …".
-			// SIGTTOU stays ignored from the caller's existing handshake.
-			if err := unix.IoctlSetPointerInt(stdinFd, unix.TIOCSPGRP, selfPgrp); err != nil && debug {
-				fencelog.Printf("[fence:jobctl] tcsetpgrp(self=%d) err=%v\n", selfPgrp, err)
-			}
-			if debug {
-				fencelog.Printf("[fence:jobctl] stopping self (pid=%d)\n", os.Getpid())
-			}
-			if err := syscall.Kill(os.Getpid(), syscall.SIGSTOP); err != nil && debug {
-				fencelog.Printf("[fence:jobctl] kill(self, SIGSTOP) err=%v\n", err)
-			}
-			// Re-grant the TTY to the child only when we were brought
-			// to the foreground (fg). With `bg`, the shell is still the
-			// terminal foreground owner; calling TIOCSPGRP here would
-			// steal the TTY from it, causing the shell's stdin read to
-			// return EIO and the shell to treat it as EOF and exit.
+			// Re-grant the TTY to the child only when we were brought to the
+			// foreground. With bg, the shell is still the TTY owner; calling
+			// TIOCSPGRP here would steal it.
 			currentFg, applied := setForegroundIfOwner(stdinFd, selfPgrp, childPgrp)
 			if debug {
 				if applied {

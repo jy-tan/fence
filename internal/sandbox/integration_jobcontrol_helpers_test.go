@@ -148,6 +148,86 @@ func ctrlZSuspendsFence(t *testing.T) {
 	_ = cmd.Process.Kill()
 }
 
+// ctrlZBgStdinReadFgRecovery verifies that a child which reads from stdin can
+// complete its read after a Ctrl-Z / fg round-trip. It exercises the fg
+// recovery path of the SIGTTIN handling in waitWithJobControl: after Ctrl-Z
+// stops fence+child, a SIGCONT (simulating fg) causes fence to re-grant the
+// TTY to the child so the pending read can finish.
+//
+// Fully automating the bg+SIGTTIN sub-path — where the shell explicitly
+// reclaims the TTY via tcsetpgrp before SIGCONTing fence — would require the
+// test process to share a session with the PTY slave, which is not possible
+// under the standard go test harness.
+func ctrlZBgStdinReadFgRecovery(t *testing.T) {
+	skipIfAlreadySandboxed(t)
+
+	fenceBin := buildFenceBinary(t)
+
+	// #nosec G204 -- fenceBin built into TempDir above.
+	cmd := exec.Command(fenceBin, "sh", "-c", "printf 'READY\n'; read line; printf 'GOT\n'")
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		t.Fatalf("failed to start fence command with PTY: %v", err)
+	}
+
+	var output lockedBuffer
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&output, ptmx)
+		close(done)
+	}()
+
+	defer func() {
+		_ = ptmx.Close()
+		if cmd.Process != nil {
+			_ = syscall.Kill(cmd.Process.Pid, syscall.SIGCONT)
+			_ = cmd.Process.Kill()
+		}
+		_ = cmd.Wait()
+	}()
+
+	if !waitForOutput(&output, "READY", 2*time.Second) {
+		t.Fatalf("command did not become ready\noutput so far:\n%s", output.String())
+	}
+
+	if _, err := ptmx.Write([]byte{0x1A}); err != nil {
+		t.Fatalf("failed to write Ctrl-Z: %v", err)
+	}
+
+	if !waitForProcessState(t, cmd.Process.Pid, "T", 2*time.Second) {
+		t.Fatalf("fence did not enter stopped state after Ctrl-Z\noutput so far:\n%s", output.String())
+	}
+
+	// fg: resume fence; it re-grants the TTY to the child and SIGCONTs it.
+	if err := syscall.Kill(cmd.Process.Pid, syscall.SIGCONT); err != nil {
+		t.Fatalf("failed to SIGCONT fence: %v", err)
+	}
+
+	if !waitForProcessState(t, cmd.Process.Pid, "R|S", 2*time.Second) {
+		t.Fatalf("fence did not resume after SIGCONT\noutput so far:\n%s", output.String())
+	}
+
+	// Feed the child's `read` so it can complete.
+	if _, err := ptmx.Write([]byte("hello\n")); err != nil {
+		t.Fatalf("failed to write input to PTY: %v", err)
+	}
+
+	if !waitForOutput(&output, "GOT", 5*time.Second) {
+		t.Fatalf("child did not complete stdin read after fg\noutput so far:\n%s", output.String())
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("PTY output did not finish after child completed\noutput so far:\n%s", output.String())
+	}
+
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("fence exited with error: %v\noutput:\n%s", err, output.String())
+	}
+}
+
 // ctrlZSuspendsFenceAndResumesChild verifies the full Ctrl-Z / fg round-trip:
 // after the child is stopped and then resumed via SIGCONT, it finishes and
 // fence exits cleanly (not blocked forever in waitWithJobControl).

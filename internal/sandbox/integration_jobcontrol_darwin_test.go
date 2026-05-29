@@ -11,3 +11,7 @@ func TestMacOS_CtrlZSuspendsFence(t *testing.T) {
 func TestMacOS_CtrlZSuspendsFenceAndResumesChild(t *testing.T) {
 	ctrlZSuspendsFenceAndResumesChild(t)
 }
+
+func TestMacOS_CtrlZBgStdinReadFgRecovery(t *testing.T) {
+	ctrlZBgStdinReadFgRecovery(t)
+}
