@@ -12,7 +12,7 @@ import (
 
 const (
 	// DefaultSchemaPath is the canonical raw URL for the published schema.
-	DefaultSchemaPath = "https://raw.githubusercontent.com/Use-Tusk/fence/main/docs/schema/fence.schema.json"
+	DefaultSchemaPath = "https://raw.githubusercontent.com/fencesandbox/fence/main/docs/schema/fence.schema.json"
 )
 
 // Generate creates a JSON Schema document from the config structs.

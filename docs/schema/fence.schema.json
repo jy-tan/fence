@@ -1,5 +1,5 @@
 {
-  "$id": "https://raw.githubusercontent.com/Use-Tusk/fence/main/docs/schema/fence.schema.json",
+  "$id": "https://raw.githubusercontent.com/fencesandbox/fence/main/docs/schema/fence.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

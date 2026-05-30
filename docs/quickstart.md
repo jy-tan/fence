@@ -5,14 +5,14 @@
 ### Homebrew (macOS)
 
 ```bash
-brew tap use-tusk/tap
-brew install use-tusk/tap/fence
+brew tap fencesandbox/tap
+brew install fencesandbox/tap/fence
 ```
 
 To update:
 
 ```bash
-brew upgrade use-tusk/tap/fence
+brew upgrade fencesandbox/tap/fence
 ```
 
 ### Nix (macOS, Linux, Windows (WSL))

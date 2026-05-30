@@ -16,7 +16,7 @@ Example config:
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/Use-Tusk/fence/main/docs/schema/fence.schema.json",
+  "$schema": "https://raw.githubusercontent.com/fencesandbox/fence/main/docs/schema/fence.schema.json",
   "network": {
     "allowedDomains": ["github.com", "*.npmjs.org", "registry.yarnpkg.com"],
     "deniedDomains": ["evil.com"]
@@ -208,7 +208,6 @@ One mitmproxy instance can serve multiple fence instances simultaneously because
 > Only `http://` upstream proxy URLs are supported for `upstreamProxy`. `https://` upstream proxies and SOCKS5 upstream chaining are not yet supported.
 
 ### Wildcard Domain Access
-
 
 Setting `allowedDomains: ["*"]` enables **relaxed network mode**:
 

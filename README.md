@@ -2,10 +2,10 @@
 
 <div align="center">
 
-![GitHub Release](https://img.shields.io/github/v/release/Use-Tusk/fence)
+![GitHub Release](https://img.shields.io/github/v/release/fencesandbox/fence)
 [![Build and test](https://github.com/fencesandbox/fence/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/fencesandbox/fence/actions/workflows/main.yml)
 [![Docs](https://img.shields.io/badge/docs-fencesandbox.com-4c1?logo=bookstack&logoColor=white&color=mediumslateblue)](https://fencesandbox.com/docs)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Use-Tusk/fence)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/fencesandbox/fence)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 </div>
@@ -40,8 +40,8 @@ curl -fsSL https://cli.fencesandbox.com/install.sh | sh
 **Homebrew (macOS):**
 
 ```bash
-brew tap use-tusk/tap
-brew install use-tusk/tap/fence
+brew tap fencesandbox/tap
+brew install fencesandbox/tap/fence
 ```
 
 **Nix (macOS, Linux, Windows (WSL)):**
@@ -121,7 +121,7 @@ When `--settings` is not provided, Fence first looks for `fence.jsonc` (or `fenc
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/Use-Tusk/fence/main/docs/schema/fence.schema.json",
+  "$schema": "https://raw.githubusercontent.com/fencesandbox/fence/main/docs/schema/fence.schema.json",
   "extends": "code",
   "network": { "allowedDomains": ["private.company.com"] },
   "filesystem": { "allowWrite": ["."] },
