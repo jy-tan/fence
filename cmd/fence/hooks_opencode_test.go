@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Use-Tusk/fence/internal/sandbox"
+	"github.com/fencesandbox/fence/internal/sandbox"
 )
 
 func TestBuildOpencodePreToolUseResponse_WrapsBashCommand(t *testing.T) {

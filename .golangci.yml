@@ -45,12 +45,12 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/Use-Tusk/fence)
+        - prefix(github.com/fencesandbox/fence)
     gofmt:
       simplify: true
     goimports:
       local-prefixes:
-        - github.com/Use-Tusk/fence
+        - github.com/fencesandbox/fence
   exclusions:
     generated: lax
     paths:

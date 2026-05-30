@@ -13,9 +13,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/Use-Tusk/fence/internal/config"
-	"github.com/Use-Tusk/fence/internal/proxy"
-	"github.com/Use-Tusk/fence/internal/sandbox"
+	"github.com/fencesandbox/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/proxy"
+	"github.com/fencesandbox/fence/internal/sandbox"
 )
 
 // Domain is the policy domain a tool maps to. Add new domains rarely and

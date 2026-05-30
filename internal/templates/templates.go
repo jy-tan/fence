@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/config"
 	"github.com/tidwall/jsonc"
 )
 

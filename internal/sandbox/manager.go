@@ -3,10 +3,10 @@ package sandbox
 import (
 	"fmt"
 
-	"github.com/Use-Tusk/fence/internal/config"
-	"github.com/Use-Tusk/fence/internal/fencelog"
-	"github.com/Use-Tusk/fence/internal/platform"
-	"github.com/Use-Tusk/fence/internal/proxy"
+	"github.com/fencesandbox/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/fencelog"
+	"github.com/fencesandbox/fence/internal/platform"
+	"github.com/fencesandbox/fence/internal/proxy"
 )
 
 // ServiceExecutionModel describes how a sandboxed service binds its host-facing

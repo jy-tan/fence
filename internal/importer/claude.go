@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/config"
 	"github.com/tidwall/jsonc"
 )
 
@@ -329,6 +329,6 @@ func importHeaderLines(cfg *config.Config) []string {
 		fmt.Sprintf("// Network, filesystem, and command rules from %q are inherited.", cfg.Extends),
 		"// Only your additional rules are shown below.",
 		"// Run `fence --list-templates` to see available templates.",
-		"// Configuration reference: https://github.com/Use-Tusk/fence/blob/main/docs/configuration.md",
+		"// Configuration reference: https://github.com/fencesandbox/fence/blob/main/docs/configuration.md",
 	}
 }

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Use-Tusk/fence/internal/sandbox"
+	"github.com/fencesandbox/fence/internal/sandbox"
 	"github.com/spf13/cobra"
 )
 

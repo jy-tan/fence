@@ -1,4 +1,4 @@
-module github.com/Use-Tusk/fence
+module github.com/fencesandbox/fence
 
 go 1.25.0
 

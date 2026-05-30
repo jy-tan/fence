@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/config"
 )
 
 // TestMacOS_WildcardAllowedDomainsRelaxesNetwork verifies that when allowedDomains

@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/Use-Tusk/fence/internal/toolcall"
+	"github.com/fencesandbox/fence/internal/toolcall"
 )
 
 // windsurfHookMode is the helper-mode flag invoked by Windsurf Cascade hooks.

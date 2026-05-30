@@ -1,6 +1,6 @@
 package sandbox
 
-import "github.com/Use-Tusk/fence/internal/config"
+import "github.com/fencesandbox/fence/internal/config"
 
 func effectiveRuntimeExecPolicy(cfg *config.Config) config.RuntimeExecPolicy {
 	if cfg == nil {

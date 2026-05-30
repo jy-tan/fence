@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Use-Tusk/fence/internal/sandbox"
+	"github.com/fencesandbox/fence/internal/sandbox"
 	"gopkg.in/yaml.v3"
 )
 

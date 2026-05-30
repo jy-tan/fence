@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Use-Tusk/fence/internal/fencelog"
-	"github.com/Use-Tusk/fence/internal/platform"
+	"github.com/fencesandbox/fence/internal/fencelog"
+	"github.com/fencesandbox/fence/internal/platform"
 )
 
 // LogMonitor monitors sandbox violations via macOS log stream.

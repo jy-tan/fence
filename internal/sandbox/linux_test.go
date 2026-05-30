@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/config"
 )
 
 func TestResolvePathForMount_RegularPath(t *testing.T) {

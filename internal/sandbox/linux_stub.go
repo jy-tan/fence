@@ -5,7 +5,7 @@ package sandbox
 import (
 	"fmt"
 
-	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/config"
 )
 
 // LinuxBridge is a stub for non-Linux platforms.

@@ -2,7 +2,7 @@
 
 package sandbox
 
-import "github.com/Use-Tusk/fence/internal/config"
+import "github.com/fencesandbox/fence/internal/config"
 
 // ApplyLandlockFromConfig is a no-op on non-Linux platforms.
 func ApplyLandlockFromConfig(cfg *config.Config, cwd string, socketPaths []string, debug bool) error {

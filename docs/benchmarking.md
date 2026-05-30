@@ -370,7 +370,7 @@ measure so the reading guide above maps onto them.
 filesystem lookups under `/usr/bin`, `/bin`, etc. On WSL2 each of those
 lookups takes ~20 ms (vs microseconds on native Linux), likely because
 WSL's interop layer serializes `stat` / `EvalSymlinks` calls across the
-`/mnt/*` device boundary. [PR #98](https://github.com/Use-Tusk/fence/pull/98)
+`/mnt/*` device boundary. [PR #98](https://github.com/fencesandbox/fence/pull/98)
 reduced the worst shared-binary collision case from ~4.5s to ~1.5s by
 bounding the probe set, but the non-collision path still pays the full
 per-lookup cost. Noted as a known issue; amortized usage is unaffected

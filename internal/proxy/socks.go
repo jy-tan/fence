@@ -6,7 +6,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/Use-Tusk/fence/internal/fencelog"
+	"github.com/fencesandbox/fence/internal/fencelog"
 	"github.com/things-go/go-socks5"
 )
 

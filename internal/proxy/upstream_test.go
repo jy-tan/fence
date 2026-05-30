@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/config"
 )
 
 // ---------------------------------------------------------------------------

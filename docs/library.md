@@ -5,7 +5,7 @@ Fence can be used as a Go library to sandbox commands programmatically.
 ## Installation
 
 ```bash
-go get github.com/Use-Tusk/fence
+go get github.com/fencesandbox/fence
 ```
 
 ## Quick Start
@@ -17,7 +17,7 @@ import (
     "fmt"
     "os/exec"
 
-    "github.com/Use-Tusk/fence/pkg/fence"
+    "github.com/fencesandbox/fence/pkg/fence"
 )
 
 func main() {

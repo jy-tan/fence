@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/config"
 )
 
 func TestNormalizeRuntimeExecArgv_UsesExecPathBasename(t *testing.T) {
