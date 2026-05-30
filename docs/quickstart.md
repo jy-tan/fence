@@ -26,7 +26,7 @@ This runs it directly from the repository, without installing `fence`. If you wa
 ### From Source
 
 ```bash
-git clone https://github.com/Use-Tusk/fence
+git clone https://github.com/fencesandbox/fence
 cd fence
 go build -o fence ./cmd/fence
 sudo mv fence /usr/local/bin/
@@ -35,7 +35,7 @@ sudo mv fence /usr/local/bin/
 ### Using Go Install
 
 ```bash
-go install github.com/Use-Tusk/fence/cmd/fence@latest
+go install github.com/fencesandbox/fence/cmd/fence@latest
 ```
 
 ### Linux Dependencies

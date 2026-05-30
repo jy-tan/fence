@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Use-Tusk/fence/internal/config"
 	"github.com/bmatcuk/doublestar/v4"
+	"github.com/fencesandbox/fence/internal/config"
 )
 
 // PathWriteBlockedError is returned when a write to a path is blocked.

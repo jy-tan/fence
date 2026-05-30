@@ -9,7 +9,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/config"
 )
 
 // criticalCommands is the hardcoded list of commands whose collateral blocking

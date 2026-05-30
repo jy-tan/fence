@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Use-Tusk/fence/internal/fencelog"
+	"github.com/fencesandbox/fence/internal/fencelog"
 )
 
 // EBPFMonitor monitors sandbox violations using eBPF tracing.

@@ -77,7 +77,7 @@ changelog:
 
 release:
   github:
-    owner: Use-Tusk
+    owner: fencesandbox
     name: fence
   draft: false
   prerelease: auto
@@ -85,11 +85,11 @@ release:
 brews:
   - name: fence
     repository:
-      owner: Use-Tusk
+      owner: fencesandbox
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     directory: Formula
-    homepage: https://github.com/Use-Tusk/fence
+    homepage: https://github.com/fencesandbox/fence
     description: "Lightweight, container-free sandbox for running commands with network and filesystem restrictions"
     license: Apache-2.0
     commit_author:

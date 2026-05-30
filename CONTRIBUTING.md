@@ -12,7 +12,7 @@ If you have any questions, feel free to open an issue.
 - Clone and prepare:
 
   ```bash
-  git clone https://github.com/Use-Tusk/fence
+  git clone https://github.com/fencesandbox/fence
   cd fence
   make setup   # Install deps and lint tools
   make build   # Build the binary

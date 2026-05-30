@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/Use-Tusk/fence/internal/sandbox"
+	"github.com/fencesandbox/fence/internal/sandbox"
 )
 
 // opencodePreToolUseMode is the helper-mode flag invoked by the OpenCode

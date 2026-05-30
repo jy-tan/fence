@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/config"
 )
 
 func TestBuildInitConfig_DefaultTemplate(t *testing.T) {
@@ -153,7 +153,7 @@ func TestInitHeaderLines_WithExtends(t *testing.T) {
 	if !strings.Contains(lines[0], "fence config init") {
 		t.Fatalf("expected init header text, got %q", lines[0])
 	}
-	if !strings.Contains(strings.Join(lines, "\n"), "Configuration reference: https://github.com/Use-Tusk/fence/blob/main/docs/configuration.md") {
+	if !strings.Contains(strings.Join(lines, "\n"), "Configuration reference: https://github.com/fencesandbox/fence/blob/main/docs/configuration.md") {
 		t.Fatal("expected configuration reference link in init headers")
 	}
 }

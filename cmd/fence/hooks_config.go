@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Use-Tusk/fence/internal/sandbox"
+	"github.com/fencesandbox/fence/internal/sandbox"
 )
 
 func writeClaudeHooksConfigWithOptions(w io.Writer, hookOptions hookFenceOptions) error {

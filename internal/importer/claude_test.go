@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

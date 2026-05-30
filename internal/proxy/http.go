@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Use-Tusk/fence/internal/config"
-	"github.com/Use-Tusk/fence/internal/fencelog"
+	"github.com/fencesandbox/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/fencelog"
 )
 
 // FilterFunc determines if a connection to host:port should be allowed.

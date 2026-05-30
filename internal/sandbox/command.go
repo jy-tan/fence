@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/config"
 )
 
 // CommandBlockedError is returned when a command is blocked by policy.

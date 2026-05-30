@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Use-Tusk/fence/internal/config"
-	"github.com/Use-Tusk/fence/internal/fencelog"
+	"github.com/fencesandbox/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/fencelog"
 	"golang.org/x/term"
 )
 

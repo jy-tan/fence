@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Use-Tusk/fence/internal/configschema"
+	"github.com/fencesandbox/fence/internal/configschema"
 )
 
 func main() {

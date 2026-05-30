@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/config"
 )
 
 const (

@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/config"
 )
 
 func TestTruncateURL(t *testing.T) {

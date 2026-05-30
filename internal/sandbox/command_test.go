@@ -3,7 +3,7 @@ package sandbox
 import (
 	"testing"
 
-	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/config"
 )
 
 func TestCheckCommand_BasicDeny(t *testing.T) {

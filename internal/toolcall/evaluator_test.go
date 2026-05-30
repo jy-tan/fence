@@ -3,7 +3,7 @@ package toolcall
 import (
 	"testing"
 
-	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/config"
 )
 
 // fixtureTable mirrors the shape an adapter would build. Keeping it close to

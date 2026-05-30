@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Use-Tusk/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/config"
 )
 
 func TestLoadActiveConfigAudit_ProjectConfigChain(t *testing.T) {

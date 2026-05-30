@@ -1,6 +1,6 @@
 package sandbox
 
-import "github.com/Use-Tusk/fence/internal/config"
+import "github.com/fencesandbox/fence/internal/config"
 
 // hasWildcardAllowedDomain reports whether direct network access should be
 // allowed by sandbox-level network restrictions.

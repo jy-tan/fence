@@ -10,8 +10,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/Use-Tusk/fence/internal/config"
-	"github.com/Use-Tusk/fence/internal/fencelog"
+	"github.com/fencesandbox/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/fencelog"
 )
 
 // sessionSuffix is a unique identifier for this process session.

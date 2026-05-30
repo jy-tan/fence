@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/Use-Tusk/fence/internal/importer"
+	"github.com/fencesandbox/fence/internal/importer"
 	"github.com/spf13/cobra"
 )
 

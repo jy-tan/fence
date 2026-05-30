@@ -2,10 +2,10 @@
 package fence
 
 import (
-	"github.com/Use-Tusk/fence/internal/config"
-	"github.com/Use-Tusk/fence/internal/platform"
-	"github.com/Use-Tusk/fence/internal/sandbox"
-	"github.com/Use-Tusk/fence/internal/templates"
+	"github.com/fencesandbox/fence/internal/config"
+	"github.com/fencesandbox/fence/internal/platform"
+	"github.com/fencesandbox/fence/internal/sandbox"
+	"github.com/fencesandbox/fence/internal/templates"
 )
 
 // IsSupported returns true if the current platform supports sandboxing (macOS/Linux).

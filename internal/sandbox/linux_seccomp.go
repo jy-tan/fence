@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/Use-Tusk/fence/internal/fencelog"
+	"github.com/fencesandbox/fence/internal/fencelog"
 	"golang.org/x/sys/unix"
 )
 
