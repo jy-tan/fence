@@ -31,6 +31,23 @@ Fence is also a permission manager for your CLI agents. **Works with popular cod
 
 ## Install
 
+> [!NOTE]
+> Fence has moved from `github.com/Use-Tusk/fence` to `github.com/fencesandbox/fence`.
+> If you installed with Homebrew from the old Tusk tap, switch to the new tap:
+>
+> ```bash
+> brew uninstall use-tusk/tap/fence
+> brew untap use-tusk/tap
+> brew tap fencesandbox/tap
+> brew install fencesandbox/tap/fence
+> ```
+>
+> If you installed with `go install`, reinstall from the new module path:
+>
+> ```bash
+> go install github.com/fencesandbox/fence/cmd/fence@latest
+> ```
+
 **macOS / Linux:**
 
 ```bash
