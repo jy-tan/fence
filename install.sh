@@ -4,13 +4,13 @@ set -e
 # Fence Installer (Linux/macOS only)
 # For Windows, we recommend using WSL.
 # Usage (latest):
-#   curl -fsSL https://raw.githubusercontent.com/Use-Tusk/fence/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/fencesandbox/fence/main/install.sh | sh
 # Usage (specific version):
-#   curl -fsSL https://raw.githubusercontent.com/Use-Tusk/fence/main/install.sh | sh -s -- v0.1.0
+#   curl -fsSL https://raw.githubusercontent.com/fencesandbox/fence/main/install.sh | sh -s -- v0.1.0
 # Or via env var:
-#   curl -fsSL https://raw.githubusercontent.com/Use-Tusk/fence/main/install.sh | FENCE_VERSION=0.1.0 sh
+#   curl -fsSL https://raw.githubusercontent.com/fencesandbox/fence/main/install.sh | FENCE_VERSION=0.1.0 sh
 
-REPO="Use-Tusk/fence"
+REPO="fencesandbox/fence"
 BINARY_NAME="fence"
 
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -48,7 +48,7 @@ if [ -n "$REQUESTED_VERSION" ]; then
   esac
 else
   # Try manifest first (fast, no rate limits)
-  VERSION_TAG=$(curl -sL "https://use-tusk.github.io/fence/latest.txt" 2>/dev/null || echo "")
+  VERSION_TAG=$(curl -sL "https://cli.fencesandbox.com/latest.txt" 2>/dev/null || echo "")
   
   # Fallback to GitHub API if manifest fails
   if [ -z "$VERSION_TAG" ]; then
